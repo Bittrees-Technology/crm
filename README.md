@@ -2,7 +2,7 @@
 
 **Live:** [crm.bittrees.org](https://crm.bittrees.org) · [Try the fictional demo](https://crm.bittrees.org/?demo=1)
 
-An independent relationship workspace for people, organizations, partnerships, and the next step. Built from scratch; inspired by Twenty's clarity, with no Twenty source code or runtime dependency.
+An independent relationship workspace for people, organizations, partnerships, and the next step.
 
 **MIT licensed.** Next.js, React, PostgreSQL, Sign-In with Ethereum, and passwordless email verification.
 
