@@ -124,6 +124,18 @@ Enable the daily digest in Settings and choose a verified email. The scheduled V
 
 Set `CRON_SECRET` in Vercel production. `GET /api/cron/digest` requires its bearer token; Vercel supplies this automatically. Per-user/day receipts and provider idempotency prevent duplicate sends on retries. Failed delivery is recorded; the next scheduled day generates a fresh digest. No historical digest is automatically resent. The current bounded job is designed for small teams; monitor failures and remaining work before growing beyond a few hundred daily recipients.
 
+## Workspace management and collaboration
+
+Owners can rename a workspace in Settings, merge it into another workspace they own, or permanently delete it. Merge/delete require a fresh review and typing the source name. Merge preserves record IDs, links, and activity; matching names remain separate records. Source invitation links are invalidated. Whole-workspace members gain access to the combined workspace; limited memberships retain their selected roots. Existing memberships combine access and use the stronger role, as shown in the merge warning. Export before deletion. Your last workspace cannot be deleted until another exists.
+
+Invitations and existing members can be limited to selected projects, organizations, or opportunities and records linked beneath those selections. Scope checks apply on the server to reads, writes, exports, timelines, and emails. Hidden reference fields are omitted from responses and preserved during edits. Scoped activity omits historical field details; whole-workspace audit history and CSV import require whole-workspace access. A shared record may be visible through any selected parent. A workspace owner can change access in Settings. Account identity recovery combines scopes; mixed non-owner roles use viewer to avoid extending editing rights without an owner's decision.
+
+## Daily follow-up settings
+
+The optional daily email defaults to assigned work. Users can choose all accessible work, a 0–30 day look-ahead, overdue inclusion, tasks/opportunities, selected workspaces, and weekdays only. Delivery remains around 08:00 UTC. The preview sends no email. Emails group overdue/today/upcoming items, include project/organization context and next steps, and link directly to records. Up to 50 items appear, with the remaining count shown. No matching work means no email. Permission and preference changes are rechecked before delivery; queued messages with outdated content are cancelled. Existing opt-in settings remain unchanged by this release.
+
+Deployments must run the additive database migration before publishing this release (`members.scope_ids`, `invites.scope_ids`, and `users.digest_options`).
+
 ## Opportunity types
 
 Built-in types include Partnership, Customer, Research, Contributor, Grant, Investment, Sponsorship, Integration, Consulting, Licensing, Community, and Event. Choose **Create custom type** in an opportunity to enter a label. Saving the opportunity also saves the label to your account for reuse across workspaces, devices, and sign-in methods. Personal options remain available after records are deleted; teammates can see a shared record's label without receiving your personal option list. Duplicate labels ignore capitalization and extra whitespace. Account recovery preserves both accounts' saved labels. Demo labels last only for the demo session.
@@ -165,7 +177,7 @@ This is an initial deployable MVP, not a claim of an independent security audit 
 
 ## Hosted verification
 
-The v0.3.2 suite covers 32 automated tests plus Chromium checks for both identity-linking orders, wallet cancellation/timeouts, quick edits, timelines, invitation management/joining, and digest preferences. These checks also run in GitHub CI.
+The v0.4.0 suite covers 36 automated tests plus Chromium checks for both identity-linking orders, wallet cancellation/timeouts, quick edits, timelines, invitation management/joining, and digest preferences. These checks also run in GitHub CI.
 
 The initial September 9, 2026 deployment passed 17 PostgreSQL-backed tests, the production build, GitHub CI, a local backup/restore drill, and live HTTP smoke checks.
 

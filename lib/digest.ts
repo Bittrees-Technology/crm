@@ -1,3 +1,5 @@
+import { accessIds, type Db } from "./access";
+import { digestOptionsSchema, type DigestOptions } from "./digest-options";
 import { z } from "zod";
 import { pool, transaction } from "./db";
 import { HttpError } from "./model";
@@ -6,6 +8,7 @@ export type DigestMessage = {
   to: string[];
   subject: string;
   text: string;
+  html?: string;
 };
 export type DigestSender = (
   message: DigestMessage,
@@ -13,7 +16,11 @@ export type DigestSender = (
 ) => Promise<void>;
 export async function saveDigestPreference(userId: string, input: unknown) {
   const body = z
-    .object({ enabled: z.boolean(), email: z.string().max(254).default("") })
+    .object({
+      enabled: z.boolean(),
+      email: z.string().max(254).default(""),
+      options: digestOptionsSchema.optional(),
+    })
     .parse(input);
   const email = body.email.trim().toLowerCase();
   return transaction(async (db) => {
@@ -42,8 +49,17 @@ export async function saveDigestPreference(userId: string, input: unknown) {
         "Link and verify this email before enabling reminders.",
       );
     await db.query(
-      "UPDATE users SET digest_enabled=$2,digest_email=$3 WHERE id=$1",
-      [userId, body.enabled, email],
+      "UPDATE users SET digest_enabled=$2,digest_email=$3,digest_options=COALESCE($4::jsonb,digest_options) WHERE id=$1",
+      [
+        userId,
+        body.enabled,
+        email,
+        body.options ? JSON.stringify(body.options) : null,
+      ],
+    );
+    await db.query(
+      "UPDATE digest_receipts SET status='cancelled' WHERE user_id=$1 AND status IN ('pending','failed')",
+      [userId],
     );
     return { ok: true };
   });
@@ -51,7 +67,7 @@ export async function saveDigestPreference(userId: string, input: unknown) {
 export async function digestPreference(userId: string) {
   const user = (
     await pool().query(
-      "SELECT digest_enabled AS enabled,digest_email AS email FROM users WHERE id=$1",
+      "SELECT digest_enabled AS enabled,digest_email AS email,digest_options AS options FROM users WHERE id=$1",
       [userId],
     )
   ).rows[0];
@@ -61,7 +77,11 @@ export async function digestPreference(userId: string) {
       [userId],
     )
   ).rows[0];
-  return { ...user, last: last || null };
+  return {
+    ...user,
+    options: digestOptionsSchema.parse(user.options),
+    last: last || null,
+  };
 }
 export async function sendViaResend(message: DigestMessage, key: string) {
   if (!process.env.RESEND_API_KEY)
@@ -87,7 +107,9 @@ export async function sendDigest(
   z.iso.date().parse(day);
   return transaction(async (db) => {
     const user = (
-      await db.query("SELECT * FROM users WHERE id=$1 FOR UPDATE", [userId])
+      await db.query("SELECT * FROM users WHERE id=$1 FOR NO KEY UPDATE", [
+        userId,
+      ])
     ).rows[0];
     if (!user?.digest_enabled || !user.digest_email) return "skipped";
     if (
@@ -99,41 +121,15 @@ export async function sendDigest(
       ).rowCount
     )
       return "skipped";
-    const rows = (
-      await db.query(
-        `SELECT r.id,r.data,w.name AS workspace FROM records r JOIN members m ON m.workspace_id=r.workspace_id AND m.user_id=$1 JOIN workspaces w ON w.id=r.workspace_id
-    WHERE r.data->>'ownerId'=$1::text AND r.data->>'dueDate'<>'' AND r.data->>'dueDate'<=to_char($2::date+7,'YYYY-MM-DD')
-    AND ((r.kind='tasks' AND r.data->>'status'='Open') OR (r.kind='opportunities' AND r.data->>'stage' NOT IN ('Won','Lost')))
-    ORDER BY r.data->>'dueDate',w.name,r.id`,
-        [userId, day],
-      )
-    ).rows;
+    const options = digestOptionsSchema.parse(user.digest_options);
+    if (
+      options.weekdaysOnly &&
+      [0, 6].includes(new Date(day + "T12:00:00Z").getUTCDay())
+    )
+      return "skipped";
+    const rows = await digestRows(db, userId, day, options);
     if (!rows.length) return "skipped";
-    const message: DigestMessage = {
-      from: process.env.EMAIL_FROM || "",
-      to: [user.digest_email],
-      subject: `Your Bittrees CRM next steps · ${day}`,
-      text: [
-        `Hello ${user.name},`,
-        "",
-        "Your overdue and upcoming follow-ups (next 7 days):",
-        "",
-        ...rows
-          .slice(0, 50)
-          .map(
-            (r) =>
-              `${r.data.dueDate < day ? "Overdue" : r.data.dueDate === day ? "Today" : r.data.dueDate} · ${r.workspace} · ${r.data.nextAction || r.data.name}${r.data.nextAction ? " — " + r.data.name : ""}`,
-          ),
-        ...(rows.length > 50
-          ? [`…and ${rows.length - 50} more in your workspace.`]
-          : []),
-        "",
-        `Open your tasks: ${process.env.APP_URL}/?view=tasks`,
-        "",
-        `You opted in to this daily digest. Turn it off in Settings: ${process.env.APP_URL}/?view=settings`,
-        "Dates and the daily 08:00 schedule use UTC.",
-      ].join("\n"),
-    };
+    const message = digestMessage(user, day, rows, options);
     await db.query(
       "INSERT INTO digest_receipts(user_id,day,payload,record_ids) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING",
       [userId, day, message, rows.slice(0, 50).map((r) => r.id)],
@@ -148,7 +144,8 @@ export async function sendDigest(
     // Keep retries byte-for-byte identical, but never resend work after access/ownership or the recipient changed.
     if (
       receipt.payload.to[0] !== user.digest_email ||
-      receipt.record_ids.some((id: string) => !rows.some((r) => r.id === id))
+      receipt.record_ids.some((id: string) => !rows.some((r) => r.id === id)) ||
+      receipt.payload.text !== message.text
     ) {
       await db.query(
         "UPDATE digest_receipts SET status='cancelled' WHERE user_id=$1 AND day=$2",
@@ -191,4 +188,164 @@ export async function runDigests() {
     if (status !== "skipped") await new Promise((r) => setTimeout(r, 600));
   }
   return result;
+}
+
+type DigestRow = {
+  id: string;
+  workspace_id: string;
+  workspace: string;
+  kind: string;
+  data: any;
+  context: string;
+  owner: string;
+};
+async function digestRows(
+  db: Db,
+  user: string,
+  day: string,
+  options: DigestOptions,
+): Promise<DigestRow[]> {
+  const workspaces = (
+    await db.query(
+      "SELECT w.id,w.name FROM workspaces w JOIN members m ON m.workspace_id=w.id WHERE m.user_id=$1 ORDER BY w.id FOR SHARE OF w",
+      [user],
+    )
+  ).rows;
+  const rows: DigestRow[] = [];
+  const end = new Date(day + "T12:00:00Z");
+  end.setUTCDate(end.getUTCDate() + options.daysAhead);
+  for (const workspace of workspaces) {
+    if (
+      options.workspaceIds !== null &&
+      !options.workspaceIds.includes(workspace.id)
+    )
+      continue;
+    const ids = await accessIds(db, user, workspace.id);
+    const visible = (
+      await db.query(
+        "SELECT id,kind,data FROM records WHERE workspace_id=$1 AND ($2::uuid[] IS NULL OR id=ANY($2))",
+        [workspace.id, ids],
+      )
+    ).rows;
+    const members = (
+      await db.query(
+        "SELECT u.id,u.name FROM users u JOIN members m ON m.user_id=u.id WHERE m.workspace_id=$1",
+        [workspace.id],
+      )
+    ).rows;
+    for (const r of visible) {
+      if (
+        !options.kinds.includes(r.kind) ||
+        !r.data.dueDate ||
+        r.data.dueDate > end.toISOString().slice(0, 10) ||
+        (!options.includeOverdue && r.data.dueDate < day) ||
+        (options.assignment === "mine" && r.data.ownerId !== user)
+      )
+        continue;
+      if (
+        (r.kind === "tasks" && r.data.status !== "Open") ||
+        (r.kind === "opportunities" && ["Won", "Lost"].includes(r.data.stage))
+      )
+        continue;
+      const context = [
+        ...new Set(
+          [r.data.projectId, r.data.organizationId]
+            .map((id) => visible.find((p) => p.id === id)?.data.name)
+            .filter(Boolean),
+        ),
+      ].join(" · ");
+      rows.push({
+        ...r,
+        workspace_id: workspace.id,
+        workspace: workspace.name,
+        context,
+        owner:
+          members.find((m) => m.id === r.data.ownerId)?.name || "Unassigned",
+      });
+    }
+  }
+  return rows.sort(
+    (a, b) =>
+      a.data.dueDate.localeCompare(b.data.dueDate) ||
+      a.workspace.localeCompare(b.workspace) ||
+      a.id.localeCompare(b.id),
+  );
+}
+const escapeHtml = (s: string) =>
+  s.replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ]!,
+  );
+function digestMessage(
+  user: any,
+  day: string,
+  rows: DigestRow[],
+  options: DigestOptions,
+): DigestMessage {
+  const sections = [
+    ["Overdue", rows.filter((r) => r.data.dueDate < day)],
+    ["Due today", rows.filter((r) => r.data.dueDate === day)],
+    ["Upcoming", rows.filter((r) => r.data.dueDate > day)],
+  ] as const;
+  const shown = new Set(rows.slice(0, 50).map((r) => r.id));
+  const lines = [
+    `Hello ${user.name},`,
+    "",
+    `${rows.length} follow-up${rows.length === 1 ? "" : "s"} · ${options.assignment === "mine" ? "Assigned to you" : "All accessible work"} · ${day}`,
+    "",
+  ];
+  for (const [heading, items] of sections) {
+    if (!items.length) continue;
+    lines.push(`${heading} (${items.length})`, "");
+    for (const r of items.filter((r) => shown.has(r.id))) {
+      const link = new URL(process.env.APP_URL!);
+      link.search = new URLSearchParams({
+        workspace: r.workspace_id,
+        view: r.kind,
+        record: r.id,
+      }).toString();
+      lines.push(
+        `${r.data.name} · ${r.kind === "tasks" ? "Task" : r.data.stage}`,
+        `${r.workspace}${r.context ? " · " + r.context : ""} · ${r.owner} · Due ${r.data.dueDate}`,
+        ...(r.data.nextAction ? [`Next step: ${r.data.nextAction}`] : []),
+        link.toString(),
+        "",
+      );
+    }
+  }
+  if (rows.length > 50)
+    lines.push(
+      `${rows.length - 50} more follow-ups are available in your CRM.`,
+      "",
+    );
+  lines.push(
+    `Look-ahead: ${options.daysAhead} days. Dates and the 08:00 delivery schedule use UTC.`,
+    `Manage your preferences: ${process.env.APP_URL}/?view=settings`,
+  );
+  return {
+    from: process.env.EMAIL_FROM || "",
+    to: [user.digest_email],
+    subject: `Bittrees follow-ups · ${sections[0][1].length} overdue · ${sections[1][1].length} today · ${day}`,
+    text: lines.join("\n"),
+    html: `<div style="font-family:Arial,sans-serif;color:#173c2c;max-width:640px;margin:auto"><h1 style="font-size:24px">Your next steps</h1>${lines.map((line) => (/^https?:\/\//.test(line) ? `<p><a href="${escapeHtml(line)}">Open this record →</a></p>` : `<div style="margin-bottom:8px;white-space:pre-wrap">${escapeHtml(line)}</div>`)).join("")}</div>`,
+  };
+}
+export async function previewDigest(userId: string, input: unknown) {
+  const options = digestOptionsSchema.parse(input);
+  return transaction(async (db) => {
+    const user = (
+      await db.query("SELECT * FROM users WHERE id=$1 FOR SHARE", [userId])
+    ).rows[0];
+    const day = new Date().toISOString().slice(0, 10);
+    const rows = await digestRows(db, userId, day, options);
+    return {
+      text: rows.length
+        ? digestMessage(user, day, rows, options).text
+        : "No follow-ups match these settings today. No email would be sent.",
+      count: rows.length,
+    };
+  });
 }

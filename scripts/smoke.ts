@@ -6,6 +6,7 @@ if (!origin) throw new Error("Set SMOKE_URL.");
 const jar = new Map<string, string>();
 let userId: string | undefined;
 let workspaceId: string | undefined;
+const extraWorkspaces: string[] = [];
 const wallet = Wallet.createRandom();
 async function request(
   path: string,
@@ -122,15 +123,85 @@ try {
     exported.records.find((r: any) => r.id === opportunity.id).data.value,
     "123456789.123456789123456789",
   );
+  const scopedInvite = await request(base + "/invites", "POST", {
+    email: "scoped-verification@example.com",
+    role: "viewer",
+    scopeIds: [organization.id],
+  });
+  const invitationList = await request(base + "/invites");
+  assert.deepEqual(invitationList.invites[0].scope_ids, [organization.id]);
+  assert.deepEqual(
+    (await request("invites/preview", "POST", { token: scopedInvite.token }))
+      .scope_ids,
+    [organization.id],
+  );
+  await request(base + "/invites", "DELETE", {
+    id: invitationList.invites[0].id,
+  });
+  await request("me/digest", "PATCH", {
+    enabled: false,
+    email: "",
+    options: { assignment: "all", daysAhead: 30, weekdaysOnly: true },
+  });
+  assert.equal((await request("me/digest")).options.assignment, "all");
+  const preview = await request("me/digest/preview", "POST", {
+    assignment: "all",
+    daysAhead: 30,
+  });
+  assert.equal(typeof preview.text, "string");
   for (const record of [done, opportunity, person, organization])
     await request(base + "/records", "DELETE", {
       id: record.id,
       version: record.version,
     });
+  const source = await request("workspaces", "POST", {
+    name: "Temporary merge source",
+  });
+  extraWorkspaces.push(source.id);
+  await request("workspaces/" + source.id, "PATCH", {
+    name: "Renamed merge source",
+  });
+  const moving = await request("workspaces/" + source.id + "/records", "POST", {
+    kind: "notes",
+    data: { name: "Temporary moved note" },
+  });
+  const review = await request("workspaces/" + source.id + "/review", "POST", {
+    action: "merge",
+    targetId: workspaceId,
+  });
+  await request("workspaces/" + source.id + "/manage", "POST", {
+    action: "merge",
+    targetId: workspaceId,
+    review: review.review,
+    confirmName: review.source.name,
+  });
+  const moved = (await request(base)).records.find(
+    (r: any) => r.id === moving.id,
+  );
+  assert.ok(moved);
+  await request(base + "/records", "DELETE", {
+    id: moved.id,
+    version: moved.version,
+  });
+  const disposable = await request("workspaces", "POST", {
+    name: "Temporary delete check",
+  });
+  extraWorkspaces.push(disposable.id);
+  const deletion = await request(
+    "workspaces/" + disposable.id + "/review",
+    "POST",
+    { action: "delete" },
+  );
+  await request("workspaces/" + disposable.id + "/manage", "POST", {
+    action: "delete",
+    review: deletion.review,
+    confirmName: deletion.source.name,
+  });
+  assert.equal((await request("me")).workspaces.length, 1);
   await request("auth/logout", "POST");
   await request("me", "GET", undefined, 401);
   console.log(
-    "HTTP smoke passed: SIWE sign-in, authenticated CRUD, linked records, conflict detection, audit, exact fiat/crypto/BIT/BTREE amounts, export, and logout.",
+    "HTTP smoke passed: SIWE sign-in, authenticated CRUD, linked records, conflict detection, audit, exact fiat/crypto/BIT/BTREE amounts, scoped invitations, email filters/preview, workspace rename/merge/delete, export, and logout.",
   );
 } finally {
   // Clean only the new random wallet identity created by this invocation.
@@ -163,6 +234,23 @@ try {
         [workspaceId, userId],
       );
       await db.query("DELETE FROM workspaces WHERE id=$1", [workspaceId]);
+      for (const id of extraWorkspaces) {
+        const owned = (
+          await db.query(
+            "SELECT 1 FROM members WHERE workspace_id=$1 AND user_id=$2 AND role='owner'",
+            [id, userId],
+          )
+        ).rowCount;
+        if (!owned) continue;
+        await db.query("DELETE FROM audit WHERE workspace_id=$1", [id]);
+        await db.query("DELETE FROM records WHERE workspace_id=$1", [id]);
+        await db.query("DELETE FROM invites WHERE workspace_id=$1", [id]);
+        await db.query(
+          "DELETE FROM members WHERE workspace_id=$1 AND user_id=$2",
+          [id, userId],
+        );
+        await db.query("DELETE FROM workspaces WHERE id=$1", [id]);
+      }
       await db.query("DELETE FROM sessions WHERE user_id=$1", [userId]);
       await db.query(
         "DELETE FROM challenges WHERE user_id=$1 OR (kind='ethereum' AND value=$2)",

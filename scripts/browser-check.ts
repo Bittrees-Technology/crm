@@ -7,6 +7,7 @@ import pg from "pg";
 import { writeFileSync } from "node:fs";
 import AxeBuilder from "@axe-core/playwright";
 import { pool, transaction, schema } from "../lib/db";
+import { checkAdminWorkflows } from "./admin-workflows";
 import { checkWorkflows } from "./ui-workflows";
 const origin = "http://127.0.0.1:3040";
 if (
@@ -202,6 +203,7 @@ try {
   ).toBeVisible();
   await accessibility(page, "Settings");
   await checkWorkflows(page, api, first, origin, accessibility);
+  await checkAdminWorkflows(page, api, first, origin, accessibility);
   await page.goto(origin + "/?view=settings");
   // Opt-in is explicit, persists, and can be turned off again.
   const digest = page.getByLabel("Email me a daily digest");
@@ -392,6 +394,52 @@ try {
     base + "/members",
     { userId: secondMe.user.id, role: "editor" },
     "PATCH",
+  );
+  const scopeProject = await api(page, base + "/records", {
+    kind: "projects",
+    data: { name: "Member scope project" },
+  });
+  await page.goto(origin + "/?view=settings");
+  await page
+    .getByRole("button", {
+      name: `Whole workspace · Edit access for ${secondMe.user.name}`,
+      exact: true,
+    })
+    .click();
+  let memberScope = page
+    .locator(".member-access")
+    .filter({ hasText: `Edit access for ${secondMe.user.name}` });
+  await memberScope.getByLabel("Access area").selectOption("selected");
+  await memberScope
+    .getByLabel("Member scope project · projects", { exact: true })
+    .check();
+  await memberScope
+    .getByRole("button", { name: "Save collaboration access", exact: true })
+    .click();
+  await expect.poll(async () => (await api(second, base)).limited).toBe(true);
+  assert.deepEqual(
+    (await api(second, base)).records.map((r: any) => r.id),
+    [scopeProject.id],
+  );
+  await page
+    .getByRole("button", {
+      name: `Limited access · Edit access for ${secondMe.user.name}`,
+      exact: true,
+    })
+    .click();
+  memberScope = page
+    .locator(".member-access")
+    .filter({ hasText: `Edit access for ${secondMe.user.name}` });
+  await memberScope.getByLabel("Access area").selectOption("all");
+  await memberScope
+    .getByRole("button", { name: "Save collaboration access", exact: true })
+    .click();
+  await expect.poll(async () => (await api(second, base)).limited).toBe(false);
+  await api(
+    page,
+    base + "/records",
+    { id: scopeProject.id, version: scopeProject.version },
+    "DELETE",
   );
   // Reproduce the reported duplicate-account collision and finish explicit recovery.
   await second.setViewportSize({ width: 1280, height: 900 });

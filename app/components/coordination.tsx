@@ -1,4 +1,5 @@
 "use client";
+import { defaultDigestOptions, type DigestOptions } from "@/lib/digest-options";
 import { useEffect, useState } from "react";
 import { Check, Clock3, Mail, Plus, ShieldCheck } from "lucide-react";
 import { stages, type CrmRecord, type RecordData } from "@/lib/model";
@@ -272,15 +273,19 @@ export function RelationshipTimeline({
   );
 }
 export function DigestSettings({
+  workspaces,
   identities,
   demo,
   onLink,
 }: {
+  workspaces: { id: string; name: string }[];
   identities: { kind: string; value: string }[];
   demo: boolean;
   onLink: () => void;
 }) {
   const emails = identities.filter((i) => i.kind === "email");
+  const [options, setOptions] = useState<DigestOptions>(defaultDigestOptions);
+  const [preview, setPreview] = useState("");
   const [enabled, setEnabled] = useState(false),
     [email, setEmail] = useState(""),
     [last, setLast] = useState<{ status: string; day: string } | null>(null),
@@ -299,6 +304,7 @@ export function DigestSettings({
           setEnabled(d.enabled);
           setEmail(d.email || emails[0]?.value || "");
           setLast(d.last);
+          setOptions(d.options || defaultDigestOptions);
         }
       })
       .catch((e) => {
@@ -327,7 +333,7 @@ export function DigestSettings({
           setError("");
           setNotice("");
           try {
-            await request("me/digest", "PATCH", { enabled, email });
+            await request("me/digest", "PATCH", { enabled, email, options });
             setNotice(
               enabled ? "Daily digest enabled." : "Daily digest turned off.",
             );
@@ -339,9 +345,9 @@ export function DigestSettings({
         }}
       >
         <p className="small">
-          Around 08:00 UTC, receive one email with your assigned overdue and
-          upcoming follow-ups for the next seven days. Nothing is sent when
-          there is no work due.
+          Around 08:00 UTC, receive overdue, today, and upcoming sections with
+          next steps, context, and links to each record. Nothing is sent when no
+          work matches your settings.
         </p>
         <label className="checkbox-label">
           <input
@@ -375,9 +381,153 @@ export function DigestSettings({
             Link a verified email to enable reminders
           </button>
         )}
-        <button className="button" disabled={busy || demo || !emails.length}>
-          Save email preference
-        </button>
+        <fieldset disabled={busy || demo} className="digest-controls">
+          <label>
+            Follow-up ownership
+            <select
+              value={options.assignment}
+              onChange={(e) =>
+                setOptions({
+                  ...options,
+                  assignment: e.target.value as "mine" | "all",
+                })
+              }
+            >
+              <option value="mine">Assigned to me</option>
+              <option value="all">All work I can access</option>
+            </select>
+          </label>
+          <label>
+            Look-ahead window
+            <select
+              value={options.daysAhead}
+              onChange={(e) =>
+                setOptions({ ...options, daysAhead: Number(e.target.value) })
+              }
+            >
+              {[0, 1, 3, 7, 14, 30].map((days) => (
+                <option key={days} value={days}>
+                  {days === 0 ? "Today only" : `Next ${days} days`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={options.includeOverdue}
+              onChange={(e) =>
+                setOptions({ ...options, includeOverdue: e.target.checked })
+              }
+            />
+            Include overdue follow-ups
+          </label>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={options.weekdaysOnly}
+              onChange={(e) =>
+                setOptions({ ...options, weekdaysOnly: e.target.checked })
+              }
+            />
+            Weekdays only (UTC)
+          </label>
+          <label>
+            Follow-up records
+            <select
+              value={options.kinds.length === 2 ? "both" : options.kinds[0]}
+              onChange={(e) =>
+                setOptions({
+                  ...options,
+                  kinds:
+                    e.target.value === "both"
+                      ? ["tasks", "opportunities"]
+                      : [e.target.value as "tasks" | "opportunities"],
+                })
+              }
+            >
+              <option value="both">Tasks and opportunities</option>
+              <option value="tasks">Tasks only</option>
+              <option value="opportunities">Opportunities only</option>
+            </select>
+          </label>
+          <label>
+            Email workspaces
+            <select
+              value={options.workspaceIds === null ? "all" : "selected"}
+              onChange={(e) =>
+                setOptions({
+                  ...options,
+                  workspaceIds: e.target.value === "all" ? null : [],
+                })
+              }
+            >
+              <option value="all">All my workspaces</option>
+              <option value="selected">Selected workspaces</option>
+            </select>
+          </label>
+          {options.workspaceIds !== null &&
+            workspaces.map((w) => (
+              <label key={w.id} className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={options.workspaceIds!.includes(w.id)}
+                  onChange={(e) =>
+                    setOptions({
+                      ...options,
+                      workspaceIds: e.target.checked
+                        ? [...options.workspaceIds!, w.id]
+                        : options.workspaceIds!.filter((id) => id !== w.id),
+                    })
+                  }
+                />
+                {w.name}
+              </label>
+            ))}
+          {options.workspaceIds?.length === 0 && (
+            <p className="small">
+              No workspaces selected: no emails will be sent.
+            </p>
+          )}
+        </fieldset>
+        <div className="button-stack">
+          <button className="button" disabled={busy || demo || !emails.length}>
+            Save email preference
+          </button>
+          <button
+            type="button"
+            className="button"
+            disabled={busy || demo}
+            onClick={async () => {
+              setBusy(true);
+              setError("");
+              try {
+                const r = await request("me/digest/preview", "POST", options);
+                setPreview(r.text);
+              } catch (e) {
+                setError((e as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Preview follow-up email
+          </button>
+        </div>
+        {preview && (
+          <div
+            className="digest-preview"
+            role="region"
+            aria-label="Follow-up email preview"
+          >
+            <h3>Email preview</h3>
+            <p className="small">
+              Preview uses the settings above. Save them to update scheduled
+              emails.
+            </p>
+            <pre>{preview}</pre>
+          </div>
+        )}
         {last && (
           <p className="small">
             Last digest:{" "}
@@ -413,7 +563,11 @@ export function InviteManager({
   workspace: string;
   demo: boolean;
   revision: number;
-  onInvite: (email: string, role: string) => Promise<void>;
+  onInvite: (
+    email: string,
+    role: string,
+    scopeIds?: string[] | null,
+  ) => Promise<void>;
   onChanged: (revoked: boolean) => void;
 }) {
   const [invites, setInvites] = useState<
@@ -423,6 +577,7 @@ export function InviteManager({
         role: string;
         status: string;
         expires_at: string;
+        scope_ids: string[] | null;
       }[]
     >([]),
     [error, setError] = useState(""),
@@ -485,7 +640,12 @@ export function InviteManager({
               {invites.map((i) => (
                 <tr key={i.id}>
                   <td>{i.email}</td>
-                  <td>{i.role}</td>
+                  <td>
+                    {i.role} ·{" "}
+                    {i.scope_ids === null
+                      ? "Whole workspace"
+                      : `${i.scope_ids.length} selected records`}
+                  </td>
                   <td>
                     <span className="badge">{i.status}</span>
                   </td>
@@ -517,7 +677,7 @@ export function InviteManager({
                         className="text-button"
                         disabled={busy}
                         onClick={() =>
-                          void act(() => onInvite(i.email, i.role))
+                          void act(() => onInvite(i.email, i.role, i.scope_ids))
                         }
                       >
                         Recreate link

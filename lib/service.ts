@@ -1,3 +1,10 @@
+import {
+  accessIds,
+  checkRecordAccess,
+  redactRecord,
+  scopeSchema,
+  validateScope,
+} from "./access";
 import { normalizeType, typeKey, defaultType } from "./opportunity-types";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -35,6 +42,10 @@ export async function membership(
 ) {
   z.uuid().parse(workspaceId);
   await lockActiveAccount(db, userId);
+  await db.query(
+    `SELECT id FROM workspaces WHERE id=$1 FOR ${write ? "UPDATE" : "SHARE"}`,
+    [workspaceId],
+  );
   const member = (
     await db.query(
       "SELECT role FROM members WHERE workspace_id=$1 AND user_id=$2",
@@ -105,6 +116,7 @@ export async function saveRecord(userId: string, w: string, input: unknown) {
     await membership(w, userId, true, false, db);
     // Workspace lock makes reference checks, deletion, and import deduplication atomic.
     await db.query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE", [w]);
+    await checkRecordAccess(db, userId, w, body.id, body.data);
     await validateReferences(db, w, body.data);
     if (
       body.kind === "opportunities" &&
@@ -189,7 +201,7 @@ export async function saveRecord(userId: string, w: string, input: unknown) {
         [userId, typeKey(body.data.category), body.data.category],
       );
     }
-    return record;
+    return redactRecord(record, await accessIds(db, userId, w));
   });
 }
 export async function deleteRecord(
@@ -202,6 +214,7 @@ export async function deleteRecord(
   return transaction(async (db) => {
     await membership(w, userId, true, false, db);
     await db.query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE", [w]);
+    await checkRecordAccess(db, userId, w, id);
     const linked = await db.query(
       `SELECT id FROM records WHERE workspace_id=$1 AND id<>$2 AND (data->>'organizationId'=$2::text OR data->>'personId'=$2::text OR data->>'projectId'=$2::text OR data->>'opportunityId'=$2::text) LIMIT 1`,
       [w, id],
@@ -238,6 +251,11 @@ export async function importRecords(userId: string, w: string, input: unknown) {
   return transaction(async (db) => {
     await membership(w, userId, true, false, db);
     await db.query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE", [w]);
+    if ((await accessIds(db, userId, w)) !== null)
+      throw new HttpError(
+        403,
+        "CSV import requires whole-workspace access. Add linked records individually.",
+      );
     let imported = 0,
       skipped = 0;
     for (const data of body.rows) {
@@ -267,43 +285,55 @@ export async function importRecords(userId: string, w: string, input: unknown) {
   });
 }
 export async function snapshot(userId: string, w: string) {
-  const role = await membership(w, userId);
-  const [records, members, audits] = await Promise.all([
-    pool().query(
-      "SELECT * FROM records WHERE workspace_id=$1 ORDER BY updated_at DESC",
+  return transaction(async (db) => {
+    const role = await membership(w, userId, false, false, db);
+    const ids = await accessIds(db, userId, w);
+    const records = await db.query(
+      "SELECT * FROM records WHERE workspace_id=$1 AND ($2::uuid[] IS NULL OR id=ANY($2)) ORDER BY updated_at DESC",
+      [w, ids],
+    );
+    const members = await db.query(
+      "SELECT u.id,u.name,m.role,m.scope_ids FROM members m JOIN users u ON u.id=m.user_id WHERE workspace_id=$1 ORDER BY u.name",
       [w],
-    ),
-    pool().query(
-      "SELECT u.id,u.name,m.role FROM members m JOIN users u ON u.id=m.user_id WHERE workspace_id=$1 ORDER BY u.name",
-      [w],
-    ),
-    pool().query(
-      "SELECT a.id,a.action,a.record_id,a.detail,a.created_at,u.name AS actor FROM audit a JOIN users u ON u.id=a.actor_id WHERE workspace_id=$1 ORDER BY a.id DESC LIMIT 100",
-      [w],
-    ),
-  ]);
-  return {
-    role,
-    records: records.rows,
-    members: members.rows,
-    audit: audits.rows,
-  };
+    );
+    const audits =
+      ids === null
+        ? await db.query(
+            "SELECT a.id,a.action,a.record_id,a.detail,a.created_at,u.name AS actor FROM audit a JOIN users u ON u.id=a.actor_id WHERE workspace_id=$1 ORDER BY a.id DESC LIMIT 100",
+            [w],
+          )
+        : { rows: [] };
+    return {
+      role,
+      limited: ids !== null,
+      records: records.rows.map((r) => redactRecord(r, ids)),
+      members: members.rows.map((m) =>
+        role === "owner" ? m : { id: m.id, name: m.name, role: m.role },
+      ),
+      audit: audits.rows,
+    };
+  });
 }
 export async function createInvite(userId: string, w: string, input: unknown) {
   const body = z
-    .object({ email: z.email().max(254), role: z.enum(["editor", "viewer"]) })
+    .object({
+      email: z.email().max(254),
+      role: z.enum(["editor", "viewer"]),
+      scopeIds: scopeSchema.default(null),
+    })
     .parse(input);
   const raw = token();
   await transaction(async (db) => {
     await membership(w, userId, true, true, db);
     await db.query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE", [w]);
+    await validateScope(db, w, body.scopeIds);
     await db.query(
       "UPDATE invites SET revoked_at=now() WHERE workspace_id=$1 AND email=$2 AND accepted_at IS NULL AND revoked_at IS NULL",
       [w, body.email.toLowerCase()],
     );
     await db.query(
-      "INSERT INTO invites(hash,workspace_id,email,role,expires_at) VALUES($1,$2,$3,$4,now()+interval '7 days')",
-      [hash(raw), w, body.email.toLowerCase(), body.role],
+      "INSERT INTO invites(hash,workspace_id,email,role,expires_at,scope_ids) VALUES($1,$2,$3,$4,now()+interval '7 days',$5)",
+      [hash(raw), w, body.email.toLowerCase(), body.role, body.scopeIds],
     );
     await audit(db, w, userId, "Invitation created", null, {
       role: body.role,
@@ -315,6 +345,15 @@ export async function createInvite(userId: string, w: string, input: unknown) {
 export async function acceptInvite(userId: string, raw: string) {
   return transaction(async (db) => {
     await lockActiveAccount(db, userId);
+    const candidate = (
+      await db.query("SELECT workspace_id FROM invites WHERE hash=$1", [
+        hash(raw),
+      ])
+    ).rows[0];
+    if (candidate)
+      await db.query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE", [
+        candidate.workspace_id,
+      ]);
     const invite = (
       await db.query(
         "SELECT * FROM invites WHERE hash=$1 AND expires_at>now() AND accepted_at IS NULL AND revoked_at IS NULL FOR UPDATE",
@@ -336,8 +375,8 @@ export async function acceptInvite(userId: string, raw: string) {
         "Verify the email address this invitation was sent to in Settings, then open the invitation again.",
       );
     await db.query(
-      "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
-      [invite.workspace_id, userId, invite.role],
+      "INSERT INTO members(workspace_id,user_id,role,scope_ids) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+      [invite.workspace_id, userId, invite.role, invite.scope_ids],
     );
     await db.query("UPDATE invites SET accepted_at=now() WHERE hash=$1", [
       hash(raw),
@@ -355,11 +394,15 @@ export async function acceptInvite(userId: string, raw: string) {
 }
 export async function updateMember(userId: string, w: string, input: unknown) {
   const body = z
-    .object({ userId: z.uuid(), role: z.enum(["editor", "viewer", "remove"]) })
+    .object({
+      userId: z.uuid(),
+      role: z.enum(["editor", "viewer", "remove"]),
+      scopeIds: scopeSchema.optional(),
+    })
     .parse(input);
   return transaction(async (db) => {
     await membership(w, userId, true, true, db);
-    await lockActiveAccount(db, body.userId);
+
     const target = (
       await db.query(
         "SELECT role FROM members WHERE workspace_id=$1 AND user_id=$2 FOR UPDATE",
@@ -368,6 +411,7 @@ export async function updateMember(userId: string, w: string, input: unknown) {
     ).rows[0];
     if (!target || target.role === "owner")
       throw new HttpError(400, "The workspace owner cannot be changed here.");
+    if (body.scopeIds !== undefined) await validateScope(db, w, body.scopeIds);
     if (body.role === "remove") {
       if (
         (
@@ -387,8 +431,14 @@ export async function updateMember(userId: string, w: string, input: unknown) {
       );
     } else
       await db.query(
-        "UPDATE members SET role=$1 WHERE workspace_id=$2 AND user_id=$3",
-        [body.role, w, body.userId],
+        "UPDATE members SET role=$1,scope_ids=CASE WHEN $4::boolean THEN $5::uuid[] ELSE scope_ids END WHERE workspace_id=$2 AND user_id=$3",
+        [
+          body.role,
+          w,
+          body.userId,
+          body.scopeIds !== undefined,
+          body.scopeIds ?? null,
+        ],
       );
     await audit(db, w, userId, "Member access changed", null, body);
     return { ok: true };
@@ -418,34 +468,56 @@ async function contextIds(
   return rows.rows.map((r) => r.id);
 }
 export async function timeline(userId: string, w: string, id: string) {
-  await membership(w, userId);
-  z.uuid().parse(id);
-  if (
-    !(
-      await pool().query(
-        "SELECT id FROM records WHERE workspace_id=$1 AND id=$2",
-        [w, id],
-      )
-    ).rowCount
-  )
-    throw new HttpError(404, "Record not found.");
-  const rows = await pool().query(
-    `WITH RECURSIVE related AS (
+  return transaction(async (db) => {
+    await membership(w, userId, false, false, db);
+    const ids = await accessIds(db, userId, w);
+    await checkRecordAccess(db, userId, w, id);
+
+    z.uuid().parse(id);
+    if (
+      !(
+        await db.query(
+          "SELECT id FROM records WHERE workspace_id=$1 AND id=$2",
+          [w, id],
+        )
+      ).rowCount
+    )
+      throw new HttpError(404, "Record not found.");
+    const rows = await db.query(
+      `WITH RECURSIVE related AS (
  SELECT id FROM records WHERE workspace_id=$1 AND id=$2
  UNION SELECT r.id FROM records r JOIN related p ON p.id::text IN(r.data->>'personId',r.data->>'organizationId',r.data->>'projectId',r.data->>'opportunityId') WHERE r.workspace_id=$1
  ) SELECT a.id,a.record_id,a.action,a.detail,a.created_at,u.name AS actor,
  CASE WHEN r.kind='notes' AND a.id=(SELECT max(b.id) FROM audit b WHERE b.workspace_id=$1 AND b.record_id=r.id) THEN r.data->>'description' ELSE NULL END AS note
  FROM audit a JOIN users u ON u.id=a.actor_id LEFT JOIN records r ON r.id=a.record_id AND r.workspace_id=$1
- WHERE a.workspace_id=$1 AND (a.record_id IN(SELECT id FROM related) OR a.detail->'relatedIds' @> to_jsonb(ARRAY[$2::text]))
+ WHERE a.workspace_id=$1 AND ($3::uuid[] IS NULL OR a.record_id=ANY($3)) AND (a.record_id IN(SELECT id FROM related) OR a.detail->'relatedIds' @> to_jsonb(ARRAY[$2::text]))
  ORDER BY a.created_at DESC,a.id DESC LIMIT 100`,
-    [w, id],
-  );
-  return { events: rows.rows };
+      [w, id, ids],
+    );
+    if (ids !== null) {
+      const current = (
+        await db.query(
+          "SELECT id,kind,data FROM records WHERE id=ANY($1::uuid[]) AND workspace_id=$2",
+          [ids, w],
+        )
+      ).rows;
+      return {
+        events: rows.rows.map((event) => {
+          const record = current.find((r) => r.id === event.record_id);
+          return {
+            ...event,
+            detail: { name: record?.data.name || "Record", kind: record?.kind },
+          };
+        }),
+      };
+    }
+    return { events: rows.rows };
+  });
 }
 export async function listInvites(userId: string, w: string) {
   await membership(w, userId, false, true);
   const rows = await pool().query(
-    `SELECT id,email,role,created_at,expires_at,CASE WHEN revoked_at IS NOT NULL THEN 'Revoked' WHEN accepted_at IS NOT NULL THEN 'Accepted' WHEN expires_at<now() THEN 'Expired' ELSE 'Pending' END AS status FROM invites WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 100`,
+    `SELECT id,email,role,scope_ids,created_at,expires_at,CASE WHEN revoked_at IS NOT NULL THEN 'Revoked' WHEN accepted_at IS NOT NULL THEN 'Accepted' WHEN expires_at<now() THEN 'Expired' ELSE 'Pending' END AS status FROM invites WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 100`,
     [w],
   );
   return { invites: rows.rows };
@@ -472,7 +544,7 @@ export async function revokeInvite(userId: string, w: string, id: string) {
 export async function previewInvite(raw: string) {
   const row = (
     await pool().query(
-      `SELECT w.name,i.email,i.role FROM invites i JOIN workspaces w ON w.id=i.workspace_id WHERE i.hash=$1 AND i.expires_at>now() AND i.accepted_at IS NULL AND i.revoked_at IS NULL`,
+      `SELECT w.name,i.email,i.role,i.scope_ids FROM invites i JOIN workspaces w ON w.id=i.workspace_id WHERE i.hash=$1 AND i.expires_at>now() AND i.accepted_at IS NULL AND i.revoked_at IS NULL`,
       [hash(raw)],
     )
   ).rows[0];

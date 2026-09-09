@@ -48,4 +48,7 @@ CREATE TABLE IF NOT EXISTS digest_receipts(user_id uuid NOT NULL REFERENCES user
 ALTER TABLE users ADD COLUMN IF NOT EXISTS merged_into uuid REFERENCES users(id);
 CREATE TABLE IF NOT EXISTS identity_recoveries(hash text PRIMARY KEY,target_id uuid NOT NULL REFERENCES users(id),source_id uuid NOT NULL REFERENCES users(id),session_hash text NOT NULL,fingerprint text NOT NULL,current_verified boolean NOT NULL DEFAULT false,consumed boolean NOT NULL DEFAULT false,expires_at timestamptz NOT NULL);
 ALTER TABLE challenges ADD COLUMN IF NOT EXISTS recovery_hash text REFERENCES identity_recoveries(hash);
+ALTER TABLE members ADD COLUMN IF NOT EXISTS scope_ids uuid[];
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS scope_ids uuid[];
+ALTER TABLE users ADD COLUMN IF NOT EXISTS digest_options jsonb NOT NULL DEFAULT '{}';
 `;

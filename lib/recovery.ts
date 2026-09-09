@@ -1,3 +1,4 @@
+import { accessIds } from "./access";
 import type { PoolClient } from "pg";
 import { transaction } from "./db";
 import {
@@ -27,17 +28,33 @@ export async function accountSummary(db: PoolClient, id: string) {
   ).rows;
   const workspaces = (
     await db.query(
-      "SELECT w.id,w.name,m.role,(SELECT count(*)::int FROM records r WHERE r.workspace_id=w.id) AS records FROM members m JOIN workspaces w ON w.id=m.workspace_id WHERE m.user_id=$1 ORDER BY w.id",
+      "SELECT w.id,w.name,m.role,m.scope_ids FROM members m JOIN workspaces w ON w.id=m.workspace_id WHERE m.user_id=$1 ORDER BY w.id",
       [id],
     )
   ).rows;
+  for (const w of workspaces) {
+    const ids = await accessIds(db, id, w.id);
+    w.records =
+      ids === null
+        ? (
+            await db.query(
+              "SELECT count(*)::int AS n FROM records WHERE workspace_id=$1",
+              [w.id],
+            )
+          ).rows[0].n
+        : ids.length;
+  }
   return { name: user.name, identities, workspaces };
 }
 function fingerprint(summary: Awaited<ReturnType<typeof accountSummary>>) {
   return hash(
     JSON.stringify({
       identities: summary.identities,
-      workspaces: summary.workspaces.map((w) => ({ id: w.id, role: w.role })),
+      workspaces: summary.workspaces.map((w) => ({
+        id: w.id,
+        role: w.role,
+        scopeIds: w.scope_ids,
+      })),
     }),
   );
 }
@@ -116,10 +133,10 @@ export async function completeRecovery(req: Request, raw: string) {
       "SELECT id FROM workspaces WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE",
       [workspaces],
     );
-    // Workspaces stay separate. Preserve the strongest existing role in shared workspaces.
+    // Keep workspace scopes. Mixed non-owner roles use viewer to avoid widening edit privileges.
     await db.query(
-      `INSERT INTO members(workspace_id,user_id,role) SELECT workspace_id,$1,role FROM members WHERE user_id=$2
-  ON CONFLICT(workspace_id,user_id) DO UPDATE SET role=CASE WHEN members.role='owner' OR EXCLUDED.role='owner' THEN 'owner' WHEN members.role='editor' OR EXCLUDED.role='editor' THEN 'editor' ELSE 'viewer' END`,
+      `INSERT INTO members(workspace_id,user_id,role,scope_ids) SELECT workspace_id,$1,role,scope_ids FROM members WHERE user_id=$2
+  ON CONFLICT(workspace_id,user_id) DO UPDATE SET role=CASE WHEN members.role='owner' OR EXCLUDED.role='owner' THEN 'owner' WHEN members.role='editor' AND EXCLUDED.role='editor' THEN 'editor' ELSE 'viewer' END, scope_ids=CASE WHEN members.scope_ids IS NULL OR EXCLUDED.scope_ids IS NULL THEN NULL ELSE ARRAY(SELECT DISTINCT unnest(members.scope_ids || EXCLUDED.scope_ids)) END`,
       [r.target_id, r.source_id],
     );
     await db.query(

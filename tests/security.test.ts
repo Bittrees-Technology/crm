@@ -911,3 +911,380 @@ test("custom opportunity types persist per user, deduplicate, and roll back with
     await deleteRecord(owner, workspace, record.id, record.version);
   assert.deepEqual(await list(owner), ["Ecosystem grant"]);
 });
+
+async function scopedFixture() {
+  const a = await walletLogin(),
+    b = await walletLogin();
+  const actor = (await currentUser(request(cookiePair(a.result.cookie))))!.id;
+  const collaborator = (await currentUser(
+    request(cookiePair(b.result.cookie)),
+  ))!.id;
+  const w = (
+    await pool().query("SELECT workspace_id FROM members WHERE user_id=$1", [
+      actor,
+    ])
+  ).rows[0].workspace_id;
+  const root = await saveRecord(actor, w, {
+    kind: "projects",
+    data: { name: "Shared project" },
+  });
+  const hidden = await saveRecord(actor, w, {
+    kind: "organizations",
+    data: { name: "Private organization" },
+  });
+  const task = await saveRecord(actor, w, {
+    kind: "tasks",
+    data: {
+      name: "Shared task",
+      projectId: root.id,
+      organizationId: hidden.id,
+      ownerId: collaborator,
+      dueDate: new Date().toISOString().slice(0, 10),
+    },
+  }).catch(async () => {
+    await pool().query(
+      "INSERT INTO members(workspace_id,user_id,role,scope_ids) VALUES($1,$2,'editor',$3)",
+      [w, collaborator, [root.id]],
+    );
+    return saveRecord(actor, w, {
+      kind: "tasks",
+      data: {
+        name: "Shared task",
+        projectId: root.id,
+        organizationId: hidden.id,
+        ownerId: collaborator,
+        dueDate: new Date().toISOString().slice(0, 10),
+      },
+    });
+  });
+  return { actor, collaborator, w, root, hidden, task };
+}
+test("project-limited collaborators cannot read, export, edit, import, or link hidden records", async () => {
+  const { timeline } = await import("../lib/service");
+  const f = await scopedFixture();
+  const view = await snapshot(f.collaborator, f.w);
+  assert.equal(view.limited, true);
+  assert.deepEqual(
+    new Set(view.records.map((r) => r.id)),
+    new Set([f.root.id, f.task.id]),
+  );
+  assert.equal(
+    view.records.find((r) => r.id === f.task.id)!.data.organizationId,
+    "",
+  );
+  assert.equal(view.audit.length, 0);
+  assert.doesNotMatch(JSON.stringify(view), /Private organization/);
+  await assert.rejects(
+    () => timeline(f.collaborator, f.w, f.hidden.id),
+    /Record not found/,
+  );
+  await assert.rejects(
+    () =>
+      saveRecord(f.collaborator, f.w, {
+        id: f.hidden.id,
+        version: 1,
+        kind: "organizations",
+        data: { ...f.hidden.data, name: "Unauthorized" },
+      }),
+    /Record not found/,
+  );
+  await assert.rejects(
+    () => deleteRecord(f.collaborator, f.w, f.hidden.id, 1),
+    /Record not found/,
+  );
+  await assert.rejects(
+    () =>
+      importRecords(f.collaborator, f.w, {
+        kind: "people",
+        rows: [{ name: "No import" }],
+      }),
+    /whole-workspace/,
+  );
+  await assert.rejects(
+    () =>
+      saveRecord(f.collaborator, f.w, {
+        kind: "tasks",
+        data: {
+          name: "Hidden link",
+          organizationId: f.hidden.id,
+          projectId: f.root.id,
+        },
+      }),
+    /outside your/,
+  );
+  const edited = await saveRecord(f.collaborator, f.w, {
+    id: f.task.id,
+    version: f.task.version,
+    kind: "tasks",
+    data: {
+      ...view.records.find((r) => r.id === f.task.id)!.data,
+      name: "Updated visible task",
+    },
+  });
+  assert.equal(edited.data.organizationId, "");
+  assert.equal(
+    (await pool().query("SELECT data FROM records WHERE id=$1", [f.task.id]))
+      .rows[0].data.organizationId,
+    f.hidden.id,
+  );
+  await assert.rejects(
+    () =>
+      saveRecord(f.collaborator, f.w, {
+        id: f.task.id,
+        version: edited.version,
+        kind: "tasks",
+        data: { ...edited.data, projectId: "" },
+      }),
+    /Keep this record linked/,
+  );
+  const events = await timeline(f.collaborator, f.w, f.root.id);
+  assert.doesNotMatch(
+    JSON.stringify(events),
+    new RegExp(f.hidden.id + "|Private organization"),
+  );
+  await updateMember(f.actor, f.w, {
+    userId: f.collaborator,
+    role: "viewer",
+    scopeIds: [f.hidden.id],
+  });
+  const changed = await snapshot(f.collaborator, f.w);
+  assert.ok(changed.records.some((r) => r.id === f.hidden.id));
+  assert.ok(!changed.records.some((r) => r.id === f.root.id));
+  await assert.rejects(
+    () =>
+      saveRecord(f.collaborator, f.w, {
+        kind: "tasks",
+        data: { name: "Viewer write", organizationId: f.hidden.id },
+      }),
+    /role does not allow/,
+  );
+});
+test("scoped invitations keep their scope on acceptance and reject foreign roots", async () => {
+  const f = await scopedFixture();
+  const login = await walletLogin();
+  const invited = (await currentUser(request(cookiePair(login.result.cookie))))!
+    .id;
+  const email = `scope-${randomUUID()}@example.com`;
+  await pool().query(
+    "INSERT INTO identities(kind,value,user_id) VALUES('email',$1,$2)",
+    [email, invited],
+  );
+  await assert.rejects(
+    () =>
+      createInvite(f.actor, f.w, {
+        email,
+        role: "editor",
+        scopeIds: [randomUUID()],
+      }),
+    /Select at least/,
+  );
+  const invite = await createInvite(f.actor, f.w, {
+    email,
+    role: "viewer",
+    scopeIds: [f.root.id],
+  });
+  await acceptInvite(invited, invite.token);
+  const view = await snapshot(invited, f.w);
+  assert.equal(view.role, "viewer");
+  assert.equal(view.limited, true);
+  assert.ok(!view.records.some((r) => r.id === f.hidden.id));
+});
+test("workspace management requires ownership and a fresh typed review, preserves links on merge, and supports deletion", async () => {
+  const { workspaceOperation } = await import("../lib/workspaces");
+  const f = await scopedFixture();
+  const target = randomUUID();
+  await pool().query(
+    "INSERT INTO workspaces(id,name) VALUES($1,'Merge destination')",
+    [target],
+  );
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'owner')",
+    [target, f.actor],
+  );
+  await assert.rejects(
+    () => workspaceOperation(f.collaborator, f.w, { action: "delete" }),
+    /must own/,
+  );
+  const first: any = await workspaceOperation(f.actor, f.w, {
+    action: "merge",
+    targetId: target,
+  });
+  await assert.rejects(
+    () =>
+      workspaceOperation(
+        f.actor,
+        f.w,
+        {
+          action: "merge",
+          targetId: target,
+          review: first.review,
+          confirmName: "wrong",
+        },
+        true,
+      ),
+    /did not match/,
+  );
+  await saveRecord(f.actor, f.w, {
+    kind: "notes",
+    data: { name: "After review", projectId: f.root.id },
+  });
+  await assert.rejects(
+    () =>
+      workspaceOperation(
+        f.actor,
+        f.w,
+        {
+          action: "merge",
+          targetId: target,
+          review: first.review,
+          confirmName: first.source.name,
+        },
+        true,
+      ),
+    /workspace changed/,
+  );
+  const review: any = await workspaceOperation(f.actor, f.w, {
+    action: "merge",
+    targetId: target,
+  });
+  await workspaceOperation(
+    f.actor,
+    f.w,
+    {
+      action: "merge",
+      targetId: target,
+      review: review.review,
+      confirmName: review.source.name,
+    },
+    true,
+  );
+  const merged = await snapshot(f.actor, target);
+  assert.equal(
+    merged.records.find((r) => r.id === f.task.id)!.data.projectId,
+    f.root.id,
+  );
+  assert.equal(
+    merged.records.find((r) => r.id === f.task.id)!.version,
+    f.task.version + 1,
+  );
+  const limited = await snapshot(f.collaborator, target);
+  assert.equal(limited.limited, true);
+  assert.ok(!limited.records.some((r) => r.id === f.hidden.id));
+  assert.equal(
+    (await pool().query("SELECT id FROM workspaces WHERE id=$1", [f.w]))
+      .rowCount,
+    0,
+  );
+  const last: any = await workspaceOperation(f.actor, target, {
+    action: "delete",
+  });
+  await assert.rejects(
+    () =>
+      workspaceOperation(
+        f.actor,
+        target,
+        {
+          action: "delete",
+          review: last.review,
+          confirmName: last.source.name,
+        },
+        true,
+      ),
+    /last workspace/,
+  );
+  const backup = randomUUID();
+  await pool().query(
+    "INSERT INTO workspaces(id,name) VALUES($1,'Kept workspace')",
+    [backup],
+  );
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'owner')",
+    [backup, f.actor],
+  );
+  const deletion: any = await workspaceOperation(f.actor, target, {
+    action: "delete",
+  });
+  await workspaceOperation(
+    f.actor,
+    target,
+    {
+      action: "delete",
+      review: deletion.review,
+      confirmName: deletion.source.name,
+    },
+    true,
+  );
+  assert.equal(
+    (
+      await pool().query("SELECT id FROM records WHERE workspace_id=$1", [
+        target,
+      ])
+    ).rowCount,
+    0,
+  );
+});
+test("daily email filters and preview respect scoped access, assignments, workspace selection, and dates", async () => {
+  const { previewDigest, saveDigestPreference, sendDigest } =
+    await import("../lib/digest");
+  const f = await scopedFixture();
+  const day = new Date().toISOString().slice(0, 10);
+  await saveRecord(f.actor, f.w, {
+    kind: "tasks",
+    data: {
+      name: "Hidden digest item",
+      organizationId: f.hidden.id,
+      ownerId: f.collaborator,
+      dueDate: day,
+    },
+  });
+  await saveRecord(f.actor, f.w, {
+    kind: "tasks",
+    data: {
+      name: "Visible team follow-up",
+      projectId: f.root.id,
+      ownerId: f.actor,
+      dueDate: day,
+    },
+  });
+  const mine = await previewDigest(f.collaborator, { daysAhead: 0 });
+  assert.match(mine.text, /Shared task/);
+  assert.doesNotMatch(
+    mine.text,
+    /Hidden digest item|Private organization|Visible team follow-up/,
+  );
+  const all = await previewDigest(f.collaborator, {
+    assignment: "all",
+    daysAhead: 0,
+  });
+  assert.match(all.text, /Visible team follow-up/);
+  assert.doesNotMatch(all.text, /Hidden digest item|Private organization/);
+  assert.equal(
+    (await previewDigest(f.collaborator, { workspaceIds: [] })).count,
+    0,
+  );
+  assert.equal(
+    (await previewDigest(f.collaborator, { kinds: ["opportunities"] })).count,
+    0,
+  );
+  const email = `digest-${randomUUID()}@example.com`;
+  await pool().query(
+    "INSERT INTO identities(kind,value,user_id) VALUES('email',$1,$2)",
+    [email, f.collaborator],
+  );
+  await saveDigestPreference(f.collaborator, {
+    enabled: true,
+    email,
+    options: { assignment: "all", daysAhead: 0 },
+  });
+  let message: any;
+  assert.equal(
+    await sendDigest(f.collaborator, day, async (m) => {
+      message = m;
+    }),
+    "sent",
+  );
+  assert.match(message.text, /Due today/);
+  assert.match(message.text, /workspace=/);
+  assert.match(message.html, /Open this record/);
+  assert.doesNotMatch(message.text, /Hidden digest item|Private organization/);
+});

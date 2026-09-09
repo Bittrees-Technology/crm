@@ -13,6 +13,11 @@ import {
 } from "@/lib/auth-client";
 import Papa from "papaparse";
 import {
+  ScopePicker,
+  MemberAccess,
+  WorkspaceActions,
+} from "./components/workspace-controls";
+import {
   typeOptions,
   normalizeType,
   defaultType,
@@ -82,7 +87,12 @@ type SavedView = {
   filter: string;
   board: boolean;
 };
-type Member = { id: string; name: string; role: string };
+type Member = {
+  id: string;
+  name: string;
+  role: string;
+  scope_ids?: string[] | null;
+};
 type Me = {
   opportunityTypes?: string[];
   user: { id: string; name: string };
@@ -90,6 +100,7 @@ type Me = {
   identities: { kind: string; value: string }[];
 };
 type Snapshot = {
+  limited?: boolean;
   role: string;
   records: CrmRecord[];
   members: Member[];
@@ -888,6 +899,7 @@ export default function App() {
     [linking, setLinking] = useState(false),
     [importing, setImporting] = useState(false),
     [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [inviteScope, setInviteScope] = useState<string[] | null>(null);
   const [reauth, setReauth] = useState(false);
   const workspaceRef = useRef(workspace);
   workspaceRef.current = workspace;
@@ -907,6 +919,7 @@ export default function App() {
   }, []);
   const [inviteRevision, setInviteRevision] = useState(0),
     [inviteInfo, setInviteInfo] = useState<{
+      scope_ids: string[] | null;
       name: string;
       email: string;
       role: string;
@@ -960,10 +973,14 @@ export default function App() {
   async function loadMe() {
     const m = await api("me");
     setMe(m);
+    const requested =
+      new URLSearchParams(window.location.search).get("workspace") || "";
     setWorkspace((w) =>
-      m.workspaces.some((a: { id: string }) => a.id === w)
-        ? w
-        : m.workspaces[0]?.id || "",
+      !w && m.workspaces.some((a: { id: string }) => a.id === requested)
+        ? requested
+        : m.workspaces.some((a: { id: string }) => a.id === w)
+          ? w
+          : m.workspaces[0]?.id || "",
     );
     return m;
   }
@@ -1011,10 +1028,15 @@ export default function App() {
     window.addEventListener("popstate", pop);
     return () => window.removeEventListener("popstate", pop);
   }, []);
-  async function createInvitation(email: string, role: string) {
+  async function createInvitation(
+    email: string,
+    role: string,
+    scopeIds: string[] | null = null,
+  ) {
     const r = await api("workspaces/" + workspace + "/invites", "POST", {
       email,
       role,
+      scopeIds,
     });
     setInviteUrl(window.location.origin + "/?invite=" + r.token);
     setInviteRevision((v) => v + 1);
@@ -1070,6 +1092,7 @@ export default function App() {
     setFilter("all");
     setEditing(null);
     setInviteUrl("");
+    setInviteScope(null);
     if (workspace && !demo) {
       setSnapshot({ role: "viewer", records: [], members: [], audit: [] });
       setBusy(true);
@@ -1094,6 +1117,17 @@ export default function App() {
       return () => clearTimeout(t);
     }
   }, [notice]);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("record");
+    if (!id || params.get("workspace") !== workspace) return;
+    const record = snapshot.records.find((r) => r.id === id);
+    if (record) {
+      setEditing({ kind: record.kind, record });
+      params.delete("record");
+      window.history.replaceState(null, "", "/?" + params.toString());
+    }
+  }, [snapshot.records, workspace]);
   function startDemo() {
     setDemo(true);
     setMe({
@@ -1432,6 +1466,25 @@ export default function App() {
             </span>
           </div>
         )}
+        {snapshot.limited && (
+          <div className="demo-bar">
+            Limited collaboration{" "}
+            <span>
+              You can access selected records and the work linked beneath them.
+            </span>
+          </div>
+        )}
+        {!me.workspaces.length && (
+          <div className="panel-pad">
+            <p>You do not belong to a workspace yet.</p>
+            <button
+              className="button primary"
+              onClick={() => setCreatingWorkspace(true)}
+            >
+              Create your workspace
+            </button>
+          </div>
+        )}
         {error && (
           <div role="alert" className="error global-message">
             {error}
@@ -1455,7 +1508,7 @@ export default function App() {
             <span>
               {inviteError ||
                 (inviteInfo
-                  ? `Join ${inviteInfo.name} as ${inviteInfo.role}. Invited email: ${inviteInfo.email}`
+                  ? `Join ${inviteInfo.name} as ${inviteInfo.role}. ${inviteInfo.scope_ids === null ? "Whole workspace" : "Limited to selected records"}. Invited email: ${inviteInfo.email}`
                   : "Loading invitation…")}
             </span>
             {inviteInfo &&
@@ -1940,8 +1993,21 @@ export default function App() {
                       Create another workspace
                     </button>
                   </div>
+                  {snapshot.role === "owner" && !demo && (
+                    <WorkspaceActions
+                      key={workspace}
+                      workspace={workspace}
+                      workspaces={me.workspaces}
+                      onChanged={async (id) => {
+                        await loadMe();
+                        if (id) setWorkspace(id);
+                        notify("Workspace updated.");
+                      }}
+                    />
+                  )}
                 </section>
                 <DigestSettings
+                  workspaces={me.workspaces}
                   identities={me.identities}
                   demo={demo}
                   onLink={() => setLinking(true)}
@@ -1998,6 +2064,17 @@ export default function App() {
                           <option value="remove">Remove access</option>
                         </select>
                       )}
+                      {snapshot.role === "owner" &&
+                        m.role !== "owner" &&
+                        !demo && (
+                          <MemberAccess
+                            key={m.id + JSON.stringify(m.scope_ids)}
+                            workspace={workspace}
+                            member={m}
+                            records={records}
+                            onChanged={refresh}
+                          />
+                        )}
                     </div>
                   ))}
                   {snapshot.role === "owner" && (
@@ -2010,6 +2087,7 @@ export default function App() {
                           createInvitation(
                             String(values.get("email")),
                             String(values.get("role")),
+                            inviteScope,
                           ),
                         );
                       }}
@@ -2031,9 +2109,15 @@ export default function App() {
                           <option value="viewer">Viewer</option>
                         </select>
                       </label>
+                      <ScopePicker
+                        records={records}
+                        value={inviteScope}
+                        onChange={setInviteScope}
+                        disabled={busy || demo}
+                      />
                       <button
                         className="button primary"
-                        disabled={busy || demo}
+                        disabled={busy || demo || inviteScope?.length === 0}
                       >
                         <Plus size={17} />
                         Create invite link
@@ -2190,14 +2274,16 @@ export default function App() {
                     </button>
                   </div>
                 )}
-                {["people", "organizations"].includes(page) && canEdit && (
-                  <button
-                    className="button subtle"
-                    onClick={() => setImporting(true)}
-                  >
-                    Import CSV
-                  </button>
-                )}
+                {["people", "organizations"].includes(page) &&
+                  canEdit &&
+                  !snapshot.limited && (
+                    <button
+                      className="button subtle"
+                      onClick={() => setImporting(true)}
+                    >
+                      Import CSV
+                    </button>
+                  )}
                 <button
                   className="button subtle"
                   title="Export this view as CSV"
@@ -2955,6 +3041,8 @@ function RecordEditor({
                 )}
               </>
             )}
+            {["people", "organizations", "opportunities"].includes(kind) &&
+              ref("projectId", "Project", "projects")}
             {kind === "tasks" && (
               <>
                 {select(

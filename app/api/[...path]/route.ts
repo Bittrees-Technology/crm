@@ -30,10 +30,12 @@ import {
   timeline,
 } from "@/lib/service";
 import {
+  previewDigest,
   digestPreference,
   saveDigestPreference,
   runDigests,
 } from "@/lib/digest";
+import { workspaceOperation } from "@/lib/workspaces";
 import { completeRecovery } from "@/lib/recovery";
 import { timingSafeEqual } from "node:crypto";
 export const maxDuration = 300;
@@ -75,7 +77,7 @@ async function handle(req: NextRequest) {
       });
     if (path === "health" && req.method === "GET") {
       await pool().query("SELECT id FROM workspaces LIMIT 1");
-      return json({ status: "ok", version: "0.3.2" });
+      return json({ status: "ok", version: "0.4.0" });
     }
     let body: Record<string, unknown> = {};
     if (req.method !== "GET") {
@@ -152,6 +154,8 @@ async function handle(req: NextRequest) {
     }
     const user = (await currentUser(req))!;
     if (req.method !== "GET") await rateLimit("user:" + user.id, 300);
+    if (path === "me/digest/preview" && req.method === "POST")
+      return json(await previewDigest(user.id, body));
     if (path === "me/digest" && req.method === "GET")
       return json(await digestPreference(user.id));
     if (path === "me/digest" && req.method === "PATCH")
@@ -238,6 +242,10 @@ async function handle(req: NextRequest) {
         });
         return json({ ok: true });
       }
+      if (resource === "review" && req.method === "POST")
+        return json(await workspaceOperation(user.id, w, body));
+      if (resource === "manage" && req.method === "POST")
+        return json(await workspaceOperation(user.id, w, body, true));
       if (resource === "records" && req.method === "POST")
         return json(await saveRecord(user.id, w, body));
       if (resource === "records" && req.method === "DELETE")

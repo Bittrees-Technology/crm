@@ -1981,3 +1981,92 @@ td,
 .recovery-actions .text-button {
   margin-top: 12px;
 }
+
+.scope-picker,
+.digest-controls {
+  border: 1px solid #dbe4df;
+  border-radius: 8px;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.scope-picker legend {
+  font-size: 13px;
+  font-weight: 600;
+}
+.scope-options {
+  max-height: 220px;
+  overflow: auto;
+  display: grid;
+  gap: 10px;
+}
+.member-access {
+  flex-basis: 100%;
+}
+.member-row {
+  flex-wrap: wrap;
+}
+.workspace-actions form,
+.operation-review {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+.operation-review {
+  padding: 16px;
+  border: 1px solid #dbe4df;
+  border-radius: 8px;
+}
+.digest-preview {
+  padding: 16px;
+  background: #f3f7f4;
+  border-radius: 8px;
+}
+.digest-preview pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.6;
+}
+.invite-form .scope-picker {
+  flex-basis: 100%;
+}
+.invite-form {
+  flex-wrap: wrap;
+}
+.invite-form > label:first-child {
+  min-width: 220px;
+}
+.invite-form .scope-picker {
+  width: 100%;
+  flex: 0 0 100%;
+}
+.invite-form .scope-picker label {
+  width: 100%;
+  min-width: 0;
+  flex: none;
+}
+.member-access .scope-picker select {
+  width: 100%;
+}
+.digest-controls {
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.digest-preview {
+  width: 100%;
+}
+.workspace-actions .button-stack {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+@media (max-width: 600px) {
+  .digest-controls {
+    grid-template-columns: 1fr;
+  }
+  .invite-form > label:first-child {
+    min-width: 0;
+    flex-basis: 100%;
+  }
+}
