@@ -1,5 +1,7 @@
 # Bittrees CRM
 
+**Live:** [crm.bittrees.org](https://crm.bittrees.org) · [Try the fictional demo](https://crm.bittrees.org/?demo=1)
+
 An independent relationship workspace for people, organizations, partnerships, and the next step. Built from scratch; inspired by Twenty's clarity, with no Twenty source code or runtime dependency.
 
 **MIT licensed.** Next.js, React, PostgreSQL, Sign-In with Ethereum, and passwordless email verification.
@@ -7,7 +9,7 @@ An independent relationship workspace for people, organizations, partnerships, a
 ## MVP
 
 - People, organizations, opportunities, projects, tasks, and notes.
-- Search, ownership filters, pipeline board/table views, follow-ups, and reports with separate currency totals.
+- Search, ownership filters, browser-saved views, pipeline board/table views, follow-ups, stage aging, and reports with separate currency totals.
 - Validated CSV imports with duplicate preview; CSV view exports and a complete JSON workspace export.
 - Ethereum EOA sign-in and email codes through Resend.
 - Explicit verification to link an email and wallet to one account. Never merges separate accounts automatically.
@@ -125,3 +127,20 @@ This is an initial deployable MVP, not a claim of an independent security audit 
 ## License
 
 [MIT](LICENSE). Dependencies retain their own licenses. Bittrees names and marks are not separately licensed by this code license.
+
+## Hosted verification
+
+The initial September 9, 2026 deployment passed 17 PostgreSQL-backed tests, the production build, GitHub CI, a local backup/restore drill, and live HTTP smoke checks.
+
+The live checks covered Ethereum sign-in, linked record creation and deletion, conflict detection, exports, logout, passwordless email sign-in, explicit wallet linking, and re-login to the same account. Email delivery was exercised using Resend's synthetic test address, not a personal inbox. Temporary test accounts were removed.
+
+To repeat against a deployment you operate, with its database and Resend credentials in a private environment file:
+
+```sh
+SMOKE_URL=https://crm.bittrees.org npx tsx --env-file=.env.production.local scripts/smoke.ts
+SMOKE_URL=https://crm.bittrees.org npx tsx --env-file=.env.production.local scripts/email-smoke.ts
+```
+
+These scripts create and clean up their own temporary accounts. Never point the database configuration at a different deployment. Vercel does not export the values of sensitive variables; set `SMOKE_URL` explicitly. The email test requires a provider API key with permission to read its own sent test email.
+
+The hosted MVP uses a dedicated Neon database in Frankfurt and Resend sending from `signin@crm.bittrees.org`, initially on free plans. Check provider limits before onboarding a large team. Public GitHub changes on `main` are connected to Vercel deployment.
