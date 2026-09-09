@@ -154,9 +154,12 @@ try {
       id: record.id,
       version: record.version,
     });
-  const source = await request("workspaces", "POST", {
-    name: "Temporary merge source",
-  });
+  const source = await request(
+    "workspaces",
+    "POST",
+    { name: "Temporary merge source" },
+    201,
+  );
   extraWorkspaces.push(source.id);
   await request("workspaces/" + source.id, "PATCH", {
     name: "Renamed merge source",
@@ -183,9 +186,12 @@ try {
     id: moved.id,
     version: moved.version,
   });
-  const disposable = await request("workspaces", "POST", {
-    name: "Temporary delete check",
-  });
+  const disposable = await request(
+    "workspaces",
+    "POST",
+    { name: "Temporary delete check" },
+    201,
+  );
   extraWorkspaces.push(disposable.id);
   const deletion = await request(
     "workspaces/" + disposable.id + "/review",
