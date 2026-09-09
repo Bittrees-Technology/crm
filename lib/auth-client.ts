@@ -101,8 +101,8 @@ export async function walletIdentity(
   );
   if (signal.aborted) throw new Error("Verification cancelled.");
   step("wallet-verify");
-  await wait(
-    request("auth/verify", { id: c.id, proof }),
+  return await wait(
+    request("auth/verify", { id: c.id, proof, recover: link }),
     15000,
     "The service did not confirm verification. Refresh Settings to check whether linking completed, then retry if needed.",
   );

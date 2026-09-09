@@ -12,7 +12,7 @@ An independent relationship workspace for people, organizations, partnerships, a
 - Search, ownership filters, browser-saved views, pipeline board/table views, follow-ups, stage aging, and reports with separate currency totals.
 - Validated CSV imports with duplicate preview; CSV view exports and a complete JSON workspace export.
 - Ethereum EOA sign-in and email codes through Resend.
-- Explicit verification to link an email and wallet to one account. Never merges separate accounts automatically.
+- Explicit verification to link an email and wallet to one account. Never merges separate accounts automatically. If both methods already have accounts, a recovery review requires fresh verification of both accounts and explicit confirmation.
 - Multiple independent workspaces, owner/editor/viewer permissions, email-bound invite links, member access changes.
 - Inline task completion, opportunity stage changes, and due-date changes.
 - Contact and organization timelines with linked notes, task completions, and opportunity updates.
@@ -77,7 +77,7 @@ Use an independent database for previews, or leave preview auth unavailable. Nev
 
 Owners manage membership and invitations. Editors create, update, delete, and import records. Viewers can read and export all records in their workspace. All records are workspace-visible: this MVP has no private-field or private-note mode. Create separate workspaces for separate confidential teams.
 
-The owner role cannot be removed or transferred through this MVP. Reassign a member's records before removing them. Invitations expire after seven days and are single-use; redemption checks the exact verified email. Owners can revoke or recreate links in Settings. Recreating invalidates all earlier pending links for that email. Identity deletion, account merging, ownership transfer, and account recovery are deferred. Link both email and wallet early if you need two independent sign-in methods.
+The owner role cannot be removed or transferred through this MVP. Reassign a member's records before removing them. Invitations expire after seven days and are single-use; redemption checks the exact verified email. Owners can revoke or recreate links in Settings. Recreating invalidates all earlier pending links for that email. Identity deletion and standalone ownership transfer are deferred. Link both email and wallet early if you need two independent sign-in methods.
 
 ## Identity and security model
 
@@ -90,7 +90,7 @@ The owner role cannot be removed or transferred through this MVP. Reassign a mem
 - Every record operation checks workspace membership and role on the server. Linked records must belong to the same workspace.
 - Updates require the current record version; stale changes return a conflict instead of overwriting another user's work.
 - Contact wallet references are unverified business metadata. They never create identities or grant access.
-- Linking requires an active session plus fresh verification of the added identity. Existing identities cannot move between accounts.
+- Linking requires an active session plus fresh verification of the added identity. Existing identities can only move through the explicit two-account recovery flow.
 - The app never asks for private keys, sends transactions, grants governance roles, or moves assets.
 
 ## Verify
@@ -106,9 +106,17 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-Browser checks use isolated test wallets and local verification codes, exercise both identity-linking orders and stalled-wallet recovery, and clean up their own accounts. No real wallet extension or personal inbox is controlled.
+Browser checks use isolated test wallets and local verification codes in a disposable `crm_browser_test` database (the local PostgreSQL role needs database-creation permission). They exercise both identity-linking orders, duplicate-account recovery, all six record forms, imports/exports, reports, invitations/roles, session renewal, failure recovery, and desktop/mobile accessibility. This dedicated browser-test database is reset each run; user workspaces are not used. No real wallet extension or personal inbox is controlled.
 
 Tests exercise real PostgreSQL transactions, SIWE signatures, email verification, replay/expiry/attempt limits, identity collisions, invitation redemption, cross-workspace access, reference integrity, duplicate imports, role revocation, and stale edits. CI uses an isolated PostgreSQL service.
+
+## Recover separately created email and wallet accounts
+
+If you signed in separately with email and a wallet, each method may already have an account. In Settings, choose **Link email or wallet** and verify the other method. The app shows both accounts and their workspace access. Verify a method from your current account, then explicitly confirm combining them.
+
+Workspaces remain separate, records remain intact, and assignments from the other account move to your current account. Shared workspaces retain the stronger existing role. Historical activity keeps its original attribution. All verified sign-in methods move to the current account; old sessions for both accounts are revoked. Daily digests turn off and can be re-enabled in Settings. The historical user row is retained for audit attribution but cannot sign in.
+
+Recovery requests are single-use, expire after ten minutes, and are bound to the current session. Changed identity or workspace access requires a fresh review. Nothing is combined merely by viewing the review, and combining cannot be undone through the UI.
 
 ## Daily digest
 
@@ -147,7 +155,7 @@ This is an initial deployable MVP, not a claim of an independent security audit 
 
 ## Hosted verification
 
-The v0.2.0 suite covers 25 automated tests plus Chromium checks for both identity-linking orders, wallet cancellation/timeouts, quick edits, timelines, invitation management/joining, and digest preferences. These checks also run in GitHub CI.
+The v0.3.0 suite covers 27 automated tests plus Chromium checks for both identity-linking orders, wallet cancellation/timeouts, quick edits, timelines, invitation management/joining, and digest preferences. These checks also run in GitHub CI.
 
 The initial September 9, 2026 deployment passed 17 PostgreSQL-backed tests, the production build, GitHub CI, a local backup/restore drill, and live HTTP smoke checks.
 
@@ -158,6 +166,7 @@ To repeat against a deployment you operate, with its database and Resend credent
 ```sh
 SMOKE_URL=https://crm.bittrees.org npx tsx --env-file=.env.production.local scripts/smoke.ts
 SMOKE_URL=https://crm.bittrees.org npx tsx --env-file=.env.production.local scripts/email-smoke.ts
+SMOKE_URL=https://crm.bittrees.org npx tsx --env-file=.env.production.local scripts/recovery-smoke.ts
 ```
 
 These scripts create and clean up their own temporary accounts. Never point the database configuration at a different deployment. Vercel does not export the values of sensitive variables; set `SMOKE_URL` explicitly. The email test requires a provider API key with permission to read its own sent test email.

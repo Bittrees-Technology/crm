@@ -20,6 +20,7 @@ import {
   deleteRecord,
   importRecords,
   membership,
+  lockActiveAccount,
   saveRecord,
   snapshot,
   updateMember,
@@ -33,6 +34,7 @@ import {
   saveDigestPreference,
   runDigests,
 } from "@/lib/digest";
+import { completeRecovery } from "@/lib/recovery";
 import { timingSafeEqual } from "node:crypto";
 export const maxDuration = 300;
 export const runtime = "nodejs";
@@ -73,7 +75,7 @@ async function handle(req: NextRequest) {
       });
     if (path === "health" && req.method === "GET") {
       await pool().query("SELECT id FROM workspaces LIMIT 1");
-      return json({ status: "ok", version: "0.2.0" });
+      return json({ status: "ok", version: "0.3.0" });
     }
     let body: Record<string, unknown> = {};
     if (req.method !== "GET") {
@@ -101,6 +103,10 @@ async function handle(req: NextRequest) {
               kind: z.enum(["email", "ethereum"]),
               value: z.string().max(254),
               link: z.boolean().optional(),
+              recoveryToken: z
+                .string()
+                .regex(/^[a-f0-9]{64}$/)
+                .optional(),
               chainId: z
                 .number()
                 .int()
@@ -115,8 +121,24 @@ async function handle(req: NextRequest) {
       if (path === "auth/verify") {
         const result = await verifyChallenge(
           req,
-          z.object({ id: z.uuid(), proof: z.string().max(2048) }).parse(body),
+          z
+            .object({
+              id: z.uuid(),
+              proof: z.string().max(2048),
+              recover: z.boolean().optional(),
+            })
+            .parse(body),
         );
+        return json(result.body, 200, { "Set-Cookie": result.cookie });
+      }
+      if (path === "auth/recover") {
+        const input = z
+          .object({
+            token: z.string().regex(/^[a-f0-9]{64}$/),
+            confirm: z.literal(true),
+          })
+          .parse(body);
+        const result = await completeRecovery(req, input.token);
         return json(result.body, 200, { "Set-Cookie": result.cookie });
       }
       if (path === "auth/logout") {
@@ -162,16 +184,17 @@ async function handle(req: NextRequest) {
     }
     if (path === "me" && req.method === "PATCH") {
       const name = z.string().trim().min(1).max(80).parse(body.name);
-      await pool().query("UPDATE users SET name=$1 WHERE id=$2", [
-        name,
-        user.id,
-      ]);
+      await pool().query(
+        "UPDATE users SET name=$1 WHERE id=$2 AND merged_into IS NULL",
+        [name, user.id],
+      );
       return json({ ok: true });
     }
     if (path === "workspaces" && req.method === "POST") {
       const name = z.string().trim().min(1).max(100).parse(body.name);
       const id = randomUUID();
       await transaction(async (db) => {
+        await lockActiveAccount(db, user.id);
         await db.query("INSERT INTO workspaces(id,name) VALUES($1,$2)", [
           id,
           name,
@@ -200,12 +223,14 @@ async function handle(req: NextRequest) {
       if (!resource && req.method === "GET")
         return json(await snapshot(user.id, w));
       if (!resource && req.method === "PATCH") {
-        await membership(w, user.id, true, true);
         const name = z.string().trim().min(1).max(100).parse(body.name);
-        await pool().query("UPDATE workspaces SET name=$1 WHERE id=$2", [
-          name,
-          w,
-        ]);
+        await transaction(async (db) => {
+          await membership(w, user.id, true, true, db);
+          await db.query("UPDATE workspaces SET name=$1 WHERE id=$2", [
+            name,
+            w,
+          ]);
+        });
         return json({ ok: true });
       }
       if (resource === "records" && req.method === "POST")

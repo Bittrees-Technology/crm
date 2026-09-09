@@ -10,6 +10,21 @@ import {
   type Kind,
   type RecordData,
 } from "./model";
+export async function lockActiveAccount(
+  db: Pick<PoolClient, "query">,
+  userId: string,
+) {
+  const account = (
+    await db.query("SELECT merged_into FROM users WHERE id=$1 FOR SHARE", [
+      userId,
+    ])
+  ).rows[0];
+  if (!account || account.merged_into)
+    throw new HttpError(
+      401,
+      "Your account changed. Sign in again to continue.",
+    );
+}
 export async function membership(
   workspaceId: string,
   userId: string,
@@ -18,6 +33,7 @@ export async function membership(
   db: Pick<PoolClient, "query"> = pool(),
 ) {
   z.uuid().parse(workspaceId);
+  await lockActiveAccount(db, userId);
   const member = (
     await db.query(
       "SELECT role FROM members WHERE workspace_id=$1 AND user_id=$2",
@@ -283,6 +299,7 @@ export async function createInvite(userId: string, w: string, input: unknown) {
 }
 export async function acceptInvite(userId: string, raw: string) {
   return transaction(async (db) => {
+    await lockActiveAccount(db, userId);
     const invite = (
       await db.query(
         "SELECT * FROM invites WHERE hash=$1 AND expires_at>now() AND accepted_at IS NULL AND revoked_at IS NULL FOR UPDATE",
@@ -327,6 +344,7 @@ export async function updateMember(userId: string, w: string, input: unknown) {
     .parse(input);
   return transaction(async (db) => {
     await membership(w, userId, true, true, db);
+    await lockActiveAccount(db, body.userId);
     const target = (
       await db.query(
         "SELECT role FROM members WHERE workspace_id=$1 AND user_id=$2 FOR UPDATE",

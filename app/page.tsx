@@ -130,7 +130,7 @@ const money = (v: number, c = "EUR") =>
   new Intl.NumberFormat(undefined, {
     style: "currency",
     currency: c,
-    maximumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(v);
 const initials = (s: string) =>
   s
@@ -140,12 +140,31 @@ const initials = (s: string) =>
     .join("")
     .toUpperCase();
 async function api(path: string, method = "GET", body?: unknown) {
-  const response = await fetch("/api/" + path, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await response.json();
+  let response: Response;
+  try {
+    response = await fetch("/api/" + path, {
+      signal: AbortSignal.timeout(15000),
+      method,
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    throw new Error(
+      (e as Error).name === "TimeoutError"
+        ? "The request took too long. Your changes may have saved; refresh before trying again."
+        : "Could not connect. Check your connection and try again.",
+    );
+  }
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error(
+      "The service returned an unreadable response. Refresh to check your changes before trying again.",
+    );
+  }
+  if (response.status === 401 && !path.startsWith("auth/"))
+    window.dispatchEvent(new Event("crm-session-expired"));
   if (!response.ok) throw new Error(data.error || "Something went wrong.");
   return data;
 }
@@ -277,7 +296,11 @@ function Modal({
     <dialog
       className={wide ? "modal wide" : "modal"}
       ref={ref}
-      onCancel={onClose}
+      aria-label={title}
+      onCancel={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
     >
       <div className="modal-head">
         <h2>{title}</h2>
@@ -301,6 +324,139 @@ function Brand() {
     </div>
   );
 }
+type RecoveryAccount = {
+  name: string;
+  identities: { kind: string; value: string }[];
+  workspaces: { id: string; name: string; role: string; records: number }[];
+};
+type RecoveryPreview = {
+  token: string;
+  current: RecoveryAccount;
+  other: RecoveryAccount;
+};
+function AccountRecovery({
+  preview,
+  onSuccess,
+  onCancel,
+}: {
+  preview: RecoveryPreview;
+  onSuccess: () => void | Promise<void>;
+  onCancel: () => void;
+}) {
+  const [phase, setPhase] = useState<"review" | "verify" | "confirm">("review");
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  if (phase === "verify")
+    return (
+      <Auth
+        link
+        recoveryToken={preview.token}
+        allowedIdentities={preview.current.identities}
+        initialEmail={
+          preview.current.identities.find((i) => i.kind === "email")?.value ||
+          ""
+        }
+        onSuccess={() => setPhase("confirm")}
+        onClose={() => setPhase("review")}
+      />
+    );
+  return (
+    <div className="auth-form recovery-form">
+      <span className="eyebrow">ACCOUNT RECOVERY</span>
+      <h1>Two accounts, one person?</h1>
+      <p>
+        You verified a sign-in method that belongs to another account. You can
+        combine them after verifying your current account too.
+      </p>
+      {[
+        ["Your current account", preview.current],
+        ["The other account", preview.other],
+      ].map(([title, account]) => {
+        const a = account as RecoveryAccount;
+        return (
+          <section className="recovery-account" key={title as string}>
+            <h3>
+              {title as string}: {a.name}
+            </h3>
+            <ul className="verified-methods">
+              {a.identities.map((i) => (
+                <li key={i.kind + i.value}>
+                  {i.kind === "email" ? "Email" : "Wallet"}: {i.value}
+                </li>
+              ))}
+            </ul>
+            <p className="small">
+              {a.workspaces.length} workspace
+              {a.workspaces.length === 1 ? "" : "s"}
+            </p>
+            <ul>
+              {a.workspaces.map((w) => (
+                <li key={w.id}>
+                  {w.name} · {w.role} · {w.records} records
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
+      <p className="small">
+        All sign-in methods and workspace access will use your current account.
+        Workspaces stay separate, records are kept, and assigned work moves to
+        your current account. Other sessions are signed out and daily digests
+        turn off. Combining cannot be undone in the app.
+      </p>
+      {phase === "confirm" && (
+        <p className="verified" role="status">
+          Both accounts verified. Review the details above before combining.
+        </p>
+      )}
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
+      <div className="recovery-actions">
+        <button
+          className="button primary full"
+          disabled={busy}
+          onClick={async () => {
+            if (phase === "review") {
+              setPhase("verify");
+              return;
+            }
+            setBusy(true);
+            setError("");
+            try {
+              await api("auth/recover", "POST", {
+                token: preview.token,
+                confirm: true,
+              });
+              await onSuccess();
+            } catch (e) {
+              setError((e as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy
+            ? "Combining accounts…"
+            : phase === "confirm"
+              ? "Confirm and combine accounts"
+              : "Verify current account"}
+        </button>
+        <button
+          type="button"
+          className="text-button"
+          disabled={busy}
+          onClick={onCancel}
+        >
+          Keep accounts separate
+        </button>
+      </div>
+    </div>
+  );
+}
 function Auth({
   onSuccess,
   link = false,
@@ -308,6 +464,9 @@ function Auth({
   onDemo,
   initialEmail = "",
   invitation = false,
+  recoveryToken,
+  allowedIdentities,
+  compact = false,
 }: {
   onSuccess: () => void | Promise<void>;
   link?: boolean;
@@ -315,6 +474,9 @@ function Auth({
   onDemo?: () => void;
   initialEmail?: string;
   invitation?: boolean;
+  compact?: boolean;
+  recoveryToken?: string;
+  allowedIdentities?: { kind: string; value: string }[];
 }) {
   const [email, setEmail] = useState(initialEmail),
     [code, setCode] = useState(""),
@@ -327,6 +489,7 @@ function Auth({
     });
   const flow = useRef<{ id: number; controller: AbortController } | null>(null);
   const nextFlow = useRef(0);
+  const [recovery, setRecovery] = useState<RecoveryPreview | null>(null);
   const busy = !!operation;
   useEffect(() => {
     api("config")
@@ -365,7 +528,11 @@ function Auth({
       const r = await fetch("/api/" + path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(
+          path === "auth/challenge" && recoveryToken
+            ? { ...(body as object), recoveryToken }
+            : body,
+        ),
         signal: AbortSignal.any([
           current.controller.signal,
           AbortSignal.timeout(15000),
@@ -397,8 +564,13 @@ function Auth({
     e.preventDefault();
     void run(challenge ? "email-verify" : "email-send", async (request) => {
       if (challenge) {
-        await request("auth/verify", { id: challenge, proof: code });
-        await onSuccess();
+        const result = await request("auth/verify", {
+          id: challenge,
+          proof: code,
+          recover: link,
+        });
+        if (result.recovery) setRecovery(result.recovery);
+        else await onSuccess();
       } else {
         const r = await request("auth/challenge", {
           kind: "email",
@@ -417,8 +589,17 @@ function Auth({
         throw new Error(
           "No Ethereum wallet is available in this browser. Open this site in your wallet browser or a browser with your wallet extension enabled. Email sign-in works here too.",
         );
-      await walletIdentity(ethereum, signal, step, request, link);
-      if (!signal.aborted) await onSuccess();
+      const result = await walletIdentity(
+        ethereum,
+        signal,
+        step,
+        request,
+        link,
+      );
+      if (!signal.aborted) {
+        if (result.recovery) setRecovery(result.recovery);
+        else await onSuccess();
+      }
     });
   }
   const walletStatus: Record<string, string> = {
@@ -426,6 +607,19 @@ function Auth({
     "wallet-sign": "Approve the sign-in message in your wallet…",
     "wallet-verify": "Confirming your identity…",
   };
+  if (recovery)
+    return (
+      <AccountRecovery
+        preview={recovery}
+        onSuccess={onSuccess}
+        onCancel={() => {
+          setRecovery(null);
+          setChallenge("");
+          setCode("");
+          setError("");
+        }}
+      />
+    );
   const form = (
     <div className="auth-form">
       <span className="eyebrow">
@@ -438,22 +632,52 @@ function Auth({
         </div>
       )}
       <h1>
-        {link ? "Connect another identity" : "Welcome to your next chapter."}
+        {recoveryToken
+          ? "Verify your current account"
+          : link
+            ? "Connect another identity"
+            : "Welcome to your next chapter."}
       </h1>
       <p>
-        {link
-          ? "Verify an email or Ethereum wallet to use either one with your existing account."
-          : "A clear view of your relationships. A place for every next step."}
-      </p>
-      <button disabled={busy} className="button wallet-button" onClick={wallet}>
-        <Wallet size={19} />
-        {operation.startsWith("wallet-")
-          ? walletStatus[operation]
+        {recoveryToken
+          ? "Use one of the sign-in methods listed below. This verifies your current account before the final confirmation."
           : link
-            ? "Link Ethereum wallet"
-            : "Sign in with Ethereum"}
-        <ArrowUpRight size={16} />
-      </button>
+            ? "Verify an email or Ethereum wallet to use either one with your existing account."
+            : "A clear view of your relationships. A place for every next step."}
+      </p>
+      {!link && !compact && (
+        <p className="small">
+          First time? Signing in creates a private account. If you already use
+          CRM, sign in with your existing method and add another in Settings.
+        </p>
+      )}
+      {allowedIdentities && (
+        <ul className="verified-methods">
+          {allowedIdentities.map((i) => (
+            <li key={i.kind + i.value}>
+              {i.kind === "email" ? "Email" : "Wallet"}: {i.value}
+            </li>
+          ))}
+        </ul>
+      )}
+      {(!allowedIdentities ||
+        allowedIdentities.some((i) => i.kind === "ethereum")) && (
+        <button
+          disabled={busy}
+          className="button wallet-button"
+          onClick={wallet}
+        >
+          <Wallet size={19} />
+          {operation.startsWith("wallet-")
+            ? walletStatus[operation]
+            : recoveryToken
+              ? "Verify current wallet"
+              : link
+                ? "Link Ethereum wallet"
+                : "Sign in with Ethereum"}
+          <ArrowUpRight size={16} />
+        </button>
+      )}
       {operation.startsWith("wallet-") && (
         <div className="verification-progress" role="status">
           <p>{walletStatus[operation]}</p>
@@ -468,68 +692,73 @@ function Auth({
           )}
         </div>
       )}
-      <div className="separator">
-        <span>or continue with email</span>
-      </div>
-      <form onSubmit={emailSubmit}>
-        <label>
-          Email address
-          <input
-            type="email"
-            required
-            value={email}
-            disabled={!!challenge || busy || !config.emailEnabled}
-            placeholder="you@company.com"
-            onChange={(e) => setEmail(e.target.value)}
-          />
-        </label>
-        {challenge && (
-          <p className="small" role="status">
-            Code sent to {email}. Check your inbox and spam folder. It expires
-            in 10 minutes.
-          </p>
-        )}
-        {challenge && (
-          <label>
-            Verification code
-            <input
-              autoComplete="one-time-code"
-              inputMode="numeric"
-              pattern="[0-9]{8}"
-              maxLength={8}
-              required
-              placeholder="8-digit code"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-            />
-          </label>
-        )}
-        <button
-          className="button primary full"
-          disabled={busy || !config.emailEnabled}
-        >
-          {operation === "email-send"
-            ? "Sending code…"
-            : operation === "email-verify"
-              ? "Checking code…"
-              : challenge
-                ? "Verify and continue"
-                : "Send verification code"}
-          <ArrowRight size={17} />
-        </button>
-        {challenge && (
-          <button
-            type="button"
-            className="text-button"
-            onClick={() => {
-              setChallenge("");
-              setCode("");
-            }}
-          >
-            Use a different email or request a new code
-          </button>
-        )}
-      </form>
+      {(!allowedIdentities ||
+        allowedIdentities.some((i) => i.kind === "email")) && (
+        <>
+          <div className="separator">
+            <span>continue with email</span>
+          </div>
+          <form onSubmit={emailSubmit}>
+            <label>
+              Email address
+              <input
+                type="email"
+                required
+                value={email}
+                disabled={!!challenge || busy || !config.emailEnabled}
+                placeholder="you@company.com"
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </label>
+            {challenge && (
+              <p className="small" role="status">
+                Code sent to {email}. Check your inbox and spam folder. It
+                expires in 10 minutes.
+              </p>
+            )}
+            {challenge && (
+              <label>
+                Verification code
+                <input
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
+                  pattern="[0-9]{8}"
+                  maxLength={8}
+                  required
+                  placeholder="8-digit code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                />
+              </label>
+            )}
+            <button
+              className="button primary full"
+              disabled={busy || !config.emailEnabled}
+            >
+              {operation === "email-send"
+                ? "Sending code…"
+                : operation === "email-verify"
+                  ? "Checking code…"
+                  : challenge
+                    ? "Verify and continue"
+                    : "Send verification code"}
+              <ArrowRight size={17} />
+            </button>
+            {challenge && (
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => {
+                  setChallenge("");
+                  setCode("");
+                }}
+              >
+                Use a different email or request a new code
+              </button>
+            )}
+          </form>
+        </>
+      )}
       {!config.emailEnabled && (
         <p className="small">
           Email delivery is being configured. You can sign in with an Ethereum
@@ -562,7 +791,7 @@ function Auth({
       )}
     </div>
   );
-  if (link) return form;
+  if (link || compact) return form;
   return (
     <main className="auth">
       <div className="auth-left">
@@ -646,10 +875,28 @@ export default function App() {
   const [editing, setEditing] = useState<{
       kind: Kind;
       record?: CrmRecord;
+      stage?: RecordData["stage"];
     } | null>(null),
     [linking, setLinking] = useState(false),
     [importing, setImporting] = useState(false),
     [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [reauth, setReauth] = useState(false);
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
+  useEffect(() => {
+    const expired = () => {
+      if (me && !demo) setReauth(true);
+    };
+    window.addEventListener("crm-session-expired", expired);
+    return () => window.removeEventListener("crm-session-expired", expired);
+  }, [me, demo]);
+  useEffect(() => {
+    const escape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobile(false);
+    };
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, []);
   const [inviteRevision, setInviteRevision] = useState(0),
     [inviteInfo, setInviteInfo] = useState<{
       name: string;
@@ -661,10 +908,24 @@ export default function App() {
     [inviteUrl, setInviteUrl] = useState("");
   useEffect(() => {
     try {
+      const stored = JSON.parse(
+        localStorage.getItem(`crm-views:${me?.user.id}:${workspace}`) || "[]",
+      );
       setSavedViews(
-        JSON.parse(
-          localStorage.getItem(`crm-views:${me?.user.id}:${workspace}`) || "[]",
-        ),
+        Array.isArray(stored)
+          ? stored
+              .filter(
+                (v) =>
+                  v &&
+                  typeof v.name === "string" &&
+                  typeof v.page === "string" &&
+                  Object.hasOwn(labels, v.page) &&
+                  typeof v.search === "string" &&
+                  typeof v.filter === "string" &&
+                  typeof v.board === "boolean",
+              )
+              .slice(-20)
+          : [],
       );
     } catch {
       setSavedViews([]);
@@ -701,7 +962,7 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setInviteToken(params.get("invite") || "");
-    if (["settings", "tasks"].includes(params.get("view") || ""))
+    if (Object.hasOwn(labels, params.get("view") || ""))
       setPage(params.get("view") as Page);
     if (params.has("demo")) {
       startDemo();
@@ -728,6 +989,20 @@ export default function App() {
       live = false;
     };
   }, [inviteToken, me?.user.id, demo]);
+  useEffect(() => {
+    const pop = () => {
+      const view =
+        new URLSearchParams(window.location.search).get("view") || "today";
+      if (Object.hasOwn(labels, view)) {
+        setPage(view as Page);
+        setSearch("");
+        setFilter("all");
+        setMobile(false);
+      }
+    };
+    window.addEventListener("popstate", pop);
+    return () => window.removeEventListener("popstate", pop);
+  }, []);
   async function createInvitation(email: string, role: string) {
     const r = await api("workspaces/" + workspace + "/invites", "POST", {
       email,
@@ -777,8 +1052,9 @@ export default function App() {
   }
   async function refresh() {
     if (!workspace || demo) return;
-    const s = await api("workspaces/" + workspace);
-    setSnapshot(s);
+    const requested = workspace;
+    const s = await api("workspaces/" + requested);
+    if (workspaceRef.current === requested) setSnapshot(s);
   }
   useEffect(() => {
     let cancelled = false;
@@ -943,6 +1219,9 @@ export default function App() {
     });
   }
   function nav(p: Page) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", p);
+    window.history.pushState(null, "", url);
     setPage(p);
     setSearch("");
     setFilter("all");
@@ -968,6 +1247,13 @@ export default function App() {
     );
   return (
     <div className="app">
+      {mobile && (
+        <button
+          className="mobile-backdrop"
+          aria-label="Close navigation"
+          onClick={() => setMobile(false)}
+        />
+      )}
       <aside className={"sidebar " + (mobile ? "open" : "")}>
         <Brand />
         <label className="workspace-select">
@@ -1517,6 +1803,7 @@ export default function App() {
                       <input
                         name="name"
                         key={me.user.name}
+                        disabled={busy}
                         defaultValue={me.user.name}
                         required
                         maxLength={80}
@@ -1599,7 +1886,7 @@ export default function App() {
                         }
                         required
                         maxLength={100}
-                        disabled={snapshot.role !== "owner"}
+                        disabled={busy || snapshot.role !== "owner"}
                       />
                     </label>
                     <button
@@ -1973,10 +2260,12 @@ export default function App() {
                         {canEdit && (
                           <button
                             className="column-add"
+                            aria-label={`Add opportunity in ${stage}`}
                             onClick={() =>
                               setEditing({
                                 kind: "opportunities",
                                 record: undefined,
+                                stage,
                               })
                             }
                           >
@@ -2163,6 +2452,7 @@ export default function App() {
           workspace={workspace}
           demo={demo}
           kind={editing.kind}
+          initialStage={editing.stage}
           record={editing.record}
           records={records}
           members={snapshot.members}
@@ -2188,8 +2478,11 @@ export default function App() {
             initialEmail={inviteInfo?.email || ""}
             onSuccess={async () => {
               await loadMe();
+              await refresh();
               setLinking(false);
-              notify("Identity linked. You can sign in with either method.");
+              notify(
+                "Verified sign-in methods updated. You can use either method.",
+              );
             }}
           />
         </Modal>
@@ -2238,6 +2531,25 @@ export default function App() {
           }
         />
       )}
+      {reauth && (
+        <Modal title="Your session expired" onClose={() => setReauth(false)}>
+          <p className="panel-pad">
+            Sign in again to continue. Your open edits stay here.
+          </p>
+          <Auth
+            compact
+            initialEmail={
+              me.identities.find((i) => i.kind === "email")?.value || ""
+            }
+            onSuccess={async () => {
+              await loadMe();
+              await refresh();
+              setReauth(false);
+              notify("Signed in again. You can continue.");
+            }}
+          />
+        </Modal>
+      )}
       {creatingWorkspace && (
         <Modal
           title="Create workspace"
@@ -2269,6 +2581,11 @@ export default function App() {
             <p className="small">
               Records and membership are separate for each workspace.
             </p>
+            {error && (
+              <div className="error" role="alert">
+                {error}
+              </div>
+            )}
             <button className="button primary" disabled={busy}>
               Create workspace
             </button>
@@ -2331,6 +2648,7 @@ function RecordEditor({
   workspace,
   demo,
   kind,
+  initialStage,
   record,
   records,
   members,
@@ -2345,6 +2663,7 @@ function RecordEditor({
   workspace: string;
   demo: boolean;
   kind: Kind;
+  initialStage?: RecordData["stage"];
   record?: CrmRecord;
   records: CrmRecord[];
   members: Member[];
@@ -2358,10 +2677,30 @@ function RecordEditor({
 }) {
   const [data, setData] = useState<RecordData>(
     record?.data || {
-      ...recordSchema.parse({ name: "New record", ownerId: userId }),
+      ...recordSchema.parse({
+        name: "New record",
+        ownerId: userId,
+        stage: initialStage || "Introduction",
+      }),
       name: "",
     },
   );
+  const original = useRef(JSON.stringify(data));
+  const dirty = canEdit && JSON.stringify(data) !== original.current;
+  function closeEditor() {
+    if (busy) return;
+    if (!dirty || window.confirm("Discard your unsaved changes?")) onClose();
+  }
+  useEffect(() => {
+    const warn = (e: BeforeUnloadEvent) => {
+      if (dirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
   const update = (key: keyof RecordData, v: string | number) =>
     setData((d) => ({ ...d, [key]: v }));
   const input = (
@@ -2384,6 +2723,8 @@ function RecordEditor({
           )
         }
         min={type === "number" ? 0 : undefined}
+        step={type === "number" ? "0.01" : undefined}
+        max={type === "number" ? 1e12 : undefined}
       />
     </label>
   );
@@ -2424,7 +2765,7 @@ function RecordEditor({
           ? record.data.name
           : `New ${kind === "people" ? "person" : kind === "opportunities" ? "opportunity" : kind.slice(0, -1)}`
       }
-      onClose={onClose}
+      onClose={closeEditor}
       wide
     >
       <form
@@ -2577,7 +2918,12 @@ function RecordEditor({
             </button>
           )}
           <div className="toolbar-spacer" />
-          <button type="button" className="button" onClick={onClose}>
+          <button
+            type="button"
+            className="button"
+            onClick={closeEditor}
+            disabled={busy}
+          >
             Close
           </button>
           {canEdit && (

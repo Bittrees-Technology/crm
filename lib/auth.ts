@@ -10,6 +10,7 @@ import { SiweMessage } from "siwe";
 import { getAddress } from "ethers";
 import { pool, transaction } from "./db";
 import { HttpError } from "./model";
+import { createRecovery, recoveryForSession } from "./recovery";
 export const hash = (v: string) => createHash("sha256").update(v).digest("hex");
 export const token = () => randomBytes(32).toString("hex");
 export const cookieName =
@@ -45,7 +46,7 @@ export async function currentUser(req: Request, required = true) {
   const raw = cookie(req, cookieName);
   const { rows } = raw
     ? await pool().query(
-        "SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.hash=$1 AND s.expires_at>now()",
+        "SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.hash=$1 AND s.expires_at>now() AND u.merged_into IS NULL",
         [hash(raw)],
       )
     : { rows: [] };
@@ -79,6 +80,7 @@ export async function startChallenge(
     value: string;
     link?: boolean;
     chainId?: number;
+    recoveryToken?: string;
   },
 ) {
   const origin = checkOrigin(req);
@@ -90,6 +92,25 @@ export async function startChallenge(
     payload = "",
     secret = "";
   await rateLimit("identity:" + body.kind + ":" + value, 5);
+  if (body.recoveryToken) {
+    if (!user)
+      throw new HttpError(401, "Sign in again before recovering accounts.");
+    await transaction(async (db) => {
+      await recoveryForSession(db, req, hash(body.recoveryToken!), user.id);
+      if (
+        !(
+          await db.query(
+            "SELECT 1 FROM identities WHERE user_id=$1 AND kind=$2 AND value=$3",
+            [user.id, body.kind, value],
+          )
+        ).rowCount
+      )
+        throw new HttpError(
+          400,
+          "Use a verified sign-in method from your current account. Switch the selected wallet if needed.",
+        );
+    });
+  }
   if (body.kind === "ethereum") {
     try {
       value = getAddress(value).toLowerCase();
@@ -99,9 +120,11 @@ export async function startChallenge(
     payload = new SiweMessage({
       domain: new URL(origin).host,
       address: getAddress(value),
-      statement: body.link
-        ? "Link this wallet to your Bittrees CRM identity."
-        : "Sign in to Bittrees CRM. This does not authorize transactions.",
+      statement: body.recoveryToken
+        ? "Verify your current Bittrees CRM account before combining accounts. No transactions are authorized."
+        : body.link
+          ? "Link this wallet to your Bittrees CRM identity."
+          : "Sign in to Bittrees CRM. This does not authorize transactions.",
       uri: origin,
       version: "1",
       chainId: body.chainId || 1,
@@ -128,7 +151,7 @@ export async function startChallenge(
     secret = emailDigest(id, payload);
   }
   await pool().query(
-    "INSERT INTO challenges(id,kind,value,secret_hash,browser_hash,user_id,payload,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '10 minutes')",
+    "INSERT INTO challenges(id,kind,value,secret_hash,browser_hash,user_id,payload,expires_at,recovery_hash) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '10 minutes',$8)",
     [
       id,
       body.kind,
@@ -137,6 +160,7 @@ export async function startChallenge(
       hash(browser),
       user?.id || null,
       body.kind === "ethereum" ? payload : null,
+      body.recoveryToken ? hash(body.recoveryToken) : null,
     ],
   );
   if (body.kind === "email") {
@@ -173,7 +197,7 @@ export async function startChallenge(
 }
 export async function verifyChallenge(
   req: Request,
-  body: { id: string; proof: string },
+  body: { id: string; proof: string; recover?: boolean },
 ) {
   checkOrigin(req);
   const browser = cookie(req, challengeCookie),
@@ -235,11 +259,43 @@ export async function verifyChallenge(
         [c.kind, c.value],
       )
     ).rows[0];
-    if (c.user_id && existing && existing.user_id !== c.user_id)
-      return {
-        error:
-          "This identity already belongs to another account. Accounts are never merged automatically.",
-      };
+    const accountIds = [c.user_id, existing?.user_id].filter(Boolean);
+    if (accountIds.length) {
+      const accounts = await db.query(
+        "SELECT id,merged_into FROM users WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE",
+        [accountIds],
+      );
+      if (accounts.rows.some((a) => a.merged_into))
+        return { error: "An account changed. Start verification again." };
+    }
+    if (c.recovery_hash) {
+      if (!existing || existing.user_id !== activeUser?.id)
+        return {
+          error: "Use a verified sign-in method from your current account.",
+        };
+      await recoveryForSession(db, req, c.recovery_hash, activeUser!.id);
+      await db.query(
+        "UPDATE identity_recoveries SET current_verified=true WHERE hash=$1",
+        [c.recovery_hash],
+      );
+      await db.query("UPDATE challenges SET consumed=true WHERE id=$1", [c.id]);
+      return { reauthenticated: true };
+    }
+    if (c.user_id && existing && existing.user_id !== c.user_id) {
+      if (!body.recover)
+        return {
+          error:
+            "This identity already belongs to another account. Start linking in Settings to review account recovery.",
+        };
+      const recovery = await createRecovery(
+        db,
+        req,
+        c.user_id,
+        existing.user_id,
+      );
+      await db.query("UPDATE challenges SET consumed=true WHERE id=$1", [c.id]);
+      return { recovery };
+    }
     let userId = c.user_id || existing?.user_id;
     if (!userId) {
       userId = randomUUID();
@@ -276,6 +332,13 @@ export async function verifyChallenge(
     return { userId };
   });
   if (result.error) throw new HttpError(400, result.error);
+  if (result.recovery || result.reauthenticated)
+    return {
+      body: result.recovery
+        ? { recovery: result.recovery }
+        : { reauthenticated: true },
+      cookie: setCookie(challengeCookie, browser, 600),
+    };
   return {
     body: { ok: true },
     cookie: setCookie(cookieName, sessionToken, 604800),

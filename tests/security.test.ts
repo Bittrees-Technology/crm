@@ -634,3 +634,202 @@ test("empty digests and removed workspace access never deliver record contents",
   );
   assert.equal(delivered, 0);
 });
+async function recoveryFixture() {
+  const target = await walletLogin(),
+    source = await walletLogin();
+  const targetSession = cookiePair(target.result.cookie),
+    sourceSession = cookiePair(source.result.cookie);
+  const targetId = (await currentUser(request(targetSession)))!.id,
+    sourceId = (await currentUser(request(sourceSession)))!.id;
+  const c = await startChallenge(request(targetSession), {
+    kind: "ethereum",
+    value: source.wallet.address,
+    link: true,
+  });
+  const result = await verifyChallenge(
+    request(`${targetSession}; ${cookiePair(c.cookie)}`),
+    {
+      id: c.body.id,
+      proof: await source.wallet.signMessage(c.body.message!),
+      recover: true,
+    },
+  );
+  const recovery = (result.body as any).recovery;
+  assert.ok(recovery?.token);
+  return {
+    target,
+    source,
+    targetSession,
+    sourceSession,
+    targetId,
+    sourceId,
+    recovery,
+  };
+}
+async function verifyRecoveryCurrent(
+  f: Awaited<ReturnType<typeof recoveryFixture>>,
+) {
+  const c = await startChallenge(request(f.targetSession), {
+    kind: "ethereum",
+    value: f.target.wallet.address,
+    link: true,
+    recoveryToken: f.recovery.token,
+  });
+  const result = await verifyChallenge(
+    request(`${f.targetSession}; ${cookiePair(c.cookie)}`),
+    {
+      id: c.body.id,
+      proof: await f.target.wallet.signMessage(c.body.message!),
+    },
+  );
+  assert.equal((result.body as any).reauthenticated, true);
+}
+test("account recovery requires both proofs and preserves records, roles, identities and history atomically", async () => {
+  const { completeRecovery } = await import("../lib/recovery");
+  const f = await recoveryFixture();
+  await assert.rejects(
+    () => completeRecovery(request(f.targetSession), f.recovery.token),
+    /Verify your current/,
+  );
+  await assert.rejects(
+    () => completeRecovery(request(f.sourceSession), f.recovery.token),
+    /expired/,
+  );
+  const sourceWorkspace = f.recovery.other.workspaces[0].id;
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'viewer')",
+    [sourceWorkspace, f.targetId],
+  );
+  // Access changed since preview: start over so the confirmation accurately reflects the new role.
+  const c = await startChallenge(request(f.targetSession), {
+    kind: "ethereum",
+    value: f.source.wallet.address,
+    link: true,
+  });
+  f.recovery = (
+    await verifyChallenge(
+      request(`${f.targetSession}; ${cookiePair(c.cookie)}`),
+      {
+        id: c.body.id,
+        proof: await f.source.wallet.signMessage(c.body.message!),
+        recover: true,
+      },
+    )
+  ).body.recovery!;
+  const record = await saveRecord(f.sourceId, sourceWorkspace, {
+    kind: "tasks",
+    data: { name: "Keep this assigned task", ownerId: f.sourceId },
+  });
+  await verifyRecoveryCurrent(f);
+  const results = await Promise.allSettled([
+    completeRecovery(request(f.targetSession), f.recovery.token),
+    completeRecovery(request(f.targetSession), f.recovery.token),
+  ]);
+  assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+  const result = (
+    results.find((r) => r.status === "fulfilled") as PromiseFulfilledResult<
+      Awaited<ReturnType<typeof completeRecovery>>
+    >
+  ).value;
+  assert.equal(
+    (await currentUser(request(cookiePair(result.cookie))))!.id,
+    f.targetId,
+  );
+  assert.equal(await currentUser(request(f.sourceSession), false), undefined);
+  assert.equal(await currentUser(request(f.targetSession), false), undefined);
+  const snapshotAfter = await snapshot(f.targetId, sourceWorkspace);
+  assert.equal(snapshotAfter.role, "owner");
+  await assert.rejects(
+    () =>
+      saveRecord(f.sourceId, sourceWorkspace, {
+        kind: "tasks",
+        data: { name: "Stale source write" },
+      }),
+    /account changed/,
+  );
+  const kept = snapshotAfter.records.find((r) => r.id === record.id);
+  assert.equal(kept.data.name, record.data.name);
+  assert.equal(kept.data.ownerId, f.targetId);
+  assert.equal(kept.version, record.version + 1);
+  assert.ok(snapshotAfter.audit.some((a) => a.action === "Record created"));
+  assert.ok(snapshotAfter.audit.some((a) => a.action === "Accounts combined"));
+  assert.equal(
+    (
+      await pool().query("SELECT * FROM identities WHERE user_id=$1", [
+        f.targetId,
+      ])
+    ).rowCount,
+    2,
+  );
+  assert.equal(
+    (await pool().query("SELECT * FROM members WHERE user_id=$1", [f.targetId]))
+      .rowCount,
+    2,
+  );
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT merged_into,digest_enabled FROM users WHERE id=$1",
+        [f.sourceId],
+      )
+    ).rows[0].merged_into,
+    f.targetId,
+  );
+  const signIn = await walletLogin(f.source.wallet);
+  assert.equal(
+    (await currentUser(request(cookiePair(signIn.result.cookie))))!.id,
+    f.targetId,
+  );
+});
+test("recovery rejects a wrong current method, changed access, expired intent and bad proof without moving identities", async () => {
+  const { completeRecovery } = await import("../lib/recovery");
+  const f = await recoveryFixture();
+  await assert.rejects(
+    () =>
+      startChallenge(request(f.targetSession), {
+        kind: "ethereum",
+        value: f.source.wallet.address,
+        link: true,
+        recoveryToken: f.recovery.token,
+      }),
+    /current account/,
+  );
+  await verifyRecoveryCurrent(f);
+  await pool().query("UPDATE members SET role='editor' WHERE user_id=$1", [
+    f.sourceId,
+  ]);
+  await assert.rejects(
+    () => completeRecovery(request(f.targetSession), f.recovery.token),
+    /access changed/,
+  );
+  assert.equal(
+    (
+      await pool().query("SELECT user_id FROM identities WHERE value=$1", [
+        f.source.wallet.address.toLowerCase(),
+      ])
+    ).rows[0].user_id,
+    f.sourceId,
+  );
+  await pool().query(
+    "UPDATE identity_recoveries SET expires_at=now()-interval '1 minute' WHERE hash=$1",
+    [hash(f.recovery.token)],
+  );
+  await assert.rejects(
+    () => completeRecovery(request(f.targetSession), f.recovery.token),
+    /expired/,
+  );
+  const c = await startChallenge(request(f.targetSession), {
+    kind: "ethereum",
+    value: f.source.wallet.address,
+    link: true,
+  });
+  await assert.rejects(
+    () =>
+      verifyChallenge(request(`${f.targetSession}; ${cookiePair(c.cookie)}`), {
+        id: c.body.id,
+        proof: "bad",
+        recover: true,
+      }),
+    /Verification failed/,
+  );
+});

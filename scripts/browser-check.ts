@@ -3,7 +3,11 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { chromium, expect, type Page } from "@playwright/test";
 import { Wallet, getBytes } from "ethers";
-import { pool, transaction } from "../lib/db";
+import pg from "pg";
+import { writeFileSync } from "node:fs";
+import AxeBuilder from "@axe-core/playwright";
+import { pool, transaction, schema } from "../lib/db";
+import { checkWorkflows } from "./ui-workflows";
 const origin = "http://127.0.0.1:3040";
 if (
   process.env.APP_URL !== origin ||
@@ -11,6 +15,28 @@ if (
   !process.env.DATABASE_URL?.includes("127.0.0.1")
 )
   throw new Error("Browser check requires the local development environment.");
+// Use a separate disposable database so repeated browser runs never share user data or auth limits.
+const admin = new pg.Client({ connectionString: process.env.DATABASE_URL });
+await admin.connect();
+try {
+  if (
+    !(
+      await admin.query(
+        "SELECT 1 FROM pg_database WHERE datname='crm_browser_test'",
+      )
+    ).rowCount
+  )
+    await admin.query("CREATE DATABASE crm_browser_test");
+} finally {
+  await admin.end();
+}
+const testUrl = new URL(process.env.DATABASE_URL!);
+testUrl.pathname = "/crm_browser_test";
+process.env.DATABASE_URL = testUrl.toString();
+await pool().query(schema);
+await pool().query(
+  "TRUNCATE users,workspaces,rate_limits RESTART IDENTITY CASCADE",
+);
 const codes = new Map<string, string>();
 const server = spawn(
   process.execPath,
@@ -92,6 +118,24 @@ async function walletPage() {
  `);
   return context.newPage();
 }
+const accessibilityFindings: unknown[] = [];
+async function accessibility(page: Page, label: string) {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const result = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  if (result.violations.length)
+    accessibilityFindings.push({
+      screen: label,
+      violations: result.violations.map((v) => ({
+        id: v.id,
+        nodes: v.nodes.map((n) => ({
+          target: n.target,
+          summary: n.failureSummary,
+        })),
+      })),
+    });
+}
 async function remember(page: Page) {
   const me = await api(page, "me");
   accounts.push({ id: me.user.id, workspace: me.workspaces[0].id });
@@ -156,6 +200,9 @@ try {
   await expect(
     page.getByText("Two verified ways to sign in", { exact: true }),
   ).toBeVisible();
+  await accessibility(page, "Settings");
+  await checkWorkflows(page, api, first, origin, accessibility);
+  await page.goto(origin + "/?view=settings");
   // Opt-in is explicit, persists, and can be turned off again.
   const digest = page.getByLabel("Email me a daily digest");
   await expect(digest).not.toBeChecked();
@@ -321,6 +368,81 @@ try {
       ),
     )
     .toBe(true);
+  // Verify member permissions in the interface, then restore the invited editor.
+  await api(
+    page,
+    base + "/members",
+    { userId: secondMe.user.id, role: "viewer" },
+    "PATCH",
+  );
+  await second.goto(origin + "/?view=people");
+  await expect(
+    second.getByRole("button", { name: "Add person", exact: true }),
+  ).toHaveCount(0);
+  await second.getByText("Browser contact", { exact: true }).click();
+  await expect(
+    second.getByRole("button", { name: "Save record", exact: true }),
+  ).toHaveCount(0);
+  await second
+    .getByRole("button", { name: "Close", exact: true })
+    .last()
+    .click();
+  await api(
+    page,
+    base + "/members",
+    { userId: secondMe.user.id, role: "editor" },
+    "PATCH",
+  );
+  // Reproduce the reported duplicate-account collision and finish explicit recovery.
+  await second.setViewportSize({ width: 1280, height: 900 });
+  await second.goto(origin + "/?view=settings");
+  await second
+    .getByRole("button", { name: "Link email or wallet", exact: true })
+    .click();
+  await second.getByLabel("Email address", { exact: true }).fill(email);
+  await second
+    .getByRole("button", { name: "Send verification code", exact: true })
+    .click();
+  await expect(
+    second.getByLabel("Verification code", { exact: true }),
+  ).toBeVisible();
+  await second
+    .getByLabel("Verification code", { exact: true })
+    .fill(codes.get(email)!);
+  await second
+    .getByRole("button", { name: "Verify and continue", exact: true })
+    .click();
+  await expect(
+    second.getByRole("heading", { name: "Two accounts, one person?" }),
+  ).toBeVisible();
+  await accessibility(second, "Account recovery");
+  await second.screenshot({
+    path: "/tmp/crm-account-recovery.png",
+    fullPage: true,
+  });
+  await second
+    .getByRole("button", { name: "Verify current account", exact: true })
+    .click();
+  await second
+    .getByRole("button", { name: "Verify current wallet", exact: true })
+    .click();
+  await expect(
+    second.getByText("Both accounts verified.", { exact: false }),
+  ).toBeVisible();
+  await second
+    .getByRole("button", { name: "Confirm and combine accounts", exact: true })
+    .click();
+  await expect(second.getByRole("dialog")).not.toBeVisible();
+  const recovered = await api(second, "me");
+  assert.equal(recovered.user.id, secondMe.user.id);
+  assert.equal(recovered.identities.length, 4);
+  assert.equal(recovered.workspaces.length, 2);
+  assert.ok(
+    (await api(second, base)).records.some(
+      (r: any) => r.data.name === "Browser follow-up",
+    ),
+  );
+  assert.equal((await page.request.get(origin + "/api/me")).status(), 401);
   // Timeout recovery and missing provider, without touching any real wallet.
   const timeout = await walletPage();
   await timeout.goto(origin);
@@ -338,7 +460,7 @@ try {
   await expect(
     timeout.getByLabel("Email address", { exact: true }),
   ).toBeEnabled();
-  const plain = await browser.newPage();
+  const plain = await (await browser.newContext()).newPage();
   await plain.goto(origin);
   await plain
     .getByRole("button", { name: "Sign in with Ethereum", exact: true })
@@ -347,6 +469,20 @@ try {
   await expect(
     plain.getByLabel("Email address", { exact: true }),
   ).toBeEnabled();
+  await accessibility(plain, "Sign-in");
+  const demo = await (await browser.newContext()).newPage();
+  await demo.goto(origin + "/?demo=1");
+  await expect(
+    demo.getByText("All names and records are fictional.", { exact: false }),
+  ).toBeVisible();
+  await demo.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(demo.getByLabel("Email me a daily digest")).toBeDisabled();
+  await accessibility(demo, "Demo settings");
+  writeFileSync(
+    "/tmp/crm-accessibility.json",
+    JSON.stringify(accessibilityFindings, null, 2),
+  );
+  assert.deepEqual(accessibilityFindings, [], "Accessibility checks");
   console.log(
     "Browser checks passed: cancellation, timeout, rejection recovery, email → wallet, wallet → email, persistence, quick actions, timeline, invitations, and opt-in digest.",
   );
@@ -356,6 +492,15 @@ try {
 } finally {
   await browser.close();
   server.kill("SIGTERM");
+  const ids = accounts.map((a) => a.id);
+  await pool().query(
+    "DELETE FROM challenges WHERE recovery_hash IN (SELECT hash FROM identity_recoveries WHERE target_id=ANY($1::uuid[]) OR source_id=ANY($1::uuid[]))",
+    [ids],
+  );
+  await pool().query(
+    "DELETE FROM identity_recoveries WHERE target_id=ANY($1::uuid[]) OR source_id=ANY($1::uuid[])",
+    [ids],
+  );
   for (const a of accounts)
     await transaction(async (db) => {
       await db.query("DELETE FROM audit WHERE workspace_id=$1", [a.workspace]);

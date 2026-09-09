@@ -44,4 +44,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS invites_id ON invites(id);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS digest_enabled boolean NOT NULL DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS digest_email text NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS digest_receipts(user_id uuid NOT NULL REFERENCES users(id), day date NOT NULL, status text NOT NULL DEFAULT 'pending', payload jsonb NOT NULL, record_ids uuid[] NOT NULL, attempts int NOT NULL DEFAULT 0, sent_at timestamptz, last_error text, PRIMARY KEY(user_id,day));
+ALTER TABLE users ADD COLUMN IF NOT EXISTS merged_into uuid REFERENCES users(id);
+CREATE TABLE IF NOT EXISTS identity_recoveries(hash text PRIMARY KEY,target_id uuid NOT NULL REFERENCES users(id),source_id uuid NOT NULL REFERENCES users(id),session_hash text NOT NULL,fingerprint text NOT NULL,current_verified boolean NOT NULL DEFAULT false,consumed boolean NOT NULL DEFAULT false,expires_at timestamptz NOT NULL);
+ALTER TABLE challenges ADD COLUMN IF NOT EXISTS recovery_hash text REFERENCES identity_recoveries(hash);
 `;

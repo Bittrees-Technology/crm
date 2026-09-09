@@ -1,7 +1,7 @@
 @import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=Manrope:wght@400;500;600;650;700;750;800&display=swap");
 :root {
   --ink: #172a26;
-  --muted: #75817e;
+  --muted: #5f6d67;
   --line: #e4eae7;
   --canvas: #f7f9f8;
   --green: #157a50;
@@ -451,7 +451,7 @@ small {
 .nav-label {
   font-size: 10px;
   letter-spacing: 1.8px;
-  color: #749682;
+  color: #8ba997;
   padding-left: 12px;
   margin-bottom: 10px;
 }
@@ -556,7 +556,7 @@ small {
   display: flex;
   gap: 14px;
   font-size: 13px;
-  color: #89928e;
+  color: #5f6d67;
 }
 .breadcrumb strong {
   font-weight: 500;
@@ -574,7 +574,7 @@ small {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #819088;
+  color: #5f6d67;
   font-size: 12px;
 }
 .content {
@@ -639,7 +639,7 @@ small {
 }
 .metric small {
   font-size: 12px;
-  color: #86918a;
+  color: #5f6d67;
 }
 .dashboard-grid {
   display: grid;
@@ -725,7 +725,7 @@ small {
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: #879288;
+  color: #5f6d67;
   white-space: nowrap;
 }
 .due.overdue {
@@ -808,7 +808,7 @@ small {
 }
 .quiet-empty {
   padding: 26px;
-  color: #8b988e;
+  color: #5f6d67;
   font-size: 13px;
 }
 .avatar {
@@ -820,7 +820,7 @@ small {
   font-size: 11px;
   font-weight: 600;
   background: #e8eee5;
-  color: #6b825f;
+  color: #4e6644;
   border-radius: 8px;
   letter-spacing: 0.1px;
 }
@@ -845,7 +845,7 @@ small {
   padding: 3px 8px;
   border-radius: 5px;
   background: #edf2ed;
-  color: #6e826f;
+  color: #516652;
   font-size: 11px;
   white-space: nowrap;
 }
@@ -934,7 +934,7 @@ table {
 }
 th {
   font-size: 12px;
-  color: #85938a;
+  color: #5f6d67;
   background: #fbfcfb;
   font-weight: 500;
   padding: 13px 20px;
@@ -943,7 +943,7 @@ th {
 td {
   padding: 15px 20px;
   border-bottom: 1px solid #eef2ee;
-  color: #708175;
+  color: #5f6d67;
 }
 tr:last-child td {
   border-bottom: 0;
@@ -1034,7 +1034,7 @@ tbody tr:hover {
 }
 .card-category {
   font-size: 10px;
-  color: #82a08a;
+  color: #5f6d67;
   letter-spacing: 0.5px;
 }
 .opportunity-card h3 {
@@ -1047,7 +1047,7 @@ tbody tr:hover {
 }
 .opportunity-card p {
   font-size: 11px;
-  color: #94a197;
+  color: #5f6d67;
 }
 .card-value {
   display: block;
@@ -1060,7 +1060,7 @@ tbody tr:hover {
   display: flex;
   gap: 5px;
   font-size: 11px;
-  color: #778c7d;
+  color: #5f6d67;
   margin: 16px 0 12px;
   align-items: flex-start;
 }
@@ -1082,11 +1082,11 @@ tbody tr:hover {
   font-size: 12px;
   text-align: center;
   padding: 25px 0;
-  color: #a0ada2;
+  color: #5f6d67;
 }
 .column-add {
   font-size: 12px;
-  color: #8d9f90;
+  color: #5f6d67;
   background: transparent;
   border: 0;
   display: flex;
@@ -1128,7 +1128,7 @@ tbody tr:hover {
   border-top: 1px solid var(--line);
   padding: 15px 36px;
   font-size: 11px;
-  color: #98a49c;
+  color: #5f6d67;
 }
 .app-footer span {
   margin-left: 12px;
@@ -1913,4 +1913,70 @@ td,
   .invitation-manager {
     padding: 18px;
   }
+}
+.recovery-form {
+  max-height: calc(90dvh - 85px);
+  overflow-y: auto;
+}
+.recovery-account {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  margin: 14px 0;
+}
+.recovery-account h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.verified-methods {
+  padding-left: 18px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+.recovery-account ul {
+  padding-left: 18px;
+  font-size: 13px;
+}
+.recovery-form > .button {
+  margin-top: 12px;
+}
+.recovery-form > .text-button {
+  margin-top: 16px;
+}
+.mobile-backdrop {
+  display: none;
+}
+@media (max-width: 800px) {
+  .sidebar {
+    visibility: hidden;
+  }
+  .sidebar.open {
+    visibility: visible;
+  }
+  .mobile-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 19;
+    border: 0;
+    border-radius: 0;
+    background: #132e2566;
+  }
+}
+:focus-visible {
+  outline: 2px solid #16845a;
+  outline-offset: 3px;
+}
+
+.recovery-actions {
+  position: sticky;
+  bottom: -26px;
+  background: white;
+  margin: 16px -26px -26px;
+  padding: 16px 26px 26px;
+  border-top: 1px solid var(--line);
+}
+.recovery-actions .text-button {
+  margin-top: 12px;
 }

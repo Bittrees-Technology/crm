@@ -17,7 +17,17 @@ export async function saveDigestPreference(userId: string, input: unknown) {
     .parse(input);
   const email = body.email.trim().toLowerCase();
   return transaction(async (db) => {
-    await db.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [userId]);
+    const account = (
+      await db.query(
+        "SELECT id,merged_into FROM users WHERE id=$1 FOR UPDATE",
+        [userId],
+      )
+    ).rows[0];
+    if (!account || account.merged_into)
+      throw new HttpError(
+        401,
+        "Your account changed. Sign in again to continue.",
+      );
     if (
       body.enabled &&
       !(
