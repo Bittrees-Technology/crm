@@ -143,6 +143,18 @@ export async function completeRecovery(req: Request, raw: string) {
       "UPDATE records SET data=jsonb_set(data,'{ownerId}',to_jsonb($1::text)),version=version+1,updated_at=now() WHERE data->>'ownerId'=$2::text",
       [r.target_id, r.source_id],
     );
+    await db.query(
+      "UPDATE records SET visibility_ids=ARRAY(SELECT DISTINCT unnest(array_replace(visibility_ids,$2::uuid,$1::uuid))),version=version+1,updated_at=now() WHERE $2::uuid=ANY(visibility_ids)",
+      [r.target_id, r.source_id],
+    );
+    await db.query(
+      `INSERT INTO record_private_notes(record_id,author_id,content,version) SELECT record_id,$1,content,version+1 FROM record_private_notes WHERE author_id=$2
+       ON CONFLICT(record_id,author_id) DO UPDATE SET content=record_private_notes.content || E'\n\n— Recovered account note —\n\n' || EXCLUDED.content,version=record_private_notes.version+1,updated_at=now()`,
+      [r.target_id, r.source_id],
+    );
+    await db.query("DELETE FROM record_private_notes WHERE author_id=$1", [
+      r.source_id,
+    ]);
     await db.query("UPDATE identities SET user_id=$1 WHERE user_id=$2", [
       r.target_id,
       r.source_id,

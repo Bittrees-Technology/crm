@@ -2070,3 +2070,59 @@ td,
     flex-basis: 100%;
   }
 }
+
+.sharing-panel {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--border, #d8e3dd);
+  border-radius: 10px;
+}
+.sharing-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.sharing-panel label {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.sharing-panel textarea,
+.sharing-panel select,
+.sharing-panel input:not([type="checkbox"]) {
+  width: 100%;
+}
+.access-list {
+  max-height: 320px;
+  overflow: auto;
+  margin-top: 12px;
+}
+.access-row {
+  display: grid;
+  gap: 4px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border, #d8e3dd);
+  overflow-wrap: anywhere;
+}
+.access-row > div {
+  display: grid;
+  gap: 4px;
+}
+.sharing-panel .access-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+.sharing-panel input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+}
+
+.record-form > .sharing-panel {
+  margin-left: 24px;
+  margin-right: 24px;
+}
+
+.shared-content-help {
+  margin: 0 24px 16px;
+}

@@ -1,3 +1,4 @@
+import { privateNote, inspectAccess } from "@/lib/sharing";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
@@ -77,7 +78,7 @@ async function handle(req: NextRequest) {
       });
     if (path === "health" && req.method === "GET") {
       await pool().query("SELECT id FROM workspaces LIMIT 1");
-      return json({ status: "ok", version: "0.4.0" });
+      return json({ status: "ok", version: "0.5.0" });
     }
     let body: Record<string, unknown> = {};
     if (req.method !== "GET") {
@@ -259,6 +260,11 @@ async function handle(req: NextRequest) {
         );
       if (resource === "import" && req.method === "POST")
         return json(await importRecords(user.id, w, body));
+      if (resource === "access" && req.method === "GET")
+        return json(await inspectAccess(user.id, w));
+      const privateMatch = resource?.match(/^records\/([^/]+)\/private-note$/);
+      if (privateMatch && req.method === "GET")
+        return json(await privateNote(user.id, w, privateMatch[1]));
       const timelineMatch = resource?.match(/^records\/([^/]+)\/timeline$/);
       if (timelineMatch && req.method === "GET")
         return json(await timeline(user.id, w, timelineMatch[1]));

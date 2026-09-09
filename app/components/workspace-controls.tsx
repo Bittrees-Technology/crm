@@ -27,6 +27,7 @@ export function ScopePicker({
   records: CrmRecord[];
   disabled?: boolean;
 }) {
+  const [search, setSearch] = useState("");
   const roots = records.filter((r) =>
     ["projects", "organizations", "opportunities"].includes(r.kind),
   );
@@ -48,26 +49,43 @@ export function ScopePicker({
       {value !== null && (
         <>
           <p className="small">
-            Includes selected records and records linked beneath them. Other
-            workspace records stay private.
+            Includes selected records and records linked beneath them, subject
+            to each record’s sharing settings. Owners can also share individual
+            records.
           </p>
+          {roots.length > 8 && (
+            <label>
+              Find collaboration areas
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </label>
+          )}
           <div className="scope-options">
-            {roots.map((r) => (
-              <label className="checkbox-label" key={r.id}>
-                <input
-                  type="checkbox"
-                  checked={value.includes(r.id)}
-                  onChange={(e) =>
-                    onChange(
-                      e.target.checked
-                        ? [...value, r.id]
-                        : value.filter((id) => id !== r.id),
-                    )
-                  }
-                />
-                {r.data.name} · {r.kind}
-              </label>
-            ))}
+            {roots
+              .filter((r) =>
+                `${r.data.name} ${r.kind}`
+                  .toLowerCase()
+                  .includes(search.toLowerCase()),
+              )
+              .map((r) => (
+                <label className="checkbox-label" key={r.id}>
+                  <input
+                    type="checkbox"
+                    checked={value.includes(r.id)}
+                    onChange={(e) =>
+                      onChange(
+                        e.target.checked
+                          ? [...value, r.id]
+                          : value.filter((id) => id !== r.id),
+                      )
+                    }
+                  />
+                  {r.data.name} · {r.kind}
+                </label>
+              ))}
             {!roots.length && (
               <p>Create a project, organization, or opportunity first.</p>
             )}
@@ -307,7 +325,9 @@ export function WorkspaceActions({
                     Whole-workspace members from either workspace will gain
                     access to the combined workspace. Limited members keep their
                     selected records; when someone belongs to both, access is
-                    combined and the stronger role applies.
+                    combined and the stronger role applies. Record sharing
+                    restrictions remain in place, and personal owner notes stay
+                    author-only.
                   </p>
                   <ul>
                     {[

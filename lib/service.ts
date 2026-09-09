@@ -4,6 +4,7 @@ import {
   redactRecord,
   scopeSchema,
   validateScope,
+  validateVisibility,
 } from "./access";
 import { normalizeType, typeKey, defaultType } from "./opportunity-types";
 import { randomUUID } from "node:crypto";
@@ -110,10 +111,27 @@ export async function saveRecord(userId: string, w: string, input: unknown) {
       kind: z.enum(kinds),
       version: z.number().int().positive().optional(),
       data: recordSchema,
+      visibilityIds: scopeSchema.optional(),
+      privateNote: z
+        .object({
+          content: z.string().max(20000),
+          version: z.number().int().min(0),
+        })
+        .optional(),
     })
     .parse(input);
   return transaction(async (db) => {
-    await membership(w, userId, true, false, db);
+    const role = await membership(w, userId, true, false, db);
+    if (
+      (body.visibilityIds !== undefined || body.privateNote !== undefined) &&
+      role !== "owner"
+    )
+      throw new HttpError(
+        403,
+        "Only workspace owners can manage sharing or personal owner notes.",
+      );
+    if (body.visibilityIds !== undefined)
+      await validateVisibility(db, w, body.visibilityIds);
     // Workspace lock makes reference checks, deletion, and import deduplication atomic.
     await db.query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE", [w]);
     await checkRecordAccess(db, userId, w, body.id, body.data);
@@ -146,8 +164,16 @@ export async function saveRecord(userId: string, w: string, input: unknown) {
         throw new HttpError(400, "A record version is required.");
       record = (
         await db.query(
-          "UPDATE records SET stage_changed_at=CASE WHEN data->>'stage' IS DISTINCT FROM $1::jsonb->>'stage' THEN now() ELSE stage_changed_at END,data=$1,version=version+1,updated_at=now() WHERE id=$2 AND workspace_id=$3 AND kind=$4 AND version=$5 RETURNING *",
-          [body.data, id, w, body.kind, body.version],
+          "UPDATE records SET visibility_ids=CASE WHEN $6::boolean THEN $7::uuid[] ELSE visibility_ids END,stage_changed_at=CASE WHEN data->>'stage' IS DISTINCT FROM $1::jsonb->>'stage' THEN now() ELSE stage_changed_at END,data=$1,version=version+1,updated_at=now() WHERE id=$2 AND workspace_id=$3 AND kind=$4 AND version=$5 RETURNING *",
+          [
+            body.data,
+            id,
+            w,
+            body.kind,
+            body.version,
+            body.visibilityIds !== undefined,
+            body.visibilityIds ?? null,
+          ],
         )
       ).rows[0];
       if (!record)
@@ -158,10 +184,27 @@ export async function saveRecord(userId: string, w: string, input: unknown) {
     } else {
       record = (
         await db.query(
-          "INSERT INTO records(id,workspace_id,kind,data) VALUES($1,$2,$3,$4) RETURNING *",
-          [id, w, body.kind, body.data],
+          "INSERT INTO records(id,workspace_id,kind,data,visibility_ids) VALUES($1,$2,$3,$4,$5) RETURNING *",
+          [id, w, body.kind, body.data, body.visibilityIds ?? null],
         )
       ).rows[0];
+    }
+    if (body.privateNote) {
+      const note = (
+        await db.query(
+          "SELECT version FROM record_private_notes WHERE record_id=$1 AND author_id=$2 FOR UPDATE",
+          [id, userId],
+        )
+      ).rows[0];
+      if ((note?.version || 0) !== body.privateNote.version)
+        throw new HttpError(
+          409,
+          "Your private note changed in another session. Reopen the record before saving.",
+        );
+      await db.query(
+        "INSERT INTO record_private_notes(record_id,author_id,content) VALUES($1,$2,$3) ON CONFLICT(record_id,author_id) DO UPDATE SET content=EXCLUDED.content,version=record_private_notes.version+1,updated_at=now()",
+        [id, userId, body.privateNote.content],
+      );
     }
     await audit(
       db,
@@ -251,7 +294,15 @@ export async function importRecords(userId: string, w: string, input: unknown) {
   return transaction(async (db) => {
     await membership(w, userId, true, false, db);
     await db.query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE", [w]);
-    if ((await accessIds(db, userId, w)) !== null)
+    const importIds = await accessIds(db, userId, w);
+    if (
+      (
+        await db.query(
+          "SELECT scope_ids FROM members WHERE user_id=$1 AND workspace_id=$2",
+          [userId, w],
+        )
+      ).rows[0].scope_ids !== null
+    )
       throw new HttpError(
         403,
         "CSV import requires whole-workspace access. Add linked records individually.",
@@ -259,21 +310,24 @@ export async function importRecords(userId: string, w: string, input: unknown) {
     let imported = 0,
       skipped = 0;
     for (const data of body.rows) {
+      await checkRecordAccess(db, userId, w, undefined, data);
       await validateReferences(db, w, data);
       const duplicate = (
         await db.query(
-          `SELECT id FROM records WHERE workspace_id=$1 AND kind=$2 AND (lower(data->>'name')=lower($3) OR ($4<>'' AND lower(data->>'email')=lower($4))) LIMIT 1`,
-          [w, body.kind, data.name, data.email],
+          `SELECT id FROM records WHERE workspace_id=$1 AND kind=$2 AND ($5::uuid[] IS NULL OR id=ANY($5)) AND (lower(data->>'name')=lower($3) OR ($4<>'' AND lower(data->>'email')=lower($4))) LIMIT 1`,
+          [w, body.kind, data.name, data.email, importIds],
         )
       ).rowCount;
       if (duplicate) {
         skipped++;
         continue;
       }
+      const importedId = randomUUID();
       await db.query(
         "INSERT INTO records(id,workspace_id,kind,data) VALUES($1,$2,$3,$4)",
-        [randomUUID(), w, body.kind, data],
+        [importedId, w, body.kind, data],
       );
+      importIds?.push(importedId);
       imported++;
     }
     await audit(db, w, userId, "CSV imported", null, {
@@ -305,7 +359,7 @@ export async function snapshot(userId: string, w: string) {
         : { rows: [] };
     return {
       role,
-      limited: ids !== null,
+      limited: members.rows.find((m) => m.id === userId)?.scope_ids !== null,
       records: records.rows.map((r) => redactRecord(r, ids)),
       members: members.rows.map((m) =>
         role === "owner" ? m : { id: m.id, name: m.name, role: m.role },
@@ -426,6 +480,10 @@ export async function updateMember(userId: string, w: string, input: unknown) {
           "Reassign this member’s records before removing them.",
         );
       await db.query(
+        "UPDATE records SET visibility_ids=array_remove(visibility_ids,$2::uuid),version=version+1,updated_at=now() WHERE workspace_id=$1 AND $2::uuid=ANY(visibility_ids)",
+        [w, body.userId],
+      );
+      await db.query(
         "DELETE FROM members WHERE workspace_id=$1 AND user_id=$2",
         [w, body.userId],
       );
@@ -486,7 +544,7 @@ export async function timeline(userId: string, w: string, id: string) {
     const rows = await db.query(
       `WITH RECURSIVE related AS (
  SELECT id FROM records WHERE workspace_id=$1 AND id=$2
- UNION SELECT r.id FROM records r JOIN related p ON p.id::text IN(r.data->>'personId',r.data->>'organizationId',r.data->>'projectId',r.data->>'opportunityId') WHERE r.workspace_id=$1
+ UNION SELECT r.id FROM records r JOIN related p ON p.id::text IN(r.data->>'personId',r.data->>'organizationId',r.data->>'projectId',r.data->>'opportunityId') WHERE r.workspace_id=$1 AND ($3::uuid[] IS NULL OR r.id=ANY($3))
  ) SELECT a.id,a.record_id,a.action,a.detail,a.created_at,u.name AS actor,
  CASE WHEN r.kind='notes' AND a.id=(SELECT max(b.id) FROM audit b WHERE b.workspace_id=$1 AND b.record_id=r.id) THEN r.data->>'description' ELSE NULL END AS note
  FROM audit a JOIN users u ON u.id=a.actor_id LEFT JOIN records r ON r.id=a.record_id AND r.workspace_id=$1

@@ -66,6 +66,11 @@ export type CrmRecord = {
   created_at: string;
   updated_at: string;
   stage_changed_at?: string;
+  visibility_ids?: string[] | null;
+};
+export type OwnerRecordFields = {
+  visibilityIds?: string[] | null;
+  privateNote?: { content: string; version: number };
 };
 export class HttpError extends Error {
   constructor(

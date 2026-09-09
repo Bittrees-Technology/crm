@@ -12,6 +12,7 @@ import {
   type EthereumProvider,
 } from "@/lib/auth-client";
 import Papa from "papaparse";
+import { RecordSharing, AccessInspector } from "./components/sharing";
 import {
   ScopePicker,
   MemberAccess,
@@ -68,6 +69,7 @@ import {
   recordSchema,
   stages,
   type CrmRecord,
+  type OwnerRecordFields,
   type Kind,
   type RecordData,
 } from "@/lib/model";
@@ -1194,7 +1196,12 @@ export default function App() {
         r.data.status !== "Done" &&
         !(r.kind === "opportunities" && ["Won", "Lost"].includes(r.data.stage)),
     );
-  async function save(kind: Kind, data: RecordData, record?: CrmRecord) {
+  async function save(
+    kind: Kind,
+    data: RecordData,
+    record?: CrmRecord,
+    ownerFields?: OwnerRecordFields,
+  ) {
     await action(async () => {
       if (demo) {
         const r: CrmRecord = {
@@ -1215,6 +1222,7 @@ export default function App() {
           data,
           id: record?.id,
           version: record?.version,
+          ...ownerFields,
         });
         await refresh();
       }
@@ -1726,7 +1734,9 @@ export default function App() {
                   ))
                 ) : (
                   <div className="quiet-empty">
-                    Your team’s updates will appear here as work moves forward.
+                    {snapshot.role === "owner"
+                      ? "Your team’s updates will appear here as work moves forward."
+                      : "Open a record to see activity for work you can access."}
                   </div>
                 )}
               </section>
@@ -2077,6 +2087,15 @@ export default function App() {
                         )}
                     </div>
                   ))}
+                  {snapshot.role === "owner" && !demo && (
+                    <AccessInspector
+                      workspace={workspace}
+                      revision={JSON.stringify([
+                        snapshot.members,
+                        records.map((r) => [r.id, r.version]),
+                      ])}
+                    />
+                  )}
                   {snapshot.role === "owner" && (
                     <form
                       className="invite-form"
@@ -2581,7 +2600,8 @@ export default function App() {
             setEditing(null);
             setError("");
           }}
-          onSave={(d) => save(editing.kind, d, editing.record)}
+          isOwner={snapshot.role === "owner"}
+          onSave={(d, fields) => save(editing.kind, d, editing.record, fields)}
           onDelete={editing.record ? () => remove(editing.record!) : undefined}
         />
       )}
@@ -2762,6 +2782,7 @@ function Empty({
   );
 }
 function RecordEditor({
+  isOwner,
   savedTypes,
   workspace,
   demo,
@@ -2778,6 +2799,7 @@ function RecordEditor({
   onSave,
   onDelete,
 }: {
+  isOwner: boolean;
   savedTypes: string[];
   workspace: string;
   demo: boolean;
@@ -2791,7 +2813,7 @@ function RecordEditor({
   busy: boolean;
   error: string;
   onClose: () => void;
-  onSave: (data: RecordData) => void;
+  onSave: (data: RecordData, ownerFields?: OwnerRecordFields) => void;
   onDelete?: () => void;
 }) {
   const [data, setData] = useState<RecordData>(
@@ -2804,9 +2826,57 @@ function RecordEditor({
       name: "",
     },
   );
+  const [visibility, setVisibility] = useState<string[] | null>(
+    record?.visibility_ids ?? null,
+  );
+  const [privateDraft, setPrivateDraft] = useState("");
+  const [privateOriginal, setPrivateOriginal] = useState({
+    content: "",
+    version: 0,
+  });
+  const [privateLoading, setPrivateLoading] = useState(
+    !!record && isOwner && !demo,
+  );
+  const [privateError, setPrivateError] = useState("");
+  const [privateRetry, setPrivateRetry] = useState(0);
+  useEffect(() => {
+    if (!record || !isOwner || demo) return;
+    const controller = new AbortController();
+    setPrivateLoading(true);
+    setPrivateError("");
+    fetch(`/api/workspaces/${workspace}/records/${record.id}/private-note`, {
+      cache: "no-store",
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]),
+    })
+      .then(async (r) => {
+        const body = await r.json();
+        if (!r.ok)
+          throw new Error(body.error || "Unable to load your private note.");
+        return body;
+      })
+      .then((note) => {
+        if (!controller.signal.aborted) {
+          setPrivateOriginal(note);
+          setPrivateDraft(note.content);
+        }
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setPrivateError(e.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setPrivateLoading(false);
+      });
+    return () => controller.abort();
+  }, [record, isOwner, demo, workspace, privateRetry]);
+  const sharingDirty =
+    JSON.stringify(visibility) !==
+    JSON.stringify(record?.visibility_ids ?? null);
+  const privateDirty = privateDraft !== privateOriginal.content;
   const [customType, setCustomType] = useState(false);
   const original = useRef(JSON.stringify(data));
-  const dirty = canEdit && JSON.stringify(data) !== original.current;
+  const dirty =
+    canEdit &&
+    (JSON.stringify(data) !== original.current || sharingDirty || privateDirty);
   function closeEditor() {
     if (busy) return;
     if (!dirty || window.confirm("Discard your unsaved changes?")) onClose();
@@ -2889,9 +2959,25 @@ function RecordEditor({
       wide
     >
       <form
+        className="record-form"
         onSubmit={(e) => {
           e.preventDefault();
-          onSave(data);
+          onSave(
+            data,
+            isOwner && !demo
+              ? {
+                  ...(sharingDirty ? { visibilityIds: visibility } : {}),
+                  ...(privateDirty && !privateLoading && !privateError
+                    ? {
+                        privateNote: {
+                          content: privateDraft,
+                          version: privateOriginal.version,
+                        },
+                      }
+                    : {}),
+                }
+              : undefined,
+          );
         }}
       >
         <fieldset disabled={!canEdit || busy} className="editor-fields">
@@ -3041,8 +3127,6 @@ function RecordEditor({
                 )}
               </>
             )}
-            {["people", "organizations", "opportunities"].includes(kind) &&
-              ref("projectId", "Project", "projects")}
             {kind === "tasks" && (
               <>
                 {select(
@@ -3078,6 +3162,56 @@ function RecordEditor({
             </label>
           </div>
         </fieldset>
+        <p className="small muted shared-content-help">
+          The description and record fields are shared with everyone who can
+          access this record. Assignment does not grant access.
+        </p>
+        {isOwner && !demo && (
+          <>
+            <details className="sharing-panel">
+              <summary>Your private note</summary>
+              <p className="small muted">
+                Only you can read this, including when there are other workspace
+                owners. Excluded from exports, shared activity, and emails.
+              </p>
+              {privateLoading ? (
+                <p role="status">Loading your private note…</p>
+              ) : privateError ? (
+                <div className="error" role="alert">
+                  {privateError}{" "}
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => setPrivateRetry((v) => v + 1)}
+                  >
+                    Retry private note
+                  </button>
+                </div>
+              ) : (
+                <label>
+                  Private context
+                  <textarea
+                    rows={5}
+                    maxLength={20000}
+                    aria-label="Private context"
+                    value={privateDraft}
+                    disabled={busy}
+                    onChange={(e) => setPrivateDraft(e.target.value)}
+                  />
+                </label>
+              )}
+            </details>
+            <RecordSharing
+              records={records}
+              members={members}
+              record={record}
+              data={data}
+              value={visibility}
+              onChange={setVisibility}
+              disabled={busy}
+            />
+          </>
+        )}
         {error && (
           <div className="error modal-error" role="alert">
             {error}

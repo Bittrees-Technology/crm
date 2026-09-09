@@ -9,7 +9,7 @@ export async function checkAdminWorkflows(
   accessibility: (page: Page, label: string) => Promise<void>,
 ) {
   const original = me.workspaces[0].id;
-  const root = await api(page, `workspaces/${original}/records`, {
+  let root = await api(page, `workspaces/${original}/records`, {
     kind: "projects",
     data: { name: "Access test project" },
   });
@@ -19,8 +19,102 @@ export async function checkAdminWorkflows(
   await expect(
     page.getByRole("dialog").getByLabel("Name", { exact: true }),
   ).toHaveValue("Access test project");
-  await page.getByRole("dialog").getByLabel("Close", { exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog
+    .locator("summary")
+    .filter({ hasText: "Your private note" })
+    .click();
+  await dialog
+    .getByLabel("Private context", { exact: true })
+    .fill("Browser author-only context");
+  await dialog
+    .locator("summary")
+    .filter({ hasText: "Sharing & access" })
+    .click();
+  await dialog
+    .getByLabel("Record access", { exact: true })
+    .selectOption("selected");
+  await accessibility(page, "Private note and sharing editor");
+  await page.screenshot({
+    path: "/tmp/crm-private-sharing-verified.png",
+    fullPage: true,
+  });
+  const desktop = page.viewportSize();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await dialog
+    .getByLabel("Record access", { exact: true })
+    .scrollIntoViewIfNeeded();
+  await accessibility(page, "Mobile private sharing editor");
+  assert.equal(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth,
+    ),
+    false,
+  );
+  await page.screenshot({
+    path: "/tmp/crm-private-sharing-mobile.png",
+    fullPage: true,
+  });
+  if (desktop) await page.setViewportSize(desktop);
+
+  await dialog
+    .getByRole("button", { name: "Save record", exact: true })
+    .click();
+  await expect(dialog).not.toBeVisible();
+  root = (await api(page, `workspaces/${original}`)).records.find(
+    (r: any) => r.id === root.id,
+  );
+  assert.deepEqual(root.visibility_ids, []);
+  assert.equal(
+    (await api(page, `workspaces/${original}/records/${root.id}/private-note`))
+      .content,
+    "Browser author-only context",
+  );
+  assert.ok(
+    !JSON.stringify(await api(page, `workspaces/${original}`)).includes(
+      "Browser author-only context",
+    ),
+  );
+  await page.goto(
+    origin + `/?workspace=${original}&view=projects&record=${root.id}`,
+  );
+  await dialog
+    .locator("summary")
+    .filter({ hasText: "Your private note" })
+    .click();
+  await expect(
+    dialog.getByLabel("Private context", { exact: true }),
+  ).toHaveValue("Browser author-only context");
+  await dialog
+    .locator("summary")
+    .filter({ hasText: "Sharing & access" })
+    .click();
+  await dialog
+    .getByLabel("Record access", { exact: true })
+    .selectOption("workspace");
+  await dialog
+    .getByRole("button", { name: "Save record", exact: true })
+    .click();
+  await expect(dialog).not.toBeVisible();
+  root = (await api(page, `workspaces/${original}`)).records.find(
+    (r: any) => r.id === root.id,
+  );
+
   await page.goto(origin + "/?view=settings");
+  await page
+    .locator("summary")
+    .filter({ hasText: "Review who can access each record" })
+    .click();
+  await expect(
+    page.getByLabel("Review access for", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Find accessible records", { exact: true })
+    .fill("Access test project");
+  await expect(
+    page.locator(".access-row").filter({ hasText: "Access test project" }),
+  ).toBeVisible();
+  await accessibility(page, "Effective access inspector");
   const invite = page.locator("form.invite-form");
   await invite
     .getByLabel("Invite by verified email")

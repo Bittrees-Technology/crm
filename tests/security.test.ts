@@ -719,10 +719,16 @@ test("account recovery requires both proofs and preserves records, roles, identi
   const record = await saveRecord(f.sourceId, sourceWorkspace, {
     kind: "tasks",
     data: { name: "Keep this assigned task", ownerId: f.sourceId },
+    visibilityIds: [f.sourceId],
+    privateNote: { content: "Recovered private context", version: 0 },
   });
   await pool().query(
     "INSERT INTO user_opportunity_types(user_id,key,label) VALUES($1,'source label','Source label'),($2,'target label','Target label')",
     [f.sourceId, f.targetId],
+  );
+  await pool().query(
+    "INSERT INTO record_private_notes(record_id,author_id,content) VALUES($1,$2,'Existing target context')",
+    [record.id, f.targetId],
   );
   await verifyRecoveryCurrent(f);
   const results = await Promise.allSettled([
@@ -772,7 +778,25 @@ test("account recovery requires both proofs and preserves records, roles, identi
   const kept = snapshotAfter.records.find((r) => r.id === record.id);
   assert.equal(kept.data.name, record.data.name);
   assert.equal(kept.data.ownerId, f.targetId);
-  assert.equal(kept.version, record.version + 1);
+  assert.equal(kept.version, record.version + 2);
+  assert.deepEqual(kept.visibility_ids, [f.targetId]);
+  const { privateNote } = await import("../lib/sharing");
+  const recoveredNote = await privateNote(
+    f.targetId,
+    sourceWorkspace,
+    record.id,
+  );
+  assert.match(recoveredNote.content, /Recovered private context/);
+  assert.match(recoveredNote.content, /Existing target context/);
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT * FROM record_private_notes WHERE author_id=$1",
+        [f.sourceId],
+      )
+    ).rowCount,
+    0,
+  );
   assert.ok(snapshotAfter.audit.some((a) => a.action === "Record created"));
   assert.ok(snapshotAfter.audit.some((a) => a.action === "Accounts combined"));
   assert.equal(
@@ -1127,6 +1151,8 @@ test("workspace management requires ownership and a fresh typed review, preserve
   await saveRecord(f.actor, f.w, {
     kind: "notes",
     data: { name: "After review", projectId: f.root.id },
+    privateNote: { content: "Preserve private on merge", version: 0 },
+    visibilityIds: [],
   });
   await assert.rejects(
     () =>
@@ -1166,6 +1192,15 @@ test("workspace management requires ownership and a fresh typed review, preserve
   assert.equal(
     merged.records.find((r) => r.id === f.task.id)!.version,
     f.task.version + 1,
+  );
+  const privateRecord = merged.records.find(
+    (r) => r.data.name === "After review",
+  )!;
+  assert.deepEqual(privateRecord.visibility_ids, []);
+  const { privateNote } = await import("../lib/sharing");
+  assert.equal(
+    (await privateNote(f.actor, target, privateRecord.id)).content,
+    "Preserve private on merge",
   );
   const limited = await snapshot(f.collaborator, target);
   assert.equal(limited.limited, true);
@@ -1287,4 +1322,194 @@ test("daily email filters and preview respect scoped access, assignments, worksp
   assert.match(message.text, /workspace=/);
   assert.match(message.html, /Open this record/);
   assert.doesNotMatch(message.text, /Hidden digest item|Private organization/);
+});
+
+test("private owner notes are author-only and never enter shared records, activity, or digests", async () => {
+  const { privateNote, inspectAccess } = await import("../lib/sharing");
+  const { timeline } = await import("../lib/service");
+  const { previewDigest } = await import("../lib/digest");
+  const f = await scopedFixture();
+  const secret = "AUTHOR ONLY secret context";
+  const r = await saveRecord(f.actor, f.w, {
+    id: f.task.id,
+    kind: "tasks",
+    version: f.task.version,
+    data: f.task.data,
+    privateNote: { content: secret, version: 0 },
+  });
+  assert.equal((await privateNote(f.actor, f.w, r.id)).content, secret);
+  await assert.rejects(
+    () => privateNote(f.collaborator, f.w, r.id),
+    /role does not allow/,
+  );
+  await assert.rejects(
+    () => inspectAccess(f.collaborator, f.w),
+    /role does not allow/,
+  );
+  await assert.rejects(
+    () =>
+      saveRecord(f.collaborator, f.w, {
+        id: r.id,
+        kind: r.kind,
+        version: r.version,
+        data: r.data,
+        privateNote: { content: "injected", version: 0 },
+      }),
+    /Only workspace owners/,
+  );
+  for (const user of [f.actor, f.collaborator]) {
+    assert.ok(!JSON.stringify(await snapshot(user, f.w)).includes(secret));
+    assert.ok(
+      !JSON.stringify(await timeline(user, f.w, r.id)).includes(secret),
+    );
+    assert.ok(
+      !JSON.stringify(
+        await previewDigest(user, { assignment: "all" }),
+      ).includes(secret),
+    );
+  }
+  await pool().query(
+    "UPDATE members SET role='owner',scope_ids=NULL WHERE workspace_id=$1 AND user_id=$2",
+    [f.w, f.collaborator],
+  );
+  assert.deepEqual(await privateNote(f.collaborator, f.w, r.id), {
+    content: "",
+    version: 0,
+  });
+  const second = await saveRecord(f.collaborator, f.w, {
+    id: r.id,
+    kind: r.kind,
+    version: r.version,
+    data: r.data,
+    privateNote: { content: "SECOND OWNER", version: 0 },
+  });
+  assert.equal((await privateNote(f.actor, f.w, r.id)).content, secret);
+  assert.equal(
+    (await privateNote(f.collaborator, f.w, r.id)).content,
+    "SECOND OWNER",
+  );
+  await assert.rejects(
+    () =>
+      saveRecord(f.actor, f.w, {
+        id: r.id,
+        kind: r.kind,
+        version: second.version,
+        data: { ...r.data, name: "Must roll back" },
+        visibilityIds: [],
+        privateNote: { content: "stale", version: 0 },
+      }),
+    /private note changed/,
+  );
+  const unchanged = (await snapshot(f.actor, f.w)).records.find(
+    (v: any) => v.id === r.id,
+  )!;
+  assert.equal(unchanged.data.name, r.data.name);
+  assert.equal(unchanged.visibility_ids, null);
+  assert.equal((await privateNote(f.actor, f.w, r.id)).content, secret);
+});
+test("record sharing restricts whole-workspace members and grants scoped members only the selected record", async () => {
+  const { inspectAccess } = await import("../lib/sharing");
+  const f = await scopedFixture();
+  const child = await saveRecord(f.actor, f.w, {
+    kind: "notes",
+    data: { name: "Hidden child", organizationId: f.hidden.id },
+  });
+  const direct = await saveRecord(f.actor, f.w, {
+    id: f.hidden.id,
+    kind: f.hidden.kind,
+    version: f.hidden.version,
+    data: f.hidden.data,
+    visibilityIds: [f.collaborator],
+  });
+  let view = await snapshot(f.collaborator, f.w);
+  assert.ok(view.records.some((r: any) => r.id === direct.id));
+  assert.ok(!view.records.some((r: any) => r.id === child.id));
+  assert.ok(view.records.every((r: any) => !("visibility_ids" in r)));
+  const blocked = await saveRecord(f.actor, f.w, {
+    id: f.root.id,
+    kind: f.root.kind,
+    version: f.root.version,
+    data: f.root.data,
+    visibilityIds: [],
+  });
+  view = await snapshot(f.collaborator, f.w);
+  assert.deepEqual(
+    view.records.map((r: any) => r.id),
+    [direct.id],
+  );
+  await updateMember(f.actor, f.w, {
+    userId: f.collaborator,
+    role: "editor",
+    scopeIds: null,
+  });
+  view = await snapshot(f.collaborator, f.w);
+  assert.ok(!view.records.some((r: any) => r.id === blocked.id));
+  await assert.rejects(
+    () =>
+      saveRecord(f.collaborator, f.w, {
+        id: blocked.id,
+        kind: blocked.kind,
+        version: blocked.version,
+        data: blocked.data,
+      }),
+    /not found/,
+  );
+  await assert.rejects(
+    () =>
+      saveRecord(f.collaborator, f.w, {
+        id: direct.id,
+        kind: direct.kind,
+        version: direct.version,
+        data: direct.data,
+        visibilityIds: null,
+      }),
+    /Only workspace owners/,
+  );
+  await assert.rejects(
+    () =>
+      saveRecord(f.actor, f.w, {
+        id: direct.id,
+        kind: direct.kind,
+        version: direct.version,
+        data: direct.data,
+        visibilityIds: [randomUUID()],
+      }),
+    /current workspace members/,
+  );
+  await assert.rejects(
+    () =>
+      importRecords(f.collaborator, f.w, {
+        kind: "people",
+        rows: [{ name: "Illegal link", projectId: blocked.id }],
+      }),
+    /outside your collaboration access/,
+  );
+  assert.deepEqual(
+    await importRecords(f.collaborator, f.w, {
+      kind: "people",
+      rows: [{ name: "Deduplicate new" }, { name: "Deduplicate new" }],
+    }),
+    { imported: 1, skipped: 1 },
+  );
+  const report = await inspectAccess(f.actor, f.w);
+  for (const member of report.members) {
+    const actual = await snapshot(member.id, f.w);
+    assert.deepEqual(
+      member.records.map((r) => r.id).sort(),
+      actual.records.map((r: any) => r.id).sort(),
+    );
+  }
+  await saveRecord(f.actor, f.w, {
+    id: f.task.id,
+    kind: f.task.kind,
+    version: f.task.version,
+    data: { ...f.task.data, ownerId: f.actor },
+  });
+  await updateMember(f.actor, f.w, { userId: f.collaborator, role: "remove" });
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'editor')",
+    [f.w, f.collaborator],
+  );
+  const reinvited = await snapshot(f.collaborator, f.w);
+  assert.ok(!reinvited.records.some((r: any) => r.id === direct.id));
 });

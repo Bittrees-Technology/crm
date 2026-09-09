@@ -107,6 +107,8 @@ try {
     version: task.version,
     kind: "tasks",
     data: { ...task.data, status: "Done" },
+    visibilityIds: [],
+    privateNote: { content: "Synthetic private deployment note", version: 0 },
   });
   await request(
     base + "/records",
@@ -117,7 +119,19 @@ try {
   const snapshot = await request(base);
   assert.equal(snapshot.records.length, 4);
   assert.ok(snapshot.audit.length >= 5);
+  assert.equal(
+    (await request(base + `/records/${task.id}/private-note`)).content,
+    "Synthetic private deployment note",
+  );
+  const access = await request(base + "/access");
+  assert.equal(
+    access.members.find((m: any) => m.id === userId).records.length,
+    4,
+  );
   const exported = await request(base + "/export");
+  assert.ok(
+    !JSON.stringify(exported).includes("Synthetic private deployment note"),
+  );
   assert.equal(exported.records.length, 4);
   assert.equal(
     exported.records.find((r: any) => r.id === opportunity.id).data.value,

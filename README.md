@@ -10,7 +10,7 @@ An independent relationship workspace for people, organizations, partnerships, a
 
 - People, organizations, opportunities, projects, tasks, and notes.
 - Search, ownership filters, browser-saved views, pipeline board/table views, follow-ups, stage aging, and reports with separate currency totals.
-- Validated CSV imports with duplicate preview; CSV view exports and a complete JSON workspace export.
+- Validated CSV imports with duplicate preview; CSV view exports and a JSON export of accessible shared records.
 - Ethereum EOA sign-in and email codes through Resend.
 - Explicit verification to link an email and wallet to one account. Never merges separate accounts automatically. If both methods already have accounts, a recovery review requires fresh verification of both accounts and explicit confirmation.
 - Multiple independent workspaces, owner/editor/viewer permissions, email-bound invite links, member access changes.
@@ -75,7 +75,7 @@ Use an independent database for previews, or leave preview auth unavailable. Nev
 3. Share the generated link directly. The app does not send invitation emails.
 4. The teammate signs in with that verified email, or links it to their wallet account, then accepts the invite.
 
-Owners manage membership and invitations. Editors create, update, delete, and import records. Viewers can read and export all records in their workspace. All records are workspace-visible: this MVP has no private-field or private-note mode. Create separate workspaces for separate confidential teams.
+Owners manage membership, invitations, and record sharing. Editors create and update accessible records; CSV import requires whole-workspace access. Viewers can read and export accessible shared records. Each owner can keep a personal private note alongside a shared description; other owners cannot read that note.
 
 The owner role cannot be removed or transferred through this MVP. Reassign a member's records before removing them. Invitations expire after seven days and are single-use; redemption checks the exact verified email. Owners can revoke or recreate links in Settings. Recreating invalidates all earlier pending links for that email. Identity deletion and standalone ownership transfer are deferred. Link both email and wallet early if you need two independent sign-in methods.
 
@@ -126,9 +126,9 @@ Set `CRON_SECRET` in Vercel production. `GET /api/cron/digest` requires its bear
 
 ## Workspace management and collaboration
 
-Owners can rename a workspace in Settings, merge it into another workspace they own, or permanently delete it. Merge/delete require a fresh review and typing the source name. Merge preserves record IDs, links, and activity; matching names remain separate records. Source invitation links are invalidated. Whole-workspace members gain access to the combined workspace; limited memberships retain their selected roots. Existing memberships combine access and use the stronger role, as shown in the merge warning. Export before deletion. Your last workspace cannot be deleted until another exists.
+Owners can rename a workspace in Settings, merge it into another workspace they own, or permanently delete it. Merge/delete require a fresh review and typing the source name. Merge preserves record IDs, links, and activity; matching names remain separate records. Source invitation links are invalidated. Whole-workspace members gain access to ordinary records in the combined workspace, subject to record sharing restrictions; limited memberships retain their selected roots. Existing memberships combine access and use the stronger role, as shown in the merge warning. Export before deletion. Your last workspace cannot be deleted until another exists.
 
-Invitations and existing members can be limited to selected projects, organizations, or opportunities and records linked beneath those selections. Scope checks apply on the server to reads, writes, exports, timelines, and emails. Hidden reference fields are omitted from responses and preserved during edits. Scoped activity omits historical field details; whole-workspace audit history and CSV import require whole-workspace access. A shared record may be visible through any selected parent. A workspace owner can change access in Settings. Account identity recovery combines scopes; mixed non-owner roles use viewer to avoid extending editing rights without an owner's decision.
+Invitations and existing members can be limited to selected projects, organizations, or opportunities and records linked beneath those selections. Scope checks apply on the server to reads, writes, exports, timelines, and emails. Hidden reference fields are omitted from responses and preserved during edits. Scoped activity omits historical field details; workspace audit history is owner-only, while collaborators use filtered record timelines. CSV import requires whole-workspace access. A shared record may be visible through any selected parent. A workspace owner can change access in Settings. Account identity recovery combines scopes; mixed non-owner roles use viewer to avoid extending editing rights without an owner's decision.
 
 ## Daily follow-up settings
 
@@ -194,3 +194,13 @@ SMOKE_URL=https://crm.bittrees.org npx tsx --env-file=.env.production.local scri
 These scripts create and clean up their own temporary accounts. Never point the database configuration at a different deployment. Vercel does not export the values of sensitive variables; set `SMOKE_URL` explicitly. The email test requires a provider API key with permission to read its own sent test email.
 
 The hosted MVP uses a dedicated Neon database in Frankfurt and Resend sending from `signin@crm.bittrees.org`, initially on free plans. Check provider limits before onboarding a large team. Public GitHub changes on `main` are connected to Vercel deployment.
+
+## Record sharing and personal owner notes (0.5.0)
+
+Open any record and expand **Sharing & access**. Follow workspace access by default, or choose **Selected people**. No selections means owners only. A selected collaborator receives access to that one record, using their existing editor/viewer role. A direct grant does not automatically share its children. Scope inheritance stops at a restricted record; another permitted parent may still provide access. Whole-workspace members evaluate each record independently. All workspace owners can access shared record content.
+
+The editor lists effective access and proposed record-count changes before saving. **Settings → Team members → Review who can access each record** lists each person's accessible records and the reason. Removing a member clears their individual record grants; reinviting does not restore old grants. Assignment is separate from permission.
+
+**Your private note** is a separate author-only field, available while its author is a workspace owner. Each owner has their own note. It is excluded from shared descriptions, search, exports, timelines, access reports, and daily emails. Shared and private changes save atomically, with conflict detection. Account recovery preserves both accounts' notes (combining text if both wrote on the same record); workspace merges preserve authorship. Record or workspace deletion deletes associated private notes. Database operators and private database backups remain trusted infrastructure.
+
+Apply the additive migration (`records.visibility_ids`, `record_private_notes`) before deploying 0.5.0. Existing records retain workspace sharing. Older deployments must remain deployment-protected because their code does not enforce these new restrictions.
