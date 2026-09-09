@@ -1,0 +1,41 @@
+{
+  "name": "@bittrees/crm",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1 --port 3040",
+    "build": "next build",
+    "start": "next start --port 3040",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --env-file=.env.test --test tests/*.test.ts",
+    "db:migrate": "tsx --env-file=.env.local scripts/migrate.ts",
+    "format": "prettier --write app lib scripts tests",
+    "smoke": "tsx --env-file=.env.local scripts/smoke.ts"
+  },
+  "dependencies": {
+    "ethers": "^6.16.0",
+    "lucide-react": "^0.577.0",
+    "next": "16.3.4",
+    "papaparse": "^5.5.3",
+    "pg": "^8.16.3",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "siwe": "3.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "@types/papaparse": "^5.3.16",
+    "@types/pg": "^8.16.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "prettier": "^3.9.6",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=24 <26"
+  }
+}

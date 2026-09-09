@@ -1,0 +1,33 @@
+name: CRM checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: crm
+          POSTGRES_PASSWORD: local-crm-only
+          POSTGRES_DB: crm_test
+        ports: ["55439:5432"]
+        options: >-
+          --health-cmd "pg_isready -U crm"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Configure isolated test database
+        run: |
+          printf '%s\n' 'DATABASE_URL=postgresql://crm:local-crm-only@127.0.0.1:55439/crm_test' 'APP_URL=http://127.0.0.1:3040' 'AUTH_SECRET=ci-only-placeholder-at-least-32-characters' 'DEV_EMAIL_CONSOLE=true' > .env.test
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build

@@ -1,0 +1,2540 @@
+"use client";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
+import { BrowserProvider } from "ethers";
+import Papa from "papaparse";
+import {
+  ArrowDownToLine,
+  ArrowRight,
+  ArrowUpRight,
+  Check,
+  CheckCheck,
+  ChevronDown,
+  CirclePlus,
+  Clock3,
+  ContactRound,
+  FolderOpen,
+  LayoutDashboard,
+  ListTodo,
+  LoaderCircle,
+  LogOut,
+  Menu,
+  Network,
+  Plus,
+  RefreshCw,
+  Search,
+  Settings2,
+  ShieldCheck,
+  Sprout,
+  TrendingUp,
+  Users,
+  Wallet,
+  X,
+  Building2,
+  FileText,
+  LayoutGrid,
+  List,
+  Mail,
+  LockKeyhole,
+} from "lucide-react";
+import {
+  recordSchema,
+  stages,
+  type CrmRecord,
+  type Kind,
+  type RecordData,
+} from "@/lib/model";
+
+type SavedView = {
+  name: string;
+  page: Page;
+  search: string;
+  filter: string;
+  board: boolean;
+};
+type Member = { id: string; name: string; role: string };
+type Me = {
+  user: { id: string; name: string };
+  workspaces: { id: string; name: string; role: string }[];
+  identities: { kind: string; value: string }[];
+};
+type Snapshot = {
+  role: string;
+  records: CrmRecord[];
+  members: Member[];
+  audit: {
+    id: string;
+    action: string;
+    actor: string;
+    created_at: string;
+    detail: { name?: string };
+  }[];
+};
+type Page = "today" | Kind | "reports" | "settings";
+const labels: Record<Page, string> = {
+  today: "Today",
+  people: "People",
+  organizations: "Organizations",
+  opportunities: "Opportunities",
+  projects: "Projects",
+  tasks: "Tasks",
+  notes: "Notes",
+  reports: "Reports",
+  settings: "Settings",
+};
+const icons: Record<Page, typeof Users> = {
+  today: LayoutDashboard,
+  people: ContactRound,
+  organizations: Building2,
+  opportunities: TrendingUp,
+  projects: FolderOpen,
+  tasks: ListTodo,
+  notes: FileText,
+  reports: LayoutGrid,
+  settings: Settings2,
+};
+const demoUser = "00000000-0000-4000-8000-000000000001";
+const demoOrg = "00000000-0000-4000-8000-000000000002";
+const demoProject = "00000000-0000-4000-8000-000000000003";
+const today = () => new Date().toLocaleDateString("en-CA");
+const relativeDate = (days: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toLocaleDateString("en-CA");
+};
+const dateLabel = (v: string) =>
+  v
+    ? new Date(v + "T12:00:00").toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+      })
+    : "No date";
+const money = (v: number, c = "EUR") =>
+  new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: c,
+    maximumFractionDigits: 0,
+  }).format(v);
+const initials = (s: string) =>
+  s
+    .split(/[ @]/)
+    .slice(0, 2)
+    .map((v) => v[0])
+    .join("")
+    .toUpperCase();
+async function api(path: string, method = "GET", body?: unknown) {
+  const response = await fetch("/api/" + path, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Something went wrong.");
+  return data;
+}
+function demoRecords(): CrmRecord[] {
+  const rows: [Kind, Partial<RecordData> & { name: string }, string?][] = [
+    [
+      "organizations",
+      {
+        name: "Northstar Labs",
+        category: "Technology partner",
+        website: "https://example.com",
+        description: "Fictional organization for this demo.",
+      },
+      demoOrg,
+    ],
+    [
+      "organizations",
+      { name: "Fieldwork Collective", category: "Research partner" },
+    ],
+    [
+      "projects",
+      {
+        name: "Partner pilot",
+        category: "Partnerships",
+        description: "Explore a shared product pilot.",
+      },
+      demoProject,
+    ],
+    [
+      "people",
+      {
+        name: "Alex Morgan",
+        email: "alex@example.com",
+        title: "Co-founder",
+        organizationId: demoOrg,
+        communication: "Allowed",
+      },
+    ],
+    [
+      "people",
+      { name: "Sam Rivera", email: "sam@example.com", title: "Research lead" },
+    ],
+    [
+      "people",
+      {
+        name: "Jordan Lee",
+        email: "jordan@example.com",
+        title: "Community builder",
+      },
+    ],
+    [
+      "opportunities",
+      {
+        name: "Northstar product pilot",
+        organizationId: demoOrg,
+        projectId: demoProject,
+        category: "Partnership",
+        stage: "Discovery",
+        value: 12000,
+        nextAction: "Share the pilot outline",
+        dueDate: relativeDate(0),
+      },
+    ],
+    [
+      "opportunities",
+      {
+        name: "Research collaboration",
+        category: "Research",
+        stage: "Qualified",
+        nextAction: "Agree on research questions",
+        dueDate: relativeDate(2),
+      },
+    ],
+    [
+      "opportunities",
+      {
+        name: "Community workshop",
+        category: "Partnership",
+        stage: "Proposal",
+        value: 2400,
+        nextAction: "Review workshop proposal",
+        dueDate: relativeDate(-2),
+      },
+    ],
+    [
+      "tasks",
+      {
+        name: "Prepare the partner briefing",
+        dueDate: relativeDate(0),
+        projectId: demoProject,
+      },
+    ],
+    ["tasks", { name: "Follow up with Jordan", dueDate: relativeDate(1) }],
+    [
+      "notes",
+      {
+        name: "Discovery conversation",
+        organizationId: demoOrg,
+        description:
+          "The team is interested in a small, focused pilot. Next step: share an outline with scope, timing, and a clear owner.",
+      },
+    ],
+  ];
+  return rows.map(([kind, data, id]) => ({
+    id: id || crypto.randomUUID(),
+    kind,
+    data: recordSchema.parse({ ownerId: demoUser, ...data }),
+    version: 1,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }));
+}
+function Modal({
+  title,
+  children,
+  onClose,
+  wide = false,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+  wide?: boolean;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    ref.current?.showModal();
+  }, []);
+  return (
+    <dialog
+      className={wide ? "modal wide" : "modal"}
+      ref={ref}
+      onCancel={onClose}
+    >
+      <div className="modal-head">
+        <h2>{title}</h2>
+        <button className="icon-button" onClick={onClose} aria-label="Close">
+          <X size={20} />
+        </button>
+      </div>
+      {children}
+    </dialog>
+  );
+}
+function Brand() {
+  return (
+    <div className="brand">
+      <span className="brand-mark">
+        <Sprout size={23} />
+      </span>
+      <span>
+        bittrees<span className="brand-sub">CRM</span>
+      </span>
+    </div>
+  );
+}
+function Auth({
+  onSuccess,
+  link = false,
+  onClose,
+  onDemo,
+}: {
+  onSuccess: () => void;
+  link?: boolean;
+  onClose?: () => void;
+  onDemo?: () => void;
+}) {
+  const [email, setEmail] = useState(""),
+    [code, setCode] = useState(""),
+    [challenge, setChallenge] = useState(""),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState(""),
+    [config, setConfig] = useState({
+      emailEnabled: false,
+      developmentEmail: false,
+    });
+  useEffect(() => {
+    api("config")
+      .then(setConfig)
+      .catch(() => {});
+  }, []);
+  async function run(fn: () => Promise<void>) {
+    setBusy(true);
+    setError("");
+    try {
+      await fn();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  function emailSubmit(e: FormEvent) {
+    e.preventDefault();
+    void run(async () => {
+      if (challenge) {
+        await api("auth/verify", "POST", { id: challenge, proof: code });
+        onSuccess();
+      } else {
+        const r = await api("auth/challenge", "POST", {
+          kind: "email",
+          value: email,
+          link,
+        });
+        setChallenge(r.id);
+      }
+    });
+  }
+  function wallet() {
+    void run(async () => {
+      const ethereum = (
+        window as unknown as {
+          ethereum?: ConstructorParameters<typeof BrowserProvider>[0];
+        }
+      ).ethereum;
+      if (!ethereum)
+        throw new Error(
+          "Open this page in an Ethereum wallet browser or install a wallet extension.",
+        );
+      const provider = new BrowserProvider(ethereum);
+      await provider.send("eth_requestAccounts", []);
+      const signer = await provider.getSigner();
+      const r = await api("auth/challenge", "POST", {
+        kind: "ethereum",
+        value: await signer.getAddress(),
+        link,
+      });
+      const proof = await signer.signMessage(r.message);
+      await api("auth/verify", "POST", { id: r.id, proof });
+      onSuccess();
+    });
+  }
+  const form = (
+    <div className="auth-form">
+      <span className="eyebrow">
+        <LockKeyhole size={14} /> YOUR IDENTITY, VERIFIED
+      </span>
+      <h1>
+        {link ? "Connect another identity" : "Welcome to your next chapter."}
+      </h1>
+      <p>
+        {link
+          ? "Verify an email or Ethereum wallet to use either one with your existing account."
+          : "A clear view of your relationships. A place for every next step."}
+      </p>
+      <button disabled={busy} className="button wallet-button" onClick={wallet}>
+        <Wallet size={19} />
+        {busy
+          ? "Waiting for verification…"
+          : link
+            ? "Link Ethereum wallet"
+            : "Sign in with Ethereum"}
+        <ArrowUpRight size={16} />
+      </button>
+      <div className="separator">
+        <span>or continue with email</span>
+      </div>
+      <form onSubmit={emailSubmit}>
+        <label>
+          Email address
+          <input
+            type="email"
+            required
+            value={email}
+            disabled={!!challenge || busy || !config.emailEnabled}
+            placeholder="you@company.com"
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </label>
+        {challenge && (
+          <label>
+            Verification code
+            <input
+              autoComplete="one-time-code"
+              inputMode="numeric"
+              pattern="[0-9]{8}"
+              maxLength={8}
+              required
+              placeholder="8-digit code"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+            />
+          </label>
+        )}
+        <button
+          className="button primary full"
+          disabled={busy || !config.emailEnabled}
+        >
+          {challenge ? "Verify and continue" : "Send verification code"}
+          <ArrowRight size={17} />
+        </button>
+        {challenge && (
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => {
+              setChallenge("");
+              setCode("");
+            }}
+          >
+            Use a different email or request a new code
+          </button>
+        )}
+      </form>
+      {!config.emailEnabled && (
+        <p className="small">
+          Email delivery is being configured. You can sign in with an Ethereum
+          wallet now.
+        </p>
+      )}
+      {config.developmentEmail && (
+        <p className="small">
+          Local development: verification codes appear in the server console.
+        </p>
+      )}
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
+      <div className="auth-foot">
+        <ShieldCheck size={16} />
+        <span>No passwords. Wallet sign-in never requests a transaction.</span>
+      </div>
+      {onDemo && (
+        <button className="text-button" onClick={onDemo}>
+          Explore with fictional demo data <ArrowRight size={15} />
+        </button>
+      )}
+      {onClose && (
+        <button className="text-button" onClick={onClose}>
+          Cancel
+        </button>
+      )}
+    </div>
+  );
+  if (link) return form;
+  return (
+    <main className="auth">
+      <div className="auth-left">
+        <Brand />
+        {form}
+        <footer>Independent software. Open source. MIT licensed.</footer>
+      </div>
+      <aside className="auth-story">
+        <div className="story-top">
+          <span className="pill light">THE RELATIONSHIP WORKSPACE</span>
+          <span>01 / CRM</span>
+        </div>
+        <h2>
+          Good relationships.
+          <br />
+          <em>Real momentum.</em>
+        </h2>
+        <p>Keep the people, the context, and the next step together.</p>
+        <div className="story-card">
+          <div className="story-card-title">
+            <span className="avatar">NL</span>
+            <div>
+              <strong>Northstar Labs</strong>
+              <small>Example partnership</small>
+            </div>
+            <span className="badge">Discovery</span>
+          </div>
+          <div className="story-timeline">
+            <div>
+              <span className="dot done" />
+              <div>
+                <strong>A conversation starts</strong>
+                <small>Introduction recorded</small>
+              </div>
+            </div>
+            <div>
+              <span className="dot done" />
+              <div>
+                <strong>A shared direction</strong>
+                <small>Opportunity scoped</small>
+              </div>
+            </div>
+            <div>
+              <span className="dot" />
+              <div>
+                <strong>One clear next step</strong>
+                <small>Share the pilot outline</small>
+              </div>
+              <ArrowUpRight size={19} />
+            </div>
+          </div>
+        </div>
+        <div className="story-bottom">
+          <Network size={20} />
+          <span>People → possibilities → progress</span>
+        </div>
+      </aside>
+    </main>
+  );
+}
+export default function App() {
+  const [me, setMe] = useState<Me | null>(null),
+    [loading, setLoading] = useState(true),
+    [demo, setDemo] = useState(false),
+    [workspace, setWorkspace] = useState(""),
+    [snapshot, setSnapshot] = useState<Snapshot>({
+      role: "viewer",
+      records: [],
+      members: [],
+      audit: [],
+    });
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [page, setPage] = useState<Page>("today"),
+    [search, setSearch] = useState(""),
+    [filter, setFilter] = useState("all"),
+    [board, setBoard] = useState(true),
+    [mobile, setMobile] = useState(false),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState(""),
+    [notice, setNotice] = useState("");
+  const [editing, setEditing] = useState<{
+      kind: Kind;
+      record?: CrmRecord;
+    } | null>(null),
+    [linking, setLinking] = useState(false),
+    [importing, setImporting] = useState(false),
+    [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [inviteToken, setInviteToken] = useState(""),
+    [inviteUrl, setInviteUrl] = useState("");
+  useEffect(() => {
+    try {
+      setSavedViews(
+        JSON.parse(
+          localStorage.getItem(`crm-views:${me?.user.id}:${workspace}`) || "[]",
+        ),
+      );
+    } catch {
+      setSavedViews([]);
+    }
+  }, [me?.user.id, workspace]);
+  function saveView() {
+    const name = window.prompt("Name this view (saved in this browser)");
+    if (!name?.trim()) return;
+    const next = [
+      ...savedViews.filter((v) => v.name !== name.trim()),
+      { name: name.trim().slice(0, 80), page, search, filter, board },
+    ].slice(-20);
+    setSavedViews(next);
+    try {
+      localStorage.setItem(
+        `crm-views:${me?.user.id}:${workspace}`,
+        JSON.stringify(next),
+      );
+      notify("View saved in this browser.");
+    } catch {
+      setError("This browser could not save view preferences.");
+    }
+  }
+  async function loadMe() {
+    const m = await api("me");
+    setMe(m);
+    setWorkspace((w) =>
+      m.workspaces.some((a: { id: string }) => a.id === w)
+        ? w
+        : m.workspaces[0]?.id || "",
+    );
+    return m;
+  }
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setInviteToken(params.get("invite") || "");
+    if (params.has("demo")) {
+      startDemo();
+      setLoading(false);
+    } else {
+      loadMe()
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    }
+  }, []);
+  async function refresh() {
+    if (!workspace || demo) return;
+    const s = await api("workspaces/" + workspace);
+    setSnapshot(s);
+  }
+  useEffect(() => {
+    let cancelled = false;
+    setSearch("");
+    setFilter("all");
+    setEditing(null);
+    setInviteUrl("");
+    if (workspace && !demo) {
+      setSnapshot({ role: "viewer", records: [], members: [], audit: [] });
+      setBusy(true);
+      api("workspaces/" + workspace)
+        .then((s) => {
+          if (!cancelled) setSnapshot(s);
+        })
+        .catch((e) => {
+          if (!cancelled) setError(e.message);
+        })
+        .finally(() => {
+          if (!cancelled) setBusy(false);
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace, demo]);
+  useEffect(() => {
+    if (notice) {
+      const t = setTimeout(() => setNotice(""), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [notice]);
+  function startDemo() {
+    setDemo(true);
+    setMe({
+      user: { id: demoUser, name: "Taylor" },
+      workspaces: [{ id: "demo", name: "Bittrees · Demo", role: "owner" }],
+      identities: [],
+    });
+    setWorkspace("demo");
+    setSnapshot({
+      role: "owner",
+      records: demoRecords(),
+      members: [{ id: demoUser, name: "Taylor", role: "owner" }],
+      audit: [],
+    });
+  }
+  function notify(s: string) {
+    setNotice(s);
+    setError("");
+  }
+  async function action(fn: () => Promise<void>) {
+    setBusy(true);
+    setError("");
+    try {
+      await fn();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const records = snapshot.records,
+    canEdit = snapshot.role !== "viewer";
+  const nameOf = (id: string) =>
+    records.find((r) => r.id === id)?.data.name || "—";
+  const ownerOf = (id: string) =>
+    snapshot.members.find((m) => m.id === id)?.name || "Unassigned";
+  const due = records.filter(
+    (r) =>
+      ((r.kind === "tasks" && r.data.status !== "Done") ||
+        (r.kind === "opportunities" &&
+          !["Won", "Lost"].includes(r.data.stage))) &&
+      r.data.dueDate &&
+      r.data.dueDate <= today(),
+  );
+  const activeOpps = records.filter(
+    (r) =>
+      r.kind === "opportunities" && !["Won", "Lost"].includes(r.data.stage),
+  );
+  let visible = records.filter(
+    (r) =>
+      r.kind === page &&
+      JSON.stringify(r.data).toLowerCase().includes(search.toLowerCase()),
+  );
+  if (filter === "mine")
+    visible = visible.filter((r) => r.data.ownerId === me?.user.id);
+  if (filter === "due")
+    visible = visible.filter(
+      (r) =>
+        r.data.dueDate &&
+        r.data.dueDate <= today() &&
+        r.data.status !== "Done" &&
+        !(r.kind === "opportunities" && ["Won", "Lost"].includes(r.data.stage)),
+    );
+  async function save(kind: Kind, data: RecordData, record?: CrmRecord) {
+    await action(async () => {
+      if (demo) {
+        const r: CrmRecord = {
+          id: record?.id || crypto.randomUUID(),
+          kind,
+          data,
+          version: (record?.version || 0) + 1,
+          created_at: record?.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        setSnapshot((s) => ({
+          ...s,
+          records: [r, ...s.records.filter((v) => v.id !== r.id)],
+        }));
+      } else {
+        await api("workspaces/" + workspace + "/records", "POST", {
+          kind,
+          data,
+          id: record?.id,
+          version: record?.version,
+        });
+        await refresh();
+      }
+      setEditing(null);
+      notify("Record saved.");
+    });
+  }
+  async function remove(record: CrmRecord) {
+    if (!window.confirm(`Delete “${record.data.name}”? This cannot be undone.`))
+      return;
+    await action(async () => {
+      if (demo)
+        setSnapshot((s) => ({
+          ...s,
+          records: s.records.filter((r) => r.id !== record.id),
+        }));
+      else {
+        await api("workspaces/" + workspace + "/records", "DELETE", {
+          id: record.id,
+          version: record.version,
+        });
+        await refresh();
+      }
+      setEditing(null);
+      notify("Record deleted.");
+    });
+  }
+  function download(content: string, name: string, type: string) {
+    const url = URL.createObjectURL(new Blob([content], { type }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  async function exportData() {
+    await action(async () => {
+      const data = demo
+        ? snapshot
+        : await api("workspaces/" + workspace + "/export");
+      download(
+        JSON.stringify(data, null, 2),
+        "bittrees-crm.json",
+        "application/json",
+      );
+      notify("Workspace exported.");
+    });
+  }
+  function nav(p: Page) {
+    setPage(p);
+    setSearch("");
+    setFilter("all");
+    setMobile(false);
+    setError("");
+  }
+  if (loading)
+    return (
+      <div className="loading">
+        <Sprout size={30} />
+        <span>Opening your workspace…</span>
+      </div>
+    );
+  if (!me)
+    return (
+      <Auth
+        onSuccess={() =>
+          void action(async () => {
+            await loadMe();
+          })
+        }
+        onDemo={startDemo}
+      />
+    );
+  return (
+    <div className="app">
+      <aside className={"sidebar " + (mobile ? "open" : "")}>
+        <Brand />
+        <label className="workspace-select">
+          <span className="workspace-icon">
+            {initials(
+              me.workspaces.find((w) => w.id === workspace)?.name || "W",
+            )}
+          </span>
+          <select
+            aria-label="Workspace"
+            value={workspace}
+            onChange={(e) => setWorkspace(e.target.value)}
+          >
+            {me.workspaces.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.name}
+              </option>
+            ))}
+          </select>
+          <ChevronDown size={14} />
+        </label>
+        <div className="nav-label">WORKSPACE</div>
+        <nav>
+          {(
+            [
+              "today",
+              "people",
+              "organizations",
+              "opportunities",
+              "projects",
+              "tasks",
+              "notes",
+              "reports",
+            ] as Page[]
+          ).map((p) => {
+            const Icon = icons[p];
+            return (
+              <button
+                key={p}
+                className={page === p ? "nav-item active" : "nav-item"}
+                onClick={() => nav(p)}
+              >
+                <Icon size={18} />
+                <span>{labels[p]}</span>
+                {p === "tasks" && (
+                  <small>
+                    {
+                      records.filter(
+                        (r) => r.kind === "tasks" && r.data.status === "Open",
+                      ).length
+                    }
+                  </small>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+        <div className="sidebar-bottom">
+          <div className="sidebar-note">
+            <span className="live-dot" />
+            {demo ? "Fictional demo workspace" : "A place for the next step"}
+          </div>
+          <button
+            className={page === "settings" ? "nav-item active" : "nav-item"}
+            onClick={() => nav("settings")}
+          >
+            <Settings2 size={18} />
+            Settings
+          </button>
+          <div className="user-row">
+            <span className="avatar small-avatar">
+              {initials(me.user.name)}
+            </span>
+            <div>
+              <strong>{me.user.name}</strong>
+              <small>{snapshot.role}</small>
+            </div>
+            <button
+              className="icon-button"
+              title="Sign out"
+              onClick={() =>
+                void action(async () => {
+                  if (!demo) await api("auth/logout", "POST");
+                  setMe(null);
+                  setDemo(false);
+                  setWorkspace("");
+                  setSnapshot({
+                    role: "viewer",
+                    records: [],
+                    members: [],
+                    audit: [],
+                  });
+                  window.history.replaceState(null, "", "/");
+                })
+              }
+            >
+              <LogOut size={17} />
+            </button>
+          </div>
+        </div>
+      </aside>
+      <div className="main">
+        <header className="topbar">
+          <button
+            className="icon-button mobile-menu"
+            onClick={() => setMobile(!mobile)}
+            aria-label="Toggle navigation"
+          >
+            <Menu size={20} />
+          </button>
+          <div className="breadcrumb">
+            Workspace <span>/</span> <strong>{labels[page]}</strong>
+          </div>
+          <div className="top-actions">
+            {demo ? (
+              <button
+                className="text-button"
+                onClick={() => {
+                  setMe(null);
+                  setDemo(false);
+                  setWorkspace("");
+                }}
+              >
+                Sign in to save your work <ArrowUpRight size={15} />
+              </button>
+            ) : (
+              <span className="secure-label">
+                <ShieldCheck size={15} />
+                Verified session
+              </span>
+            )}
+            <button
+              className="icon-button"
+              disabled={busy}
+              title="Refresh workspace"
+              onClick={() => void action(refresh)}
+            >
+              <RefreshCw size={17} className={busy ? "spin" : ""} />
+            </button>
+          </div>
+        </header>
+        {demo && (
+          <div className="demo-bar">
+            DEMO{" "}
+            <span>
+              All names and records are fictional. Changes last only for this
+              session.
+            </span>
+          </div>
+        )}
+        {error && (
+          <div role="alert" className="error global-message">
+            {error}
+            <button
+              className="icon-button"
+              aria-label="Dismiss error"
+              onClick={() => setError("")}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+        {notice && (
+          <div role="status" className="toast">
+            <CheckCheck size={18} />
+            {notice}
+          </div>
+        )}
+        {inviteToken && !demo && (
+          <div className="invite-banner">
+            <span>You have a workspace invitation.</span>
+            <button
+              className="button primary"
+              onClick={() =>
+                void action(async () => {
+                  const r = await api("invites/accept", "POST", {
+                    token: inviteToken,
+                  });
+                  await loadMe();
+                  setWorkspace(r.workspaceId);
+                  setInviteToken("");
+                  window.history.replaceState(null, "", "/");
+                  notify("You joined the workspace.");
+                })
+              }
+            >
+              Accept invitation
+            </button>
+            <button className="text-button" onClick={() => setInviteToken("")}>
+              Dismiss
+            </button>
+          </div>
+        )}
+        <main className="content">
+          {page === "today" ? (
+            <>
+              <div className="page-heading">
+                <div>
+                  <span className="eyebrow">
+                    {new Date()
+                      .toLocaleDateString(undefined, {
+                        weekday: "long",
+                        month: "long",
+                        day: "numeric",
+                      })
+                      .toUpperCase()}
+                  </span>
+                  <h1>Make the next move.</h1>
+                  <p>
+                    Welcome back, {me.user.name}. Here’s where things stand.
+                  </p>
+                </div>
+                {canEdit && (
+                  <button
+                    className="button primary"
+                    onClick={() => setEditing({ kind: "opportunities" })}
+                  >
+                    <Plus size={18} />
+                    New opportunity
+                  </button>
+                )}
+              </div>
+              <div className="metrics">
+                <Metric
+                  label="Active opportunities"
+                  value={String(activeOpps.length)}
+                  detail="Conversations moving forward"
+                  icon={TrendingUp}
+                />
+                <Metric
+                  label="Follow-ups due"
+                  value={String(due.length)}
+                  detail={
+                    due.length
+                      ? "Ready for your attention"
+                      : "You’re all caught up"
+                  }
+                  icon={Clock3}
+                />
+                <Metric
+                  label="People in your network"
+                  value={String(
+                    records.filter((r) => r.kind === "people").length,
+                  )}
+                  detail="Relationships worth keeping close"
+                  icon={Users}
+                />
+              </div>
+              <div className="dashboard-grid">
+                <section className="panel">
+                  <div className="section-heading">
+                    <h2>
+                      Your next steps{" "}
+                      <span className="count">{due.length}</span>
+                    </h2>
+                    <button
+                      className="text-button"
+                      onClick={() => nav("tasks")}
+                    >
+                      All tasks <ArrowRight size={15} />
+                    </button>
+                  </div>
+                  {due.length ? (
+                    <div className="task-list">
+                      {due.slice(0, 8).map((r) => (
+                        <button
+                          className="task-row"
+                          key={r.id}
+                          onClick={() =>
+                            setEditing({ kind: r.kind, record: r })
+                          }
+                        >
+                          <span className="task-ring" />
+                          <div>
+                            <strong>
+                              {r.kind === "opportunities"
+                                ? r.data.nextAction
+                                : r.data.name}
+                            </strong>
+                            <small>
+                              {r.kind === "opportunities"
+                                ? r.data.name
+                                : ownerOf(r.data.ownerId)}
+                            </small>
+                          </div>
+                          <span
+                            className={
+                              r.data.dueDate < today() ? "due overdue" : "due"
+                            }
+                          >
+                            {r.data.dueDate === today()
+                              ? "Today"
+                              : dateLabel(r.data.dueDate)}
+                          </span>
+                          <ArrowUpRight size={15} />
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <Empty
+                      title="Room to move forward"
+                      text="Add a task or an opportunity with a next step. Your due follow-ups will appear here."
+                      action={
+                        canEdit
+                          ? () => setEditing({ kind: "tasks" })
+                          : undefined
+                      }
+                      label="Add a task"
+                    />
+                  )}
+                </section>
+                <section className="panel pipeline-summary">
+                  <div className="section-heading">
+                    <h2>Pipeline pulse</h2>
+                    <TrendingUp size={18} />
+                  </div>
+                  {stages
+                    .filter((s) => !["Won", "Lost"].includes(s))
+                    .map((s, i) => {
+                      const count = activeOpps.filter(
+                        (r) => r.data.stage === s,
+                      ).length;
+                      return (
+                        <div key={s} className="pulse-row">
+                          <div>
+                            <span className={"stage-dot s" + i} />
+                            {s}
+                            <strong>{count}</strong>
+                          </div>
+                          <div className="bar-track">
+                            <span
+                              style={{
+                                width: `${activeOpps.length ? (count / activeOpps.length) * 100 : 0}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  <button
+                    className="text-button"
+                    onClick={() => nav("opportunities")}
+                  >
+                    Open opportunities <ArrowRight size={15} />
+                  </button>
+                </section>
+              </div>
+              <section className="panel activity-panel">
+                <div className="section-heading">
+                  <h2>Recent activity</h2>
+                  <span className="small">Across this workspace</span>
+                </div>
+                {snapshot.audit.length ? (
+                  snapshot.audit.slice(0, 6).map((a) => (
+                    <div className="activity-row" key={a.id}>
+                      <span className="avatar small-avatar">
+                        {initials(a.actor)}
+                      </span>
+                      <div>
+                        <strong>{a.actor}</strong> {a.action.toLowerCase()}{" "}
+                        {a.detail.name && <b>{a.detail.name}</b>}
+                      </div>
+                      <time>{new Date(a.created_at).toLocaleDateString()}</time>
+                    </div>
+                  ))
+                ) : (
+                  <div className="quiet-empty">
+                    Your team’s updates will appear here as work moves forward.
+                  </div>
+                )}
+              </section>
+            </>
+          ) : page === "reports" ? (
+            <>
+              <div className="page-heading">
+                <div>
+                  <span className="eyebrow">WORKSPACE HEALTH</span>
+                  <h1>Progress, in perspective.</h1>
+                  <p>A practical view of follow-through and outcomes.</p>
+                </div>
+                <button className="button" onClick={exportData}>
+                  <ArrowDownToLine size={17} />
+                  Export workspace
+                </button>
+              </div>
+              <div className="metrics">
+                <Metric
+                  label="Next-step coverage"
+                  value={`${activeOpps.length ? Math.round((activeOpps.filter((r) => r.data.ownerId && r.data.nextAction && r.data.dueDate).length / activeOpps.length) * 100) : 0}%`}
+                  detail="Active opportunities with a clear next step"
+                  icon={CheckCheck}
+                />
+                <Metric
+                  label="Won opportunities"
+                  value={String(
+                    records.filter(
+                      (r) =>
+                        r.kind === "opportunities" && r.data.stage === "Won",
+                    ).length,
+                  )}
+                  detail="Completed commercial and partner outcomes"
+                  icon={TrendingUp}
+                />
+                <Metric
+                  label="Overdue follow-ups"
+                  value={String(
+                    due.filter((r) => r.data.dueDate < today()).length,
+                  )}
+                  detail="Open tasks and active opportunities"
+                  icon={Clock3}
+                />
+              </div>
+              <section className="panel">
+                <div className="section-heading">
+                  <h2>Opportunity breakdown</h2>
+                  <span className="small">Amounts grouped by currency</span>
+                </div>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Stage</th>
+                        <th>Opportunities</th>
+                        <th>EUR</th>
+                        <th>USD</th>
+                        <th>GBP</th>
+                        <th>Avg. days in stage</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stages.map((stage) => {
+                        const rows = records.filter(
+                          (r) =>
+                            r.kind === "opportunities" &&
+                            r.data.stage === stage,
+                        );
+                        return (
+                          <tr key={stage}>
+                            <td>
+                              <span className="badge">{stage}</span>
+                            </td>
+                            <td>{rows.length}</td>
+                            {["EUR", "USD", "GBP"].map((c) => (
+                              <td key={c}>
+                                {money(
+                                  rows
+                                    .filter((r) => r.data.currency === c)
+                                    .reduce((a, r) => a + r.data.value, 0),
+                                  c,
+                                )}
+                              </td>
+                            ))}
+                            <td>
+                              {rows.length
+                                ? Math.floor(
+                                    rows.reduce(
+                                      (sum, r) =>
+                                        sum +
+                                        (Date.now() -
+                                          new Date(
+                                            r.stage_changed_at || r.created_at,
+                                          ).getTime()) /
+                                          86400000,
+                                      0,
+                                    ) / rows.length,
+                                  )
+                                : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+              <p className="small footnote">
+                Amounts are entered estimates, not accounting balances.
+                Different currencies are never combined.
+              </p>
+            </>
+          ) : page === "settings" ? (
+            <>
+              <div className="page-heading">
+                <div>
+                  <span className="eyebrow">YOUR WORKSPACE</span>
+                  <h1>Identity & coordination.</h1>
+                  <p>Keep access clear and your team connected.</p>
+                </div>
+              </div>
+              <div className="settings-grid">
+                <section className="panel">
+                  <div className="section-heading">
+                    <h2>Your identity</h2>
+                    <ShieldCheck size={19} />
+                  </div>
+                  <form
+                    className="settings-form"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const name = new FormData(e.currentTarget).get("name");
+                      void action(async () => {
+                        if (demo)
+                          setMe({
+                            ...me,
+                            user: { ...me.user, name: String(name) },
+                          });
+                        else {
+                          await api("me", "PATCH", { name });
+                          await loadMe();
+                        }
+                        notify("Name updated.");
+                      });
+                    }}
+                  >
+                    <label>
+                      Display name
+                      <input
+                        name="name"
+                        key={me.user.name}
+                        defaultValue={me.user.name}
+                        required
+                        maxLength={80}
+                      />
+                    </label>
+                    <button className="button" disabled={busy}>
+                      Save name
+                    </button>
+                  </form>
+                  <div className="identity-list">
+                    {me.identities.map((i) => (
+                      <div key={i.value} className="identity-row">
+                        {i.kind === "email" ? (
+                          <Mail size={18} />
+                        ) : (
+                          <Wallet size={18} />
+                        )}
+                        <span>{i.value}</span>
+                        <span className="verified">
+                          <Check size={13} />
+                          Verified
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="panel-pad">
+                    <button
+                      className="button"
+                      disabled={demo}
+                      onClick={() => setLinking(true)}
+                    >
+                      <Plus size={16} />
+                      Link email or wallet
+                    </button>
+                    <p className="small">
+                      Each identity belongs to one account. Linking requires
+                      proof of ownership. Contact wallet fields do not grant
+                      account access.
+                    </p>
+                  </div>
+                </section>
+                <section className="panel">
+                  <div className="section-heading">
+                    <h2>Workspace</h2>
+                    <FolderOpen size={19} />
+                  </div>
+                  <form
+                    className="settings-form"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const name = String(
+                        new FormData(e.currentTarget).get("name"),
+                      );
+                      void action(async () => {
+                        if (demo)
+                          setMe({
+                            ...me,
+                            workspaces: [{ ...me.workspaces[0], name }],
+                          });
+                        else {
+                          await api("workspaces/" + workspace, "PATCH", {
+                            name,
+                          });
+                          await loadMe();
+                        }
+                        notify("Workspace renamed.");
+                      });
+                    }}
+                  >
+                    <label>
+                      Workspace name
+                      <input
+                        name="name"
+                        key={
+                          workspace +
+                          me.workspaces.find((w) => w.id === workspace)?.name
+                        }
+                        defaultValue={
+                          me.workspaces.find((w) => w.id === workspace)?.name
+                        }
+                        required
+                        maxLength={100}
+                        disabled={snapshot.role !== "owner"}
+                      />
+                    </label>
+                    <button
+                      className="button"
+                      disabled={busy || snapshot.role !== "owner"}
+                    >
+                      Save workspace
+                    </button>
+                  </form>
+                  <div className="panel-pad button-stack">
+                    <button className="button" onClick={exportData}>
+                      <ArrowDownToLine size={17} />
+                      Export all workspace data
+                    </button>
+                    <button
+                      className="button"
+                      disabled={demo}
+                      onClick={() => setCreatingWorkspace(true)}
+                    >
+                      <Plus size={17} />
+                      Create another workspace
+                    </button>
+                  </div>
+                </section>
+                <section className="panel full-span">
+                  <div className="section-heading">
+                    <h2>
+                      Team members{" "}
+                      <span className="count">{snapshot.members.length}</span>
+                    </h2>
+                    <span className="small">
+                      Owners manage access · Editors update records · Viewers
+                      read
+                    </span>
+                  </div>
+                  {snapshot.members.map((m) => (
+                    <div className="member-row" key={m.id}>
+                      <span className="avatar small-avatar">
+                        {initials(m.name)}
+                      </span>
+                      <strong>
+                        {m.name}
+                        {m.id === me.user.id ? " (you)" : ""}
+                      </strong>
+                      {m.role === "owner" || snapshot.role !== "owner" ? (
+                        <span className="badge">{m.role}</span>
+                      ) : (
+                        <select
+                          aria-label={`Role for ${m.name}`}
+                          value={m.role}
+                          disabled={busy || demo}
+                          onChange={(e) => {
+                            const role = e.target.value;
+                            if (
+                              role === "remove" &&
+                              !window.confirm(
+                                `Remove ${m.name} from this workspace?`,
+                              )
+                            )
+                              return;
+                            void action(async () => {
+                              await api(
+                                "workspaces/" + workspace + "/members",
+                                "PATCH",
+                                { userId: m.id, role },
+                              );
+                              await refresh();
+                              notify("Member access updated.");
+                            });
+                          }}
+                        >
+                          <option value="editor">Editor</option>
+                          <option value="viewer">Viewer</option>
+                          <option value="remove">Remove access</option>
+                        </select>
+                      )}
+                    </div>
+                  ))}
+                  {snapshot.role === "owner" && (
+                    <form
+                      className="invite-form"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const values = new FormData(e.currentTarget);
+                        void action(async () => {
+                          const r = await api(
+                            "workspaces/" + workspace + "/invites",
+                            "POST",
+                            {
+                              email: values.get("email"),
+                              role: values.get("role"),
+                            },
+                          );
+                          setInviteUrl(
+                            window.location.origin + "/?invite=" + r.token,
+                          );
+                          notify(
+                            "Invitation created. Copy the link and share it with the recipient.",
+                          );
+                        });
+                      }}
+                    >
+                      <label>
+                        Invite by verified email
+                        <input
+                          name="email"
+                          required
+                          type="email"
+                          placeholder="teammate@company.com"
+                          disabled={demo}
+                        />
+                      </label>
+                      <label>
+                        Role
+                        <select name="role">
+                          <option value="editor">Editor</option>
+                          <option value="viewer">Viewer</option>
+                        </select>
+                      </label>
+                      <button
+                        className="button primary"
+                        disabled={busy || demo}
+                      >
+                        <Plus size={17} />
+                        Create invite link
+                      </button>
+                    </form>
+                  )}
+                  {inviteUrl && (
+                    <div className="panel-pad">
+                      <label>
+                        Invitation link · expires in seven days
+                        <input
+                          readOnly
+                          value={inviteUrl}
+                          onFocus={(e) => e.target.select()}
+                        />
+                      </label>
+                      <p className="small">
+                        Only the recipient’s verified email can accept this
+                        invitation. Share this link directly with them.
+                      </p>
+                    </div>
+                  )}
+                </section>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="page-heading">
+                <div>
+                  <span className="eyebrow">
+                    {page === "opportunities"
+                      ? "TURN CONVERSATIONS INTO PROGRESS"
+                      : "YOUR RELATIONSHIP WORKSPACE"}
+                  </span>
+                  <h1>
+                    {labels[page]}
+                    <span className="heading-count">
+                      {records.filter((r) => r.kind === page).length}
+                    </span>
+                  </h1>
+                  <p>
+                    {
+                      (
+                        {
+                          people: "The people behind every possibility.",
+                          organizations: "A shared view of who you work with.",
+                          opportunities:
+                            "Every conversation, with a clear next step.",
+                          projects:
+                            "Connect relationships to the work that matters.",
+                          tasks: "Small steps. Steady progress.",
+                          notes: "Keep the context close.",
+                        } as Record<string, string>
+                      )[page]
+                    }
+                  </p>
+                </div>
+                {canEdit && (
+                  <button
+                    className="button primary"
+                    onClick={() => setEditing({ kind: page as Kind })}
+                  >
+                    <Plus size={18} />
+                    Add{" "}
+                    {page === "people"
+                      ? "person"
+                      : page === "opportunities"
+                        ? "opportunity"
+                        : page.slice(0, -1)}
+                  </button>
+                )}
+              </div>
+              <div className="toolbar">
+                <div className="search">
+                  <Search size={17} />
+                  <input
+                    aria-label="Search records"
+                    placeholder={`Search ${labels[page].toLowerCase()}…`}
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
+                <select
+                  aria-label="Filter records"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                >
+                  <option value="all">All records</option>
+                  <option value="mine">Assigned to me</option>
+                  {["tasks", "opportunities"].includes(page) && (
+                    <option value="due">Follow-ups due</option>
+                  )}
+                </select>
+                {savedViews.some((v) => v.page === page) && (
+                  <select
+                    aria-label="Saved views"
+                    value=""
+                    onChange={(e) => {
+                      const v = savedViews.find(
+                        (v) => v.name === e.target.value && v.page === page,
+                      );
+                      if (v) {
+                        setSearch(v.search);
+                        setFilter(v.filter);
+                        setBoard(v.board);
+                      }
+                    }}
+                  >
+                    <option value="">Saved views</option>
+                    {savedViews
+                      .filter((v) => v.page === page)
+                      .map((v) => (
+                        <option key={v.name} value={v.name}>
+                          {v.name}
+                        </option>
+                      ))}
+                  </select>
+                )}
+                <button className="button subtle" onClick={saveView}>
+                  Save view
+                </button>
+                <div className="toolbar-spacer" />
+                {page === "opportunities" && (
+                  <div className="toggle">
+                    <button
+                      title="Board view"
+                      className={board ? "selected" : ""}
+                      onClick={() => setBoard(true)}
+                    >
+                      <LayoutGrid size={17} />
+                    </button>
+                    <button
+                      title="Table view"
+                      className={!board ? "selected" : ""}
+                      onClick={() => setBoard(false)}
+                    >
+                      <List size={17} />
+                    </button>
+                  </div>
+                )}
+                {["people", "organizations"].includes(page) && canEdit && (
+                  <button
+                    className="button subtle"
+                    onClick={() => setImporting(true)}
+                  >
+                    Import CSV
+                  </button>
+                )}
+                <button
+                  className="button subtle"
+                  title="Export this view as CSV"
+                  onClick={() =>
+                    download(
+                      Papa.unparse(
+                        visible.map((r) => ({ id: r.id, ...r.data })),
+                        { escapeFormulae: true },
+                      ),
+                      `bittrees-${page}.csv`,
+                      "text/csv",
+                    )
+                  }
+                >
+                  <ArrowDownToLine size={17} />
+                  <span className="hide-mobile">Export</span>
+                </button>
+              </div>
+              {page === "opportunities" && board ? (
+                <div className="board">
+                  {stages.map((stage, i) => {
+                    const rows = visible.filter((r) => r.data.stage === stage);
+                    return (
+                      <section className="board-column" key={stage}>
+                        <div className="column-heading">
+                          <span className={"stage-dot s" + i} />
+                          <h2>{stage}</h2>
+                          <span className="count">{rows.length}</span>
+                        </div>
+                        {rows.map((r) => (
+                          <button
+                            className="opportunity-card"
+                            key={r.id}
+                            onClick={() =>
+                              setEditing({ kind: r.kind, record: r })
+                            }
+                          >
+                            <span className="card-category">
+                              {r.data.category || "Opportunity"}
+                            </span>
+                            <h3>{r.data.name}</h3>
+                            <p>
+                              {r.data.organizationId
+                                ? nameOf(r.data.organizationId)
+                                : "No organization linked"}
+                            </p>
+                            {r.data.value > 0 && (
+                              <strong className="card-value">
+                                {money(r.data.value, r.data.currency)}
+                              </strong>
+                            )}
+                            <div className="card-next">
+                              <ArrowRight size={13} />
+                              {r.data.nextAction || "No next step"}
+                            </div>
+                            <div className="card-footer">
+                              <span
+                                className={
+                                  r.data.dueDate &&
+                                  r.data.dueDate < today() &&
+                                  !["Won", "Lost"].includes(r.data.stage)
+                                    ? "due overdue"
+                                    : "due"
+                                }
+                              >
+                                <Clock3 size={12} />
+                                {dateLabel(r.data.dueDate)}
+                              </span>
+                              <span
+                                title={ownerOf(r.data.ownerId)}
+                                className="avatar mini-avatar"
+                              >
+                                {initials(ownerOf(r.data.ownerId))}
+                              </span>
+                            </div>
+                          </button>
+                        ))}
+                        {!rows.length && (
+                          <div className="column-empty">No opportunities</div>
+                        )}
+                        {canEdit && (
+                          <button
+                            className="column-add"
+                            onClick={() =>
+                              setEditing({
+                                kind: "opportunities",
+                                record: undefined,
+                              })
+                            }
+                          >
+                            <Plus size={14} />
+                            Add opportunity
+                          </button>
+                        )}
+                      </section>
+                    );
+                  })}
+                </div>
+              ) : visible.length ? (
+                <section className="panel table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>
+                          {page === "people"
+                            ? "Email"
+                            : page === "tasks"
+                              ? "Status"
+                              : page === "notes"
+                                ? "Context"
+                                : page === "opportunities"
+                                  ? "Stage"
+                                  : "Type"}
+                        </th>
+                        <th>
+                          {page === "people"
+                            ? "Organization"
+                            : "Related project"}
+                        </th>
+                        <th>Owner</th>
+                        <th>
+                          {["tasks", "opportunities"].includes(page)
+                            ? "Due date"
+                            : "Updated"}
+                        </th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visible.map((r) => (
+                        <tr key={r.id}>
+                          <td>
+                            <button
+                              className="record-link"
+                              onClick={() =>
+                                setEditing({ kind: r.kind, record: r })
+                              }
+                            >
+                              <span className="avatar">
+                                {initials(r.data.name)}
+                              </span>
+                              <span>
+                                <strong>{r.data.name}</strong>
+                                {r.data.title && <small>{r.data.title}</small>}
+                              </span>
+                            </button>
+                          </td>
+                          <td>
+                            {page === "tasks" ? (
+                              <span
+                                className={
+                                  "badge " +
+                                  (r.data.status === "Done" ? "success" : "")
+                                }
+                              >
+                                {r.data.status}
+                              </span>
+                            ) : page === "opportunities" ? (
+                              <span className="badge">{r.data.stage}</span>
+                            ) : page === "people" ? (
+                              r.data.email || "—"
+                            ) : page === "notes" ? (
+                              <span className="truncate">
+                                {r.data.description || "—"}
+                              </span>
+                            ) : (
+                              r.data.category || "—"
+                            )}
+                          </td>
+                          <td>
+                            {nameOf(
+                              page === "people"
+                                ? r.data.organizationId
+                                : r.data.projectId,
+                            )}
+                          </td>
+                          <td>
+                            <span className="owner-cell">
+                              <span className="avatar mini-avatar">
+                                {initials(ownerOf(r.data.ownerId))}
+                              </span>
+                              {ownerOf(r.data.ownerId)}
+                            </span>
+                          </td>
+                          <td>
+                            {["tasks", "opportunities"].includes(page) ? (
+                              <span
+                                className={
+                                  r.data.dueDate < today() &&
+                                  r.data.dueDate &&
+                                  r.data.status !== "Done" &&
+                                  !["Won", "Lost"].includes(r.data.stage)
+                                    ? "due overdue"
+                                    : "due"
+                                }
+                              >
+                                {dateLabel(r.data.dueDate)}
+                              </span>
+                            ) : (
+                              new Date(r.updated_at).toLocaleDateString(
+                                undefined,
+                                { month: "short", day: "numeric" },
+                              )
+                            )}
+                          </td>
+                          <td>
+                            <button
+                              className="icon-button"
+                              title={`Open ${r.data.name}`}
+                              onClick={() =>
+                                setEditing({ kind: r.kind, record: r })
+                              }
+                            >
+                              <ArrowUpRight size={16} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </section>
+              ) : (
+                <section className="panel">
+                  <Empty
+                    title={
+                      search || filter !== "all"
+                        ? "No matching records"
+                        : `A fresh start for ${labels[page].toLowerCase()}`
+                    }
+                    text={
+                      search || filter !== "all"
+                        ? "Try another search or change your filter."
+                        : "Add your first record to start connecting people, context, and next steps."
+                    }
+                    action={
+                      canEdit
+                        ? () => setEditing({ kind: page as Kind })
+                        : undefined
+                    }
+                    label="Add your first record"
+                  />
+                </section>
+              )}
+            </>
+          )}
+        </main>
+        <footer className="app-footer">
+          <Sprout size={13} /> Bittrees CRM{" "}
+          <span>Independent. Open source.</span>
+          <a
+            href="https://github.com/Bittrees-Technology/crm"
+            target="_blank"
+            rel="noreferrer"
+          >
+            MIT license <ArrowUpRight size={12} />
+          </a>
+        </footer>
+      </div>
+      {editing && (
+        <RecordEditor
+          kind={editing.kind}
+          record={editing.record}
+          records={records}
+          members={snapshot.members}
+          userId={me.user.id}
+          canEdit={canEdit}
+          busy={busy}
+          error={error}
+          onClose={() => {
+            setEditing(null);
+            setError("");
+          }}
+          onSave={(d) => save(editing.kind, d, editing.record)}
+          onDelete={editing.record ? () => remove(editing.record!) : undefined}
+        />
+      )}
+      {linking && (
+        <Modal
+          title="Link a verified identity"
+          onClose={() => setLinking(false)}
+        >
+          <Auth
+            link
+            onSuccess={() =>
+              void action(async () => {
+                await loadMe();
+                setLinking(false);
+                notify("Identity linked. You can sign in with either method.");
+              })
+            }
+          />
+        </Modal>
+      )}
+      {importing && (
+        <Importer
+          kind={page === "organizations" ? "organizations" : "people"}
+          existing={records}
+          busy={busy}
+          error={error}
+          onClose={() => {
+            setImporting(false);
+            setError("");
+          }}
+          onImport={(rows) =>
+            void action(async () => {
+              if (demo) {
+                setSnapshot((s) => ({
+                  ...s,
+                  records: [
+                    ...s.records,
+                    ...rows.map((data) => ({
+                      id: crypto.randomUUID(),
+                      kind: page as Kind,
+                      data,
+                      version: 1,
+                      created_at: new Date().toISOString(),
+                      updated_at: new Date().toISOString(),
+                    })),
+                  ],
+                }));
+                notify(`${rows.length} demo records imported.`);
+              } else {
+                const r = await api(
+                  "workspaces/" + workspace + "/import",
+                  "POST",
+                  { kind: page, rows },
+                );
+                await refresh();
+                notify(
+                  `${r.imported} imported; ${r.skipped} duplicates skipped.`,
+                );
+              }
+              setImporting(false);
+            })
+          }
+        />
+      )}
+      {creatingWorkspace && (
+        <Modal
+          title="Create workspace"
+          onClose={() => setCreatingWorkspace(false)}
+        >
+          <form
+            className="modal-body"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const name = new FormData(e.currentTarget).get("name");
+              void action(async () => {
+                const r = await api("workspaces", "POST", { name });
+                await loadMe();
+                setWorkspace(r.id);
+                setCreatingWorkspace(false);
+                notify("Workspace created.");
+              });
+            }}
+          >
+            <label>
+              Workspace name
+              <input
+                name="name"
+                required
+                maxLength={100}
+                placeholder="Your team or organization"
+              />
+            </label>
+            <p className="small">
+              Records and membership are separate for each workspace.
+            </p>
+            <button className="button primary" disabled={busy}>
+              Create workspace
+            </button>
+          </form>
+        </Modal>
+      )}
+    </div>
+  );
+}
+function Metric({
+  label,
+  value,
+  detail,
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  icon: typeof Users;
+}) {
+  return (
+    <section className="metric">
+      <div>
+        <span>{label}</span>
+        <Icon size={18} />
+      </div>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </section>
+  );
+}
+function Empty({
+  title,
+  text,
+  action,
+  label,
+}: {
+  title: string;
+  text: string;
+  action?: () => void;
+  label?: string;
+}) {
+  return (
+    <div className="empty">
+      <span className="empty-icon">
+        <Sprout size={26} />
+      </span>
+      <h3>{title}</h3>
+      <p>{text}</p>
+      {action && (
+        <button className="button" onClick={action}>
+          <Plus size={16} />
+          {label}
+        </button>
+      )}
+    </div>
+  );
+}
+function RecordEditor({
+  kind,
+  record,
+  records,
+  members,
+  userId,
+  canEdit,
+  busy,
+  error,
+  onClose,
+  onSave,
+  onDelete,
+}: {
+  kind: Kind;
+  record?: CrmRecord;
+  records: CrmRecord[];
+  members: Member[];
+  userId: string;
+  canEdit: boolean;
+  busy: boolean;
+  error: string;
+  onClose: () => void;
+  onSave: (data: RecordData) => void;
+  onDelete?: () => void;
+}) {
+  const [data, setData] = useState<RecordData>(
+    record?.data || {
+      ...recordSchema.parse({ name: "New record", ownerId: userId }),
+      name: "",
+    },
+  );
+  const update = (key: keyof RecordData, v: string | number) =>
+    setData((d) => ({ ...d, [key]: v }));
+  const input = (
+    key: keyof RecordData,
+    label: string,
+    type = "text",
+    required = false,
+  ) => (
+    <label>
+      {label}
+      <input
+        type={type}
+        value={String(data[key])}
+        required={required}
+        maxLength={key === "description" ? 4000 : 200}
+        onChange={(e) =>
+          update(
+            key,
+            type === "number" ? Number(e.target.value) : e.target.value,
+          )
+        }
+        min={type === "number" ? 0 : undefined}
+      />
+    </label>
+  );
+  const select = (
+    key: keyof RecordData,
+    label: string,
+    options: { value: string; label: string }[],
+    required = false,
+  ) => (
+    <label>
+      {label}
+      <select
+        value={String(data[key])}
+        required={required}
+        onChange={(e) => update(key, e.target.value)}
+      >
+        <option value="">Select…</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+  const ref = (key: keyof RecordData, label: string, k: Kind) =>
+    select(
+      key,
+      label,
+      records
+        .filter((r) => r.kind === k && r.id !== record?.id)
+        .map((r) => ({ value: r.id, label: r.data.name })),
+    );
+  return (
+    <Modal
+      title={
+        record
+          ? record.data.name
+          : `New ${kind === "people" ? "person" : kind === "opportunities" ? "opportunity" : kind.slice(0, -1)}`
+      }
+      onClose={onClose}
+      wide
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSave(data);
+        }}
+      >
+        <fieldset disabled={!canEdit || busy} className="editor-fields">
+          <div className="form-grid">
+            {input(
+              "name",
+              kind === "tasks"
+                ? "Task"
+                : kind === "notes"
+                  ? "Note title"
+                  : "Name",
+              "text",
+              true,
+            )}
+            {select(
+              "ownerId",
+              "Owner",
+              members.map((m) => ({ value: m.id, label: m.name })),
+              kind === "opportunities" && !["Won", "Lost"].includes(data.stage),
+            )}
+            {kind === "people" && (
+              <>
+                {input("email", "Email address", "email")}
+                {input("title", "Role / title")}
+                {ref("organizationId", "Organization", "organizations")}
+                {select(
+                  "communication",
+                  "Communication preference",
+                  ["Unknown", "Allowed", "Do not contact"].map((v) => ({
+                    value: v,
+                    label: v,
+                  })),
+                )}
+              </>
+            )}
+            {kind === "organizations" && (
+              <>
+                {input("website", "Website", "url")}
+                {input("category", "Organization type")}
+              </>
+            )}
+            {kind === "projects" && input("category", "Project type")}
+            {kind === "opportunities" && (
+              <>
+                {select(
+                  "category",
+                  "Opportunity type",
+                  ["Partnership", "Customer", "Research", "Contributor"].map(
+                    (v) => ({ value: v, label: v }),
+                  ),
+                )}
+                {select(
+                  "stage",
+                  "Stage",
+                  stages.map((v) => ({ value: v, label: v })),
+                  true,
+                )}
+                {input("value", "Estimated value", "number")}
+                {select(
+                  "currency",
+                  "Currency",
+                  ["EUR", "USD", "GBP"].map((v) => ({ value: v, label: v })),
+                  true,
+                )}
+                {ref("organizationId", "Organization", "organizations")}
+                {ref("personId", "Contact", "people")}
+                {input(
+                  "nextAction",
+                  "Next action",
+                  "text",
+                  !["Won", "Lost"].includes(data.stage),
+                )}
+                {input(
+                  "dueDate",
+                  "Next action due",
+                  "date",
+                  !["Won", "Lost"].includes(data.stage),
+                )}
+              </>
+            )}
+            {kind === "tasks" && (
+              <>
+                {select(
+                  "status",
+                  "Status",
+                  ["Open", "Done"].map((v) => ({ value: v, label: v })),
+                  true,
+                )}
+                {input("dueDate", "Due date", "date")}
+                {ref("opportunityId", "Opportunity", "opportunities")}
+                {ref("personId", "Contact", "people")}
+              </>
+            )}
+            {kind === "notes" && (
+              <>
+                {ref("personId", "Person", "people")}
+                {ref("organizationId", "Organization", "organizations")}
+                {ref("opportunityId", "Opportunity", "opportunities")}
+              </>
+            )}
+            {kind !== "projects" && ref("projectId", "Project", "projects")}
+            {["people", "organizations"].includes(kind) &&
+              input("wallet", "Wallet reference (unverified)")}
+            {input("source", "Source / reference")}
+            <label className="full-span">
+              {kind === "notes" ? "Note" : "Description / context"}
+              <textarea
+                rows={5}
+                maxLength={4000}
+                value={data.description}
+                onChange={(e) => update("description", e.target.value)}
+              />
+            </label>
+          </div>
+        </fieldset>
+        {error && (
+          <div className="error modal-error" role="alert">
+            {error}
+          </div>
+        )}
+        {record &&
+          records.some(
+            (r) =>
+              r.id !== record.id &&
+              [
+                r.data.personId,
+                r.data.organizationId,
+                r.data.projectId,
+                r.data.opportunityId,
+              ].includes(record.id),
+          ) && (
+            <section className="related-records">
+              <h3>Related work & notes</h3>
+              {records
+                .filter(
+                  (r) =>
+                    r.id !== record.id &&
+                    [
+                      r.data.personId,
+                      r.data.organizationId,
+                      r.data.projectId,
+                      r.data.opportunityId,
+                    ].includes(record.id),
+                )
+                .map((r) => (
+                  <div key={r.id}>
+                    <span className="badge">{labels[r.kind]}</span>
+                    <strong>{r.data.name}</strong>
+                    {r.kind === "notes" && <p>{r.data.description}</p>}
+                  </div>
+                ))}
+            </section>
+          )}
+        {record && (
+          <div className="record-meta">
+            Version {record.version} · Updated{" "}
+            {new Date(record.updated_at).toLocaleString()}
+          </div>
+        )}
+        <div className="modal-actions">
+          {onDelete && canEdit && (
+            <button
+              type="button"
+              className="text-button danger"
+              onClick={onDelete}
+              disabled={busy}
+            >
+              Delete record
+            </button>
+          )}
+          <div className="toolbar-spacer" />
+          <button type="button" className="button" onClick={onClose}>
+            Close
+          </button>
+          {canEdit && (
+            <button className="button primary" disabled={busy}>
+              {busy ? (
+                <LoaderCircle size={16} className="spin" />
+              ) : (
+                <Check size={16} />
+              )}
+              Save record
+            </button>
+          )}
+        </div>
+      </form>
+    </Modal>
+  );
+}
+function Importer({
+  kind,
+  existing,
+  busy,
+  error,
+  onClose,
+  onImport,
+}: {
+  kind: "people" | "organizations";
+  existing: CrmRecord[];
+  busy: boolean;
+  error: string;
+  onClose: () => void;
+  onImport: (rows: RecordData[]) => void;
+}) {
+  const [rows, setRows] = useState<RecordData[]>([]),
+    [skipped, setSkipped] = useState(0),
+    [problem, setProblem] = useState("");
+  async function read(file?: File) {
+    if (!file) return;
+    setRows([]);
+    setProblem("");
+    if (file.size > 1_000_000) {
+      setProblem("Choose a CSV smaller than 1 MB.");
+      return;
+    }
+    const csv = Papa.parse<Record<string, string>>(await file.text(), {
+      header: true,
+      skipEmptyLines: "greedy",
+    });
+    if (csv.errors.length) {
+      setProblem(
+        "The CSV could not be read. Check the column headers and quoting.",
+      );
+      return;
+    }
+    if (csv.data.length > 500) {
+      setProblem("Import up to 500 rows at a time.");
+      return;
+    }
+    let skip = 0;
+    const found = existing.filter((r) => r.kind === kind).map((r) => r.data),
+      valid: RecordData[] = [];
+    for (const [i, r] of csv.data.entries()) {
+      const item = recordSchema.safeParse({
+        name: r.name || r.Name,
+        email: r.email || r.Email || "",
+        title: r.title || "",
+        website: r.website || "",
+        category: r.category || "",
+        source: r.source || "CSV import",
+        description: r.description || "",
+      });
+      if (!item.success) {
+        setProblem(
+          `Row ${i + 2}: ${item.error.issues.map((e) => e.message).join(", ")}`,
+        );
+        return;
+      }
+      if (
+        [...found, ...valid].some(
+          (d) =>
+            d.name.toLowerCase() === item.data.name.toLowerCase() ||
+            (d.email &&
+              d.email.toLowerCase() === item.data.email.toLowerCase()),
+        )
+      ) {
+        skip++;
+        continue;
+      }
+      valid.push(item.data);
+    }
+    setRows(valid);
+    setSkipped(skip);
+  }
+  return (
+    <Modal title={`Import ${kind}`} onClose={onClose} wide>
+      <div className="modal-body">
+        <p>
+          Use a CSV with a <strong>name</strong> column. Optional columns:
+          email, title, website, category, source, description.
+        </p>
+        <label className="file-label">
+          Choose CSV
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(e) => void read(e.target.files?.[0])}
+          />
+        </label>
+        <p className="small">
+          Up to 500 rows. Matching names or emails are skipped, never
+          overwritten. Relationships and ownership can be added after import.
+        </p>
+        {(problem || error) && (
+          <div className="error" role="alert">
+            {problem || error}
+          </div>
+        )}
+        {rows.length > 0 && (
+          <>
+            <div className="import-summary">
+              <strong>{rows.length} ready to import</strong>
+              <span>{skipped} duplicates skipped</span>
+            </div>
+            <div className="table-wrap import-preview">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Type / role</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.name}</td>
+                      <td>{r.email || "—"}</td>
+                      <td>{r.title || r.category || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+        {!rows.length && skipped > 0 && (
+          <p>All {skipped} rows already exist.</p>
+        )}
+      </div>
+      <div className="modal-actions">
+        <button className="button" onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          disabled={busy || !rows.length || !!problem}
+          className="button primary"
+          onClick={() => onImport(rows)}
+        >
+          Import {rows.length} records
+        </button>
+      </div>
+    </Modal>
+  );
+}
