@@ -26,6 +26,7 @@ export async function transaction<T>(fn: (db: PoolClient) => Promise<T>) {
 }
 export const schema = `
 CREATE TABLE IF NOT EXISTS users(id uuid PRIMARY KEY, name text NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS user_opportunity_types(user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, key text NOT NULL, label text NOT NULL CHECK(length(label) BETWEEN 1 AND 200), PRIMARY KEY(user_id,key));
 CREATE TABLE IF NOT EXISTS identities(kind text NOT NULL, value text NOT NULL, user_id uuid NOT NULL REFERENCES users(id), verified_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(kind,value));
 CREATE TABLE IF NOT EXISTS sessions(hash text PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id), expires_at timestamptz NOT NULL);
 CREATE TABLE IF NOT EXISTS challenges(id uuid PRIMARY KEY, kind text NOT NULL, value text NOT NULL, secret_hash text NOT NULL, browser_hash text NOT NULL, user_id uuid REFERENCES users(id), payload text, expires_at timestamptz NOT NULL, attempts int NOT NULL DEFAULT 0, consumed boolean NOT NULL DEFAULT false);

@@ -68,6 +68,7 @@ try {
     kind: "opportunities",
     data: {
       name: "Temporary smoke opportunity",
+      category: "Deployment custom type",
       organizationId: organization.id,
       personId: person.id,
       ownerId: userId,
@@ -89,6 +90,9 @@ try {
     assert.equal(saved.data.currency, currency);
     assert.equal(saved.data.value, value);
   }
+  assert.ok(
+    (await request("me")).opportunityTypes.includes("Deployment custom type"),
+  );
   const task = await request(base + "/records", "POST", {
     kind: "tasks",
     data: {

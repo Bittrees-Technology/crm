@@ -1,3 +1,4 @@
+import { normalizeType, typeKey, defaultType } from "./opportunity-types";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { PoolClient } from "pg";
@@ -114,6 +115,10 @@ export async function saveRecord(userId: string, w: string, input: unknown) {
         400,
         "Active opportunities need an owner, a next action, and a due date.",
       );
+    if (body.kind === "opportunities") {
+      body.data.category =
+        defaultType(body.data.category) || normalizeType(body.data.category);
+    }
     const id = body.id || randomUUID();
     const previous = body.id
       ? (
@@ -174,6 +179,16 @@ export async function saveRecord(userId: string, w: string, input: unknown) {
         ],
       },
     );
+    if (
+      body.kind === "opportunities" &&
+      body.data.category &&
+      !defaultType(body.data.category)
+    ) {
+      await db.query(
+        "INSERT INTO user_opportunity_types(user_id,key,label) VALUES($1,$2,$3) ON CONFLICT(user_id,key) DO NOTHING",
+        [userId, typeKey(body.data.category), body.data.category],
+      );
+    }
     return record;
   });
 }

@@ -130,6 +130,13 @@ export async function completeRecovery(req: Request, raw: string) {
       r.target_id,
       r.source_id,
     ]);
+    await db.query(
+      "INSERT INTO user_opportunity_types(user_id,key,label) SELECT $1,key,label FROM user_opportunity_types WHERE user_id=$2 ON CONFLICT(user_id,key) DO NOTHING",
+      [r.target_id, r.source_id],
+    );
+    await db.query("DELETE FROM user_opportunity_types WHERE user_id=$1", [
+      r.source_id,
+    ]);
     await db.query("DELETE FROM members WHERE user_id=$1", [r.source_id]);
     await db.query(
       "UPDATE users SET digest_enabled=false WHERE id=ANY($1::uuid[])",

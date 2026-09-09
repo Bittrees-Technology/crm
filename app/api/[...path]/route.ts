@@ -75,7 +75,7 @@ async function handle(req: NextRequest) {
       });
     if (path === "health" && req.method === "GET") {
       await pool().query("SELECT id FROM workspaces LIMIT 1");
-      return json({ status: "ok", version: "0.3.1" });
+      return json({ status: "ok", version: "0.3.2" });
     }
     let body: Record<string, unknown> = {};
     if (req.method !== "GET") {
@@ -166,7 +166,7 @@ async function handle(req: NextRequest) {
         ),
       );
     if (path === "me" && req.method === "GET") {
-      const [workspaces, identities] = await Promise.all([
+      const [workspaces, identities, opportunityTypes] = await Promise.all([
         pool().query(
           "SELECT w.*,m.role FROM workspaces w JOIN members m ON m.workspace_id=w.id WHERE m.user_id=$1 ORDER BY w.created_at",
           [user.id],
@@ -175,9 +175,14 @@ async function handle(req: NextRequest) {
           "SELECT kind,value,verified_at FROM identities WHERE user_id=$1",
           [user.id],
         ),
+        pool().query(
+          "SELECT label FROM user_opportunity_types WHERE user_id=$1 ORDER BY lower(label),label",
+          [user.id],
+        ),
       ]);
       return json({
         user,
+        opportunityTypes: opportunityTypes.rows.map((r) => r.label),
         workspaces: workspaces.rows,
         identities: identities.rows,
       });

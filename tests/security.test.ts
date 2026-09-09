@@ -720,6 +720,10 @@ test("account recovery requires both proofs and preserves records, roles, identi
     kind: "tasks",
     data: { name: "Keep this assigned task", ownerId: f.sourceId },
   });
+  await pool().query(
+    "INSERT INTO user_opportunity_types(user_id,key,label) VALUES($1,'source label','Source label'),($2,'target label','Target label')",
+    [f.sourceId, f.targetId],
+  );
   await verifyRecoveryCurrent(f);
   const results = await Promise.allSettled([
     completeRecovery(request(f.targetSession), f.recovery.token),
@@ -737,6 +741,24 @@ test("account recovery requires both proofs and preserves records, roles, identi
   );
   assert.equal(await currentUser(request(f.sourceSession), false), undefined);
   assert.equal(await currentUser(request(f.targetSession), false), undefined);
+  assert.deepEqual(
+    (
+      await pool().query(
+        "SELECT label FROM user_opportunity_types WHERE user_id=$1 ORDER BY label",
+        [f.targetId],
+      )
+    ).rows.map((r) => r.label),
+    ["Source label", "Target label"],
+  );
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT * FROM user_opportunity_types WHERE user_id=$1",
+        [f.sourceId],
+      )
+    ).rowCount,
+    0,
+  );
   const snapshotAfter = await snapshot(f.targetId, sourceWorkspace);
   assert.equal(snapshotAfter.role, "owner");
   await assert.rejects(
@@ -832,4 +854,60 @@ test("recovery rejects a wrong current method, changed access, expired intent an
       }),
     /Verification failed/,
   );
+});
+
+test("custom opportunity types persist per user, deduplicate, and roll back with failed saves", async () => {
+  const list = async (id: string) =>
+    (
+      await pool().query(
+        "SELECT label FROM user_opportunity_types WHERE user_id=$1",
+        [id],
+      )
+    ).rows.map((r) => r.label);
+  const first = await saveRecord(owner, workspace, {
+    kind: "opportunities",
+    data: {
+      name: "Custom type test",
+      stage: "Won",
+      category: "  Ecosystem   grant  ",
+    },
+  });
+  assert.equal(first.data.category, "Ecosystem grant");
+  const second = await saveRecord(owner, workspace, {
+    kind: "opportunities",
+    data: {
+      name: "Custom type duplicate",
+      stage: "Won",
+      category: "ecosystem grant",
+    },
+  });
+  assert.deepEqual(await list(owner), ["Ecosystem grant"]);
+  assert.deepEqual(await list(other), []);
+  await assert.rejects(
+    () =>
+      saveRecord(other, workspace, {
+        kind: "opportunities",
+        data: { name: "Denied", stage: "Won", category: "Not saved" },
+      }),
+    /Workspace not found/,
+  );
+  await assert.rejects(
+    () =>
+      saveRecord(owner, workspace, {
+        id: first.id,
+        version: 999,
+        kind: "opportunities",
+        data: { ...first.data, category: "Failed save label" },
+      }),
+    /record changed/,
+  );
+  assert.deepEqual(await list(owner), ["Ecosystem grant"]);
+  const builtIn = await saveRecord(owner, workspace, {
+    kind: "opportunities",
+    data: { name: "Default type", stage: "Won", category: " grant " },
+  });
+  assert.equal(builtIn.data.category, "Grant");
+  for (const record of [first, second, builtIn])
+    await deleteRecord(owner, workspace, record.id, record.version);
+  assert.deepEqual(await list(owner), ["Ecosystem grant"]);
 });

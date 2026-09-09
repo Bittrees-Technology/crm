@@ -124,6 +124,10 @@ Enable the daily digest in Settings and choose a verified email. The scheduled V
 
 Set `CRON_SECRET` in Vercel production. `GET /api/cron/digest` requires its bearer token; Vercel supplies this automatically. Per-user/day receipts and provider idempotency prevent duplicate sends on retries. Failed delivery is recorded; the next scheduled day generates a fresh digest. No historical digest is automatically resent. The current bounded job is designed for small teams; monitor failures and remaining work before growing beyond a few hundred daily recipients.
 
+## Opportunity types
+
+Built-in types include Partnership, Customer, Research, Contributor, Grant, Investment, Sponsorship, Integration, Consulting, Licensing, Community, and Event. Choose **Create custom type** in an opportunity to enter a label. Saving the opportunity also saves the label to your account for reuse across workspaces, devices, and sign-in methods. Personal options remain available after records are deleted; teammates can see a shared record's label without receiving your personal option list. Duplicate labels ignore capitalization and extra whitespace. Account recovery preserves both accounts' saved labels. Demo labels last only for the demo session.
+
 ## Opportunity currencies
 
 The currency picker groups 18 fiat currencies, BTC/ETH/SOL and USDC/USDT/DAI, plus Bittrees BIT and BTREE. Reports show separate totals for currencies used in the workspace; amounts are never converted or combined across currencies.
@@ -161,7 +165,7 @@ This is an initial deployable MVP, not a claim of an independent security audit 
 
 ## Hosted verification
 
-The v0.3.1 suite covers 31 automated tests plus Chromium checks for both identity-linking orders, wallet cancellation/timeouts, quick edits, timelines, invitation management/joining, and digest preferences. These checks also run in GitHub CI.
+The v0.3.2 suite covers 32 automated tests plus Chromium checks for both identity-linking orders, wallet cancellation/timeouts, quick edits, timelines, invitation management/joining, and digest preferences. These checks also run in GitHub CI.
 
 The initial September 9, 2026 deployment passed 17 PostgreSQL-backed tests, the production build, GitHub CI, a local backup/restore drill, and live HTTP smoke checks.
 

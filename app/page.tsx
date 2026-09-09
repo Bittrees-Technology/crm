@@ -13,6 +13,12 @@ import {
 } from "@/lib/auth-client";
 import Papa from "papaparse";
 import {
+  typeOptions,
+  normalizeType,
+  defaultType,
+  typeKey,
+} from "@/lib/opportunity-types";
+import {
   currencyGroups,
   currencyCodes,
   amountPattern,
@@ -78,6 +84,7 @@ type SavedView = {
 };
 type Member = { id: string; name: string; role: string };
 type Me = {
+  opportunityTypes?: string[];
   user: { id: string; name: string };
   workspaces: { id: string; name: string; role: string }[];
   identities: { kind: string; value: string }[];
@@ -1176,6 +1183,23 @@ export default function App() {
           version: record?.version,
         });
         await refresh();
+      }
+      if (kind === "opportunities" && normalizeType(data.category)) {
+        const label =
+          defaultType(data.category) || normalizeType(data.category);
+        setMe((m) =>
+          m
+            ? {
+                ...m,
+                opportunityTypes: [
+                  ...(m.opportunityTypes || []).filter(
+                    (t) => typeKey(t) !== typeKey(label),
+                  ),
+                  label,
+                ],
+              }
+            : m,
+        );
       }
       setEditing(null);
       notify("Record saved.");
@@ -2463,6 +2487,7 @@ export default function App() {
           records={records}
           members={snapshot.members}
           userId={me.user.id}
+          savedTypes={me.opportunityTypes || []}
           canEdit={canEdit}
           busy={busy}
           error={error}
@@ -2651,6 +2676,7 @@ function Empty({
   );
 }
 function RecordEditor({
+  savedTypes,
   workspace,
   demo,
   kind,
@@ -2666,6 +2692,7 @@ function RecordEditor({
   onSave,
   onDelete,
 }: {
+  savedTypes: string[];
   workspace: string;
   demo: boolean;
   kind: Kind;
@@ -2691,6 +2718,7 @@ function RecordEditor({
       name: "",
     },
   );
+  const [customType, setCustomType] = useState(false);
   const original = useRef(JSON.stringify(data));
   const dirty = canEdit && JSON.stringify(data) !== original.current;
   function closeEditor() {
@@ -2822,13 +2850,54 @@ function RecordEditor({
             {kind === "projects" && input("category", "Project type")}
             {kind === "opportunities" && (
               <>
-                {select(
-                  "category",
-                  "Opportunity type",
-                  ["Partnership", "Customer", "Research", "Contributor"].map(
-                    (v) => ({ value: v, label: v }),
-                  ),
-                )}
+                <div>
+                  {customType ? (
+                    <label>
+                      Custom opportunity type
+                      <input
+                        autoFocus
+                        required
+                        maxLength={200}
+                        pattern=".*\S.*"
+                        value={data.category}
+                        onChange={(e) => update("category", e.target.value)}
+                        aria-describedby="custom-type-help"
+                      />
+                    </label>
+                  ) : (
+                    select(
+                      "category",
+                      "Opportunity type",
+                      typeOptions(savedTypes, data.category).map((value) => ({
+                        value,
+                        label: value,
+                      })),
+                    )
+                  )}
+                  {canEdit && (
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => {
+                        setCustomType(!customType);
+                        update(
+                          "category",
+                          customType ? record?.data.category || "" : "",
+                        );
+                      }}
+                    >
+                      {customType
+                        ? "Choose an existing type"
+                        : "Create custom type"}
+                    </button>
+                  )}
+                  {customType && (
+                    <p id="custom-type-help" className="small">
+                      Saved to your personal options when you save this
+                      opportunity{demo ? " (this demo session only)" : ""}.
+                    </p>
+                  )}
+                </div>
                 {select(
                   "stage",
                   "Stage",

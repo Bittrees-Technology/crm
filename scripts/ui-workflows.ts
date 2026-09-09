@@ -63,6 +63,17 @@ export async function checkWorkflows(
       await expect(
         dialog.getByRole("combobox", { name: "Stage", exact: true }),
       ).toHaveValue("Proposal");
+      await expect(
+        dialog
+          .getByRole("combobox", { name: "Opportunity type", exact: true })
+          .locator("option", { hasText: "Sponsorship" }),
+      ).toHaveCount(1);
+      await dialog
+        .getByRole("button", { name: "Create custom type", exact: true })
+        .click();
+      await dialog
+        .getByLabel("Custom opportunity type", { exact: true })
+        .fill("UX custom type");
       await dialog.getByLabel("Estimated value", { exact: true }).fill("12.50");
       await dialog
         .getByLabel("Next action", { exact: true })
@@ -90,6 +101,19 @@ export async function checkWorkflows(
     records.find((r: any) => r.kind === "opportunities").data.value,
     "12.50",
   );
+  assert.ok(
+    (await api(page, "me")).opportunityTypes.includes("UX custom type"),
+  );
+  await page.goto(origin + "/?view=opportunities");
+  await page
+    .getByRole("button", { name: "Add opportunity in Proposal", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("combobox", { name: "Opportunity type", exact: true })
+    .selectOption("UX custom type");
+  page.once("dialog", (d) => d.accept());
+  await page.getByRole("dialog").getByLabel("Close", { exact: true }).click();
   // Search, saved views, browser navigation, and exports.
   await page.getByRole("button", { name: "People", exact: true }).click();
   await page.getByLabel("Search records").fill("UX person");
@@ -203,6 +227,19 @@ export async function checkWorkflows(
   );
   assert.ok(extra);
   assert.equal((await api(page, "workspaces/" + extra.id)).records.length, 0);
+  await page
+    .getByRole("button", { name: "Opportunities", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Add opportunity in Proposal", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("dialog")
+      .getByRole("combobox", { name: "Opportunity type", exact: true })
+      .locator("option", { hasText: "UX custom type" }),
+  ).toHaveCount(1);
+  await page.getByRole("dialog").getByLabel("Close", { exact: true }).click();
   await page
     .getByLabel("Workspace", { exact: true })
     .selectOption(me.workspaces[0].id);
