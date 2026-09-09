@@ -37,4 +37,11 @@ ALTER TABLE records ADD COLUMN IF NOT EXISTS stage_changed_at timestamptz NOT NU
 CREATE INDEX IF NOT EXISTS records_workspace ON records(workspace_id,kind);
 CREATE TABLE IF NOT EXISTS audit(id bigserial PRIMARY KEY, workspace_id uuid NOT NULL REFERENCES workspaces(id), actor_id uuid NOT NULL REFERENCES users(id), action text NOT NULL, record_id uuid, detail jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS invites(hash text PRIMARY KEY, workspace_id uuid NOT NULL REFERENCES workspaces(id), email text NOT NULL, role text NOT NULL CHECK(role IN ('editor','viewer')), expires_at timestamptz NOT NULL, accepted_at timestamptz);
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS id uuid NOT NULL DEFAULT gen_random_uuid();
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS revoked_at timestamptz;
+CREATE UNIQUE INDEX IF NOT EXISTS invites_id ON invites(id);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS digest_enabled boolean NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS digest_email text NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS digest_receipts(user_id uuid NOT NULL REFERENCES users(id), day date NOT NULL, status text NOT NULL DEFAULT 'pending', payload jsonb NOT NULL, record_ids uuid[] NOT NULL, attempts int NOT NULL DEFAULT 0, sent_at timestamptz, last_error text, PRIMARY KEY(user_id,day));
 `;

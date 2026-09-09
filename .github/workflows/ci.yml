@@ -31,3 +31,9 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+      - name: Install browser for interaction checks
+        run: npx playwright install --with-deps chromium
+      - name: Check identity linking and coordination in browser
+        run: |
+          cp .env.test .env.local
+          npm run test:browser

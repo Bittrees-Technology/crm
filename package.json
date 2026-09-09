@@ -1,6 +1,6 @@
 {
   "name": "@bittrees/crm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
   "scripts": {
@@ -11,7 +11,8 @@
     "test": "tsx --env-file=.env.test --test tests/*.test.ts",
     "db:migrate": "tsx --env-file=.env.local scripts/migrate.ts",
     "format": "prettier --write app lib scripts tests",
-    "smoke": "tsx --env-file=.env.local scripts/smoke.ts"
+    "smoke": "tsx --env-file=.env.local scripts/smoke.ts",
+    "test:browser": "tsx --env-file=.env.local scripts/browser-check.ts"
   },
   "dependencies": {
     "ethers": "^6.16.0",
@@ -25,6 +26,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^22.19.0",
     "@types/papaparse": "^5.3.16",
     "@types/pg": "^8.16.0",

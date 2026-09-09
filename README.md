@@ -14,6 +14,11 @@ An independent relationship workspace for people, organizations, partnerships, a
 - Ethereum EOA sign-in and email codes through Resend.
 - Explicit verification to link an email and wallet to one account. Never merges separate accounts automatically.
 - Multiple independent workspaces, owner/editor/viewer permissions, email-bound invite links, member access changes.
+- Inline task completion, opportunity stage changes, and due-date changes.
+- Contact and organization timelines with linked notes, task completions, and opportunity updates.
+- Optional daily follow-up email to a verified address, disabled by default.
+- Pending invitation status, revocation, replacement links, and guided email matching.
+- Backup sign-in prompts, verified-method visibility, cancellable wallet requests, and bounded waits.
 - Optimistic edit versions, atomic writes, relationship integrity, and a workspace activity history.
 - Responsive interface and an isolated fictional demo (`/?demo=1`). Demo edits are intentionally session-only.
 
@@ -48,6 +53,7 @@ New accounts receive an empty private workspace. Demo records are never written 
 | `APP_URL`        | Canonical HTTPS app origin                                                |
 | `AUTH_SECRET`    | At least 32 cryptographically random characters for email-code hashing    |
 | `RESEND_API_KEY` | Dedicated email-delivery API key                                          |
+| `CRON_SECRET`   | Random secret securing the scheduled digest endpoint |
 | `EMAIL_FROM`     | Sender on a verified domain, e.g. `Bittrees CRM <signin@crm.example.org>` |
 
 Email sign-in is unavailable until its delivery credentials are configured. Ethereum login remains independent. Resend needs verified DNS records for the sender domain. Do not use development sender addresses for general users.
@@ -71,7 +77,7 @@ Use an independent database for previews, or leave preview auth unavailable. Nev
 
 Owners manage membership and invitations. Editors create, update, delete, and import records. Viewers can read and export all records in their workspace. All records are workspace-visible: this MVP has no private-field or private-note mode. Create separate workspaces for separate confidential teams.
 
-The owner role cannot be removed or transferred through this MVP. Reassign a member's records before removing them. Invitations expire after seven days and are single-use; redemption checks the exact verified email. Identity deletion, account merging, ownership transfer, and account recovery are deferred. Link both email and wallet early if you need two independent sign-in methods.
+The owner role cannot be removed or transferred through this MVP. Reassign a member's records before removing them. Invitations expire after seven days and are single-use; redemption checks the exact verified email. Owners can revoke or recreate links in Settings. Recreating invalidates all earlier pending links for that email. Identity deletion, account merging, ownership transfer, and account recovery are deferred. Link both email and wallet early if you need two independent sign-in methods.
 
 ## Identity and security model
 
@@ -95,9 +101,20 @@ Create a separate `crm_test` PostgreSQL database and `.env.test` from the exampl
 npm test
 npm run typecheck
 npm run build
+# With the local development environment, port 3040 free, and Chromium installed:
+npx playwright install chromium
+npm run test:browser
 ```
 
+Browser checks use isolated test wallets and local verification codes, exercise both identity-linking orders and stalled-wallet recovery, and clean up their own accounts. No real wallet extension or personal inbox is controlled.
+
 Tests exercise real PostgreSQL transactions, SIWE signatures, email verification, replay/expiry/attempt limits, identity collisions, invitation redemption, cross-workspace access, reference integrity, duplicate imports, role revocation, and stale edits. CI uses an isolated PostgreSQL service.
+
+## Daily digest
+
+Enable the daily digest in Settings and choose a verified email. The scheduled Vercel job runs once daily around 08:00 UTC. It includes only your assigned open tasks and active opportunities due within seven days, including overdue items, across workspaces you can access. Empty digests are skipped. Turn it off in Settings at any time.
+
+Set `CRON_SECRET` in Vercel production. `GET /api/cron/digest` requires its bearer token; Vercel supplies this automatically. Per-user/day receipts and provider idempotency prevent duplicate sends on retries. Failed delivery is recorded; the next scheduled day generates a fresh digest. No historical digest is automatically resent. The current bounded job is designed for small teams; monitor failures and remaining work before growing beyond a few hundred daily recipients.
 
 ## Operations and data lifecycle
 
@@ -129,6 +146,8 @@ This is an initial deployable MVP, not a claim of an independent security audit 
 [MIT](LICENSE). Dependencies retain their own licenses. Bittrees names and marks are not separately licensed by this code license.
 
 ## Hosted verification
+
+The v0.2.0 suite covers 25 automated tests plus Chromium checks for both identity-linking orders, wallet cancellation/timeouts, quick edits, timelines, invitation management/joining, and digest preferences. These checks also run in GitHub CI.
 
 The initial September 9, 2026 deployment passed 17 PostgreSQL-backed tests, the production build, GitHub CI, a local backup/restore drill, and live HTTP smoke checks.
 

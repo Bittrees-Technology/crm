@@ -6,7 +6,11 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { BrowserProvider } from "ethers";
+import {
+  walletIdentity,
+  walletError,
+  type EthereumProvider,
+} from "@/lib/auth-client";
 import Papa from "papaparse";
 import {
   ArrowDownToLine,
@@ -49,6 +53,14 @@ import {
   type Kind,
   type RecordData,
 } from "@/lib/model";
+
+import {
+  QuickActions,
+  BackupIdentity,
+  RelationshipTimeline,
+  DigestSettings,
+  InviteManager,
+} from "./components/coordination";
 
 type SavedView = {
   name: string;
@@ -294,45 +306,101 @@ function Auth({
   link = false,
   onClose,
   onDemo,
+  initialEmail = "",
+  invitation = false,
 }: {
-  onSuccess: () => void;
+  onSuccess: () => void | Promise<void>;
   link?: boolean;
   onClose?: () => void;
   onDemo?: () => void;
+  initialEmail?: string;
+  invitation?: boolean;
 }) {
-  const [email, setEmail] = useState(""),
+  const [email, setEmail] = useState(initialEmail),
     [code, setCode] = useState(""),
     [challenge, setChallenge] = useState(""),
-    [busy, setBusy] = useState(false),
+    [operation, setOperation] = useState(""),
     [error, setError] = useState(""),
     [config, setConfig] = useState({
       emailEnabled: false,
       developmentEmail: false,
     });
+  const flow = useRef<{ id: number; controller: AbortController } | null>(null);
+  const nextFlow = useRef(0);
+  const busy = !!operation;
   useEffect(() => {
     api("config")
       .then(setConfig)
-      .catch(() => {});
+      .catch(() => setError("Could not load sign-in options. Please refresh."));
+    return () => flow.current?.controller.abort();
   }, []);
-  async function run(fn: () => Promise<void>) {
-    setBusy(true);
+  function cancel() {
+    flow.current?.controller.abort();
+    flow.current = null;
+    setOperation("");
+    setError(
+      "Verification cancelled. Dismiss any open wallet request before retrying or using email.",
+    );
+  }
+  async function run(
+    type: string,
+    fn: (
+      request: (path: string, body: unknown) => Promise<any>,
+      signal: AbortSignal,
+      step: (s: string) => void,
+    ) => Promise<void>,
+  ) {
+    const current = {
+      id: ++nextFlow.current,
+      controller: new AbortController(),
+    };
+    flow.current?.controller.abort();
+    flow.current = current;
+    setOperation(type);
     setError("");
+    const isCurrent = () => flow.current?.id === current.id;
+    const request = async (path: string, body: unknown) => {
+      if (!isCurrent() || current.controller.signal.aborted)
+        throw new Error("Verification cancelled.");
+      const r = await fetch("/api/" + path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.any([
+          current.controller.signal,
+          AbortSignal.timeout(15000),
+        ]),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Verification failed.");
+      return data;
+    };
     try {
-      await fn();
+      await fn(request, current.controller.signal, (s) => {
+        if (isCurrent()) setOperation(s);
+      });
     } catch (e) {
-      setError((e as Error).message);
+      if (isCurrent())
+        setError(
+          (e as Error).name === "TimeoutError"
+            ? "The service took too long. Please retry."
+            : walletError(e),
+        );
     } finally {
-      setBusy(false);
+      if (isCurrent()) {
+        setOperation("");
+        flow.current = null;
+      }
     }
   }
   function emailSubmit(e: FormEvent) {
     e.preventDefault();
-    void run(async () => {
+    void run(challenge ? "email-verify" : "email-send", async (request) => {
       if (challenge) {
-        await api("auth/verify", "POST", { id: challenge, proof: code });
-        onSuccess();
+        await request("auth/verify", { id: challenge, proof: code });
+        await onSuccess();
       } else {
-        const r = await api("auth/challenge", "POST", {
+        const r = await request("auth/challenge", {
           kind: "email",
           value: email,
           link,
@@ -342,34 +410,33 @@ function Auth({
     });
   }
   function wallet() {
-    void run(async () => {
-      const ethereum = (
-        window as unknown as {
-          ethereum?: ConstructorParameters<typeof BrowserProvider>[0];
-        }
-      ).ethereum;
+    void run("wallet-connect", async (request, signal, step) => {
+      const ethereum = (window as unknown as { ethereum?: EthereumProvider })
+        .ethereum;
       if (!ethereum)
         throw new Error(
-          "Open this page in an Ethereum wallet browser or install a wallet extension.",
+          "No Ethereum wallet is available in this browser. Open this site in your wallet browser or a browser with your wallet extension enabled. Email sign-in works here too.",
         );
-      const provider = new BrowserProvider(ethereum);
-      await provider.send("eth_requestAccounts", []);
-      const signer = await provider.getSigner();
-      const r = await api("auth/challenge", "POST", {
-        kind: "ethereum",
-        value: await signer.getAddress(),
-        link,
-      });
-      const proof = await signer.signMessage(r.message);
-      await api("auth/verify", "POST", { id: r.id, proof });
-      onSuccess();
+      await walletIdentity(ethereum, signal, step, request, link);
+      if (!signal.aborted) await onSuccess();
     });
   }
+  const walletStatus: Record<string, string> = {
+    "wallet-connect": "Open your wallet to connect…",
+    "wallet-sign": "Approve the sign-in message in your wallet…",
+    "wallet-verify": "Confirming your identity…",
+  };
   const form = (
     <div className="auth-form">
       <span className="eyebrow">
         <LockKeyhole size={14} /> YOUR IDENTITY, VERIFIED
       </span>
+      {invitation && (
+        <div className="invite-banner">
+          You have a workspace invitation. Sign in with the invited email, or
+          sign in with your wallet and link that email.
+        </div>
+      )}
       <h1>
         {link ? "Connect another identity" : "Welcome to your next chapter."}
       </h1>
@@ -380,13 +447,27 @@ function Auth({
       </p>
       <button disabled={busy} className="button wallet-button" onClick={wallet}>
         <Wallet size={19} />
-        {busy
-          ? "Waiting for verification…"
+        {operation.startsWith("wallet-")
+          ? walletStatus[operation]
           : link
             ? "Link Ethereum wallet"
             : "Sign in with Ethereum"}
         <ArrowUpRight size={16} />
       </button>
+      {operation.startsWith("wallet-") && (
+        <div className="verification-progress" role="status">
+          <p>{walletStatus[operation]}</p>
+          <p className="small">
+            The request may be behind this window. Open your wallet extension or
+            wallet app.
+          </p>
+          {operation !== "wallet-verify" && (
+            <button type="button" className="text-button" onClick={cancel}>
+              Cancel wallet request / use email
+            </button>
+          )}
+        </div>
+      )}
       <div className="separator">
         <span>or continue with email</span>
       </div>
@@ -402,6 +483,12 @@ function Auth({
             onChange={(e) => setEmail(e.target.value)}
           />
         </label>
+        {challenge && (
+          <p className="small" role="status">
+            Code sent to {email}. Check your inbox and spam folder. It expires
+            in 10 minutes.
+          </p>
+        )}
         {challenge && (
           <label>
             Verification code
@@ -421,7 +508,13 @@ function Auth({
           className="button primary full"
           disabled={busy || !config.emailEnabled}
         >
-          {challenge ? "Verify and continue" : "Send verification code"}
+          {operation === "email-send"
+            ? "Sending code…"
+            : operation === "email-verify"
+              ? "Checking code…"
+              : challenge
+                ? "Verify and continue"
+                : "Send verification code"}
           <ArrowRight size={17} />
         </button>
         {challenge && (
@@ -557,6 +650,13 @@ export default function App() {
     [linking, setLinking] = useState(false),
     [importing, setImporting] = useState(false),
     [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [inviteRevision, setInviteRevision] = useState(0),
+    [inviteInfo, setInviteInfo] = useState<{
+      name: string;
+      email: string;
+      role: string;
+    } | null>(null),
+    [inviteError, setInviteError] = useState("");
   const [inviteToken, setInviteToken] = useState(""),
     [inviteUrl, setInviteUrl] = useState("");
   useEffect(() => {
@@ -601,6 +701,8 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setInviteToken(params.get("invite") || "");
+    if (["settings", "tasks"].includes(params.get("view") || ""))
+      setPage(params.get("view") as Page);
     if (params.has("demo")) {
       startDemo();
       setLoading(false);
@@ -610,6 +712,69 @@ export default function App() {
         .finally(() => setLoading(false));
     }
   }, []);
+  useEffect(() => {
+    let live = true;
+    setInviteInfo(null);
+    setInviteError("");
+    if (inviteToken && me && !demo)
+      api("invites/preview", "POST", { token: inviteToken })
+        .then((d) => {
+          if (live) setInviteInfo(d);
+        })
+        .catch((e) => {
+          if (live) setInviteError(e.message);
+        });
+    return () => {
+      live = false;
+    };
+  }, [inviteToken, me?.user.id, demo]);
+  async function createInvitation(email: string, role: string) {
+    const r = await api("workspaces/" + workspace + "/invites", "POST", {
+      email,
+      role,
+    });
+    setInviteUrl(window.location.origin + "/?invite=" + r.token);
+    setInviteRevision((v) => v + 1);
+    notify(
+      "New invitation link ready. Copy it and share it with the recipient.",
+    );
+  }
+  async function quickUpdate(record: CrmRecord, patch: Partial<RecordData>) {
+    setBusy(true);
+    setError("");
+    try {
+      if (demo)
+        setSnapshot((s) => ({
+          ...s,
+          records: s.records.map((r) =>
+            r.id === record.id
+              ? {
+                  ...r,
+                  data: { ...r.data, ...patch },
+                  version: r.version + 1,
+                  updated_at: new Date().toISOString(),
+                }
+              : r,
+          ),
+        }));
+      else {
+        await api("workspaces/" + workspace + "/records", "POST", {
+          id: record.id,
+          kind: record.kind,
+          version: record.version,
+          data: { ...record.data, ...patch },
+        });
+        await refresh();
+      }
+      notify("Updated.");
+    } catch (e) {
+      setError((e as Error).message);
+      if (!demo) await refresh().catch(() => {});
+      throw e;
+    } finally {
+      setBusy(false);
+    }
+  }
   async function refresh() {
     if (!workspace || demo) return;
     const s = await api("workspaces/" + workspace);
@@ -794,11 +959,10 @@ export default function App() {
   if (!me)
     return (
       <Auth
-        onSuccess={() =>
-          void action(async () => {
-            await loadMe();
-          })
-        }
+        invitation={!!inviteToken}
+        onSuccess={async () => {
+          await loadMe();
+        }}
         onDemo={startDemo}
       />
     );
@@ -974,9 +1138,30 @@ export default function App() {
         )}
         {inviteToken && !demo && (
           <div className="invite-banner">
-            <span>You have a workspace invitation.</span>
+            <span>
+              {inviteError ||
+                (inviteInfo
+                  ? `Join ${inviteInfo.name} as ${inviteInfo.role}. Invited email: ${inviteInfo.email}`
+                  : "Loading invitation…")}
+            </span>
+            {inviteInfo &&
+              !me.identities.some(
+                (i) => i.kind === "email" && i.value === inviteInfo.email,
+              ) && (
+                <button className="button" onClick={() => setLinking(true)}>
+                  Verify invited email
+                </button>
+              )}
             <button
               className="button primary"
+              disabled={
+                !inviteInfo ||
+                !!inviteError ||
+                busy ||
+                !me.identities.some(
+                  (i) => i.kind === "email" && i.value === inviteInfo.email,
+                )
+              }
               onClick={() =>
                 void action(async () => {
                   const r = await api("invites/accept", "POST", {
@@ -1069,37 +1254,40 @@ export default function App() {
                   {due.length ? (
                     <div className="task-list">
                       {due.slice(0, 8).map((r) => (
-                        <button
-                          className="task-row"
-                          key={r.id}
-                          onClick={() =>
-                            setEditing({ kind: r.kind, record: r })
-                          }
-                        >
-                          <span className="task-ring" />
-                          <div>
-                            <strong>
-                              {r.kind === "opportunities"
-                                ? r.data.nextAction
-                                : r.data.name}
-                            </strong>
-                            <small>
-                              {r.kind === "opportunities"
-                                ? r.data.name
-                                : ownerOf(r.data.ownerId)}
-                            </small>
-                          </div>
-                          <span
-                            className={
-                              r.data.dueDate < today() ? "due overdue" : "due"
+                        <div className="task-row" key={r.id}>
+                          <button
+                            type="button"
+                            className="task-open"
+                            onClick={() =>
+                              setEditing({ kind: r.kind, record: r })
                             }
                           >
-                            {r.data.dueDate === today()
-                              ? "Today"
-                              : dateLabel(r.data.dueDate)}
-                          </span>
-                          <ArrowUpRight size={15} />
-                        </button>
+                            <span className="task-ring" />
+                            <span>
+                              <strong>
+                                {r.kind === "opportunities"
+                                  ? r.data.nextAction
+                                  : r.data.name}
+                              </strong>
+                              <small>
+                                {r.kind === "opportunities"
+                                  ? r.data.name
+                                  : ownerOf(r.data.ownerId)}
+                              </small>
+                            </span>
+                          </button>
+                          {canEdit ? (
+                            <QuickActions
+                              record={r}
+                              disabled={busy}
+                              onChange={(patch) => quickUpdate(r, patch)}
+                            />
+                          ) : (
+                            <span className="due">
+                              {dateLabel(r.data.dueDate)}
+                            </span>
+                          )}
+                        </div>
                       ))}
                     </div>
                   ) : (
@@ -1293,6 +1481,12 @@ export default function App() {
                   <p>Keep access clear and your team connected.</p>
                 </div>
               </div>
+              {!demo && (
+                <BackupIdentity
+                  identities={me.identities}
+                  onLink={() => setLinking(true)}
+                />
+              )}
               <div className="settings-grid">
                 <section className="panel">
                   <div className="section-heading">
@@ -1430,6 +1624,11 @@ export default function App() {
                     </button>
                   </div>
                 </section>
+                <DigestSettings
+                  identities={me.identities}
+                  demo={demo}
+                  onLink={() => setLinking(true)}
+                />
                 <section className="panel full-span">
                   <div className="section-heading">
                     <h2>
@@ -1490,22 +1689,12 @@ export default function App() {
                       onSubmit={(e) => {
                         e.preventDefault();
                         const values = new FormData(e.currentTarget);
-                        void action(async () => {
-                          const r = await api(
-                            "workspaces/" + workspace + "/invites",
-                            "POST",
-                            {
-                              email: values.get("email"),
-                              role: values.get("role"),
-                            },
-                          );
-                          setInviteUrl(
-                            window.location.origin + "/?invite=" + r.token,
-                          );
-                          notify(
-                            "Invitation created. Copy the link and share it with the recipient.",
-                          );
-                        });
+                        void action(() =>
+                          createInvitation(
+                            String(values.get("email")),
+                            String(values.get("role")),
+                          ),
+                        );
                       }}
                     >
                       <label>
@@ -1533,6 +1722,22 @@ export default function App() {
                         Create invite link
                       </button>
                     </form>
+                  )}
+                  {snapshot.role === "owner" && (
+                    <InviteManager
+                      key={workspace}
+                      workspace={workspace}
+                      demo={demo}
+                      revision={inviteRevision}
+                      onInvite={createInvitation}
+                      onChanged={(revoked) => {
+                        if (revoked) {
+                          setInviteUrl("");
+                          notify("Invitation revoked.");
+                        }
+                        void refresh().catch((e) => setError(e.message));
+                      }}
+                    />
                   )}
                   {inviteUrl && (
                     <div className="panel-pad">
@@ -1706,52 +1911,61 @@ export default function App() {
                           <span className="count">{rows.length}</span>
                         </div>
                         {rows.map((r) => (
-                          <button
-                            className="opportunity-card"
-                            key={r.id}
-                            onClick={() =>
-                              setEditing({ kind: r.kind, record: r })
-                            }
-                          >
-                            <span className="card-category">
-                              {r.data.category || "Opportunity"}
-                            </span>
-                            <h3>{r.data.name}</h3>
-                            <p>
-                              {r.data.organizationId
-                                ? nameOf(r.data.organizationId)
-                                : "No organization linked"}
-                            </p>
-                            {r.data.value > 0 && (
-                              <strong className="card-value">
-                                {money(r.data.value, r.data.currency)}
-                              </strong>
+                          <article className="opportunity-card" key={r.id}>
+                            <button
+                              type="button"
+                              className="card-open"
+                              onClick={() =>
+                                setEditing({ kind: r.kind, record: r })
+                              }
+                            >
+                              <span className="card-category">
+                                {r.data.category || "Opportunity"}
+                              </span>
+                              <h3>{r.data.name}</h3>
+                              <p>
+                                {r.data.organizationId
+                                  ? nameOf(r.data.organizationId)
+                                  : "No organization linked"}
+                              </p>
+                              {r.data.value > 0 && (
+                                <strong className="card-value">
+                                  {money(r.data.value, r.data.currency)}
+                                </strong>
+                              )}
+                              <div className="card-next">
+                                <ArrowRight size={13} />
+                                {r.data.nextAction || "No next step"}
+                              </div>
+                              <div className="card-footer">
+                                <span
+                                  className={
+                                    r.data.dueDate &&
+                                    r.data.dueDate < today() &&
+                                    !["Won", "Lost"].includes(r.data.stage)
+                                      ? "due overdue"
+                                      : "due"
+                                  }
+                                >
+                                  <Clock3 size={12} />
+                                  {dateLabel(r.data.dueDate)}
+                                </span>
+                                <span
+                                  title={ownerOf(r.data.ownerId)}
+                                  className="avatar mini-avatar"
+                                >
+                                  {initials(ownerOf(r.data.ownerId))}
+                                </span>
+                              </div>
+                            </button>
+                            {canEdit && (
+                              <QuickActions
+                                record={r}
+                                disabled={busy}
+                                onChange={(patch) => quickUpdate(r, patch)}
+                              />
                             )}
-                            <div className="card-next">
-                              <ArrowRight size={13} />
-                              {r.data.nextAction || "No next step"}
-                            </div>
-                            <div className="card-footer">
-                              <span
-                                className={
-                                  r.data.dueDate &&
-                                  r.data.dueDate < today() &&
-                                  !["Won", "Lost"].includes(r.data.stage)
-                                    ? "due overdue"
-                                    : "due"
-                                }
-                              >
-                                <Clock3 size={12} />
-                                {dateLabel(r.data.dueDate)}
-                              </span>
-                              <span
-                                title={ownerOf(r.data.ownerId)}
-                                className="avatar mini-avatar"
-                              >
-                                {initials(ownerOf(r.data.ownerId))}
-                              </span>
-                            </div>
-                          </button>
+                          </article>
                         ))}
                         {!rows.length && (
                           <div className="column-empty">No opportunities</div>
@@ -1883,6 +2097,14 @@ export default function App() {
                             )}
                           </td>
                           <td>
+                            {canEdit &&
+                              ["tasks", "opportunities"].includes(r.kind) && (
+                                <QuickActions
+                                  record={r}
+                                  disabled={busy}
+                                  onChange={(patch) => quickUpdate(r, patch)}
+                                />
+                              )}
                             <button
                               className="icon-button"
                               title={`Open ${r.data.name}`}
@@ -1937,6 +2159,9 @@ export default function App() {
       </div>
       {editing && (
         <RecordEditor
+          key={editing.record?.id || editing.kind}
+          workspace={workspace}
+          demo={demo}
           kind={editing.kind}
           record={editing.record}
           records={records}
@@ -1960,13 +2185,12 @@ export default function App() {
         >
           <Auth
             link
-            onSuccess={() =>
-              void action(async () => {
-                await loadMe();
-                setLinking(false);
-                notify("Identity linked. You can sign in with either method.");
-              })
-            }
+            initialEmail={inviteInfo?.email || ""}
+            onSuccess={async () => {
+              await loadMe();
+              setLinking(false);
+              notify("Identity linked. You can sign in with either method.");
+            }}
           />
         </Modal>
       )}
@@ -2104,6 +2328,8 @@ function Empty({
   );
 }
 function RecordEditor({
+  workspace,
+  demo,
   kind,
   record,
   records,
@@ -2116,6 +2342,8 @@ function RecordEditor({
   onSave,
   onDelete,
 }: {
+  workspace: string;
+  demo: boolean;
   kind: Kind;
   record?: CrmRecord;
   records: CrmRecord[];
@@ -2323,39 +2551,14 @@ function RecordEditor({
             {error}
           </div>
         )}
-        {record &&
-          records.some(
-            (r) =>
-              r.id !== record.id &&
-              [
-                r.data.personId,
-                r.data.organizationId,
-                r.data.projectId,
-                r.data.opportunityId,
-              ].includes(record.id),
-          ) && (
-            <section className="related-records">
-              <h3>Related work & notes</h3>
-              {records
-                .filter(
-                  (r) =>
-                    r.id !== record.id &&
-                    [
-                      r.data.personId,
-                      r.data.organizationId,
-                      r.data.projectId,
-                      r.data.opportunityId,
-                    ].includes(record.id),
-                )
-                .map((r) => (
-                  <div key={r.id}>
-                    <span className="badge">{labels[r.kind]}</span>
-                    <strong>{r.data.name}</strong>
-                    {r.kind === "notes" && <p>{r.data.description}</p>}
-                  </div>
-                ))}
-            </section>
-          )}
+        {record && (
+          <RelationshipTimeline
+            workspace={workspace}
+            record={record}
+            records={records}
+            demo={demo}
+          />
+        )}
         {record && (
           <div className="record-meta">
             Version {record.version} · Updated{" "}

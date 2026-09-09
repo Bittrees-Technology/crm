@@ -1725,3 +1725,192 @@ td,
 .task-row strong {
   font-size: 14px;
 }
+.verification-progress {
+  border: 1px solid #caddce;
+  background: #f0f7f2;
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 12px;
+  font-size: 14px;
+}
+.verification-progress p + p {
+  margin-top: 6px;
+}
+.verification-progress button {
+  margin-top: 10px;
+}
+.backup-identity {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  background: #edf5ef;
+  border: 1px solid #cfe1d3;
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+.backup-identity > svg {
+  flex-shrink: 0;
+  color: var(--green);
+}
+.backup-identity > div {
+  flex: 1;
+}
+.backup-identity strong {
+  font-size: 15px;
+}
+.backup-identity p {
+  font-size: 14px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.backup-identity.complete {
+  background: #f0f8f3;
+}
+.checkbox-label {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+.checkbox-label input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--green);
+}
+.task-open {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+}
+.task-open strong,
+.task-open small {
+  display: block;
+}
+.quick-actions {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.quick-actions select,
+.quick-date {
+  font-size: 12px !important;
+  padding: 6px 7px !important;
+  width: auto;
+  max-width: 145px;
+  min-height: 34px;
+}
+.quick-actions .button {
+  padding: 6px 8px;
+  min-height: 34px;
+  font-size: 12px;
+}
+.opportunity-card {
+  cursor: default;
+}
+.card-open {
+  display: block;
+  border: 0;
+  background: none;
+  text-align: left;
+  width: 100%;
+  padding: 0;
+}
+.opportunity-card > .quick-actions {
+  border-top: 1px solid var(--line);
+  margin-top: 12px;
+  padding-top: 10px;
+}
+.opportunity-card > .quick-actions > * {
+  width: 100%;
+  max-width: none;
+}
+.task-row > .quick-actions {
+  flex: 0 0 auto;
+  max-width: 235px;
+}
+.relationship-timeline {
+  padding: 20px 24px;
+  border-top: 1px solid var(--line);
+}
+.relationship-timeline > p {
+  margin: 6px 0 18px;
+}
+.timeline-event {
+  position: relative;
+  display: flex;
+  gap: 14px;
+  padding: 13px 0;
+  border-bottom: 1px solid #edf1ed;
+  font-size: 14px;
+}
+.timeline-event small {
+  display: block;
+  margin: 4px 0 7px;
+}
+.timeline-event strong {
+  font-weight: 600;
+}
+.timeline-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: #54966c;
+}
+.timeline-note {
+  white-space: pre-wrap;
+  background: #f4f8f4;
+  border-radius: 7px;
+  padding: 12px;
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+}
+.invitation-manager {
+  padding: 20px 23px;
+  border-top: 1px solid var(--line);
+}
+.invitation-manager > p {
+  margin: 8px 0 15px;
+}
+.invite-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.invite-banner {
+  flex-wrap: wrap;
+}
+.invite-banner > span {
+  flex: 1;
+  min-width: 180px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 800px) {
+  .task-row {
+    flex-wrap: wrap;
+  }
+  .task-row > .quick-actions {
+    margin-left: 28px;
+    max-width: none;
+  }
+  .backup-identity {
+    flex-wrap: wrap;
+  }
+  .backup-identity .button {
+    margin-left: 34px;
+  }
+  .relationship-timeline {
+    padding: 18px;
+  }
+  .invitation-manager {
+    padding: 18px;
+  }
+}

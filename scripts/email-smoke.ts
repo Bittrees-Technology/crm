@@ -2,14 +2,19 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { Wallet } from "ethers";
 import { pool, transaction } from "../lib/db";
+import { sendDigest } from "../lib/digest";
 const origin = process.env.SMOKE_URL || process.env.APP_URL!;
 if (!origin) throw new Error("Set SMOKE_URL.");
 const email = `delivered+crm-${randomUUID()}@resend.dev`;
 const jar = new Map<string, string>();
 let userId: string | undefined, workspaceId: string | undefined;
-async function api(path: string, body?: unknown) {
+async function api(
+  path: string,
+  body?: unknown,
+  method = body ? "POST" : "GET",
+) {
   const r = await fetch(origin + "/api/" + path, {
-    method: body ? "POST" : "GET",
+    method,
     headers: {
       origin,
       "Content-Type": "application/json",
@@ -70,6 +75,29 @@ try {
     proof: await wallet.signMessage(login.message),
   });
   assert.equal((await api("me")).user.id, userId);
+  assert.equal((await api("me/digest")).enabled, false);
+  const day = new Date().toISOString().slice(0, 10);
+  await api(`workspaces/${workspaceId}/records`, {
+    kind: "tasks",
+    data: {
+      name: "Synthetic daily digest check",
+      ownerId: userId,
+      dueDate: day,
+    },
+  });
+  await api("me/digest", { enabled: true, email }, "PATCH");
+  // Exercise only this run's synthetic recipient, never the global cron queue.
+  process.env.APP_URL = origin;
+  process.env.EMAIL_FROM = message.from;
+  assert.equal(await sendDigest(userId!, day), "sent");
+  assert.equal(await sendDigest(userId!, day), "skipped");
+  assert.equal((await api("me/digest")).last.status, "sent");
+  await api("me/digest", { enabled: false, email }, "PATCH");
+  const cron = await fetch(origin + "/api/cron/digest");
+  assert.equal(cron.status, 401);
+  console.log(
+    "Daily digest check passed: verified opt-in, synthetic email accepted, duplicate prevented, opt-out saved, cron requires authentication.",
+  );
   await api("auth/logout", {});
   console.log(
     "Production email test passed: provider accepted verification email; code sign-in, explicit wallet linking, and wallet re-login used the same account.",
@@ -88,6 +116,10 @@ try {
       ).rows[0];
       assert.equal(check?.user_id, userId);
       await db.query("DELETE FROM audit WHERE workspace_id=$1", [workspaceId]);
+      await db.query("DELETE FROM records WHERE workspace_id=$1", [
+        workspaceId,
+      ]);
+      await db.query("DELETE FROM digest_receipts WHERE user_id=$1", [userId]);
       await db.query(
         "DELETE FROM members WHERE workspace_id=$1 AND user_id=$2",
         [workspaceId, userId],

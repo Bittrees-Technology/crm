@@ -74,7 +74,12 @@ function emailDigest(id: string, code: string) {
 }
 export async function startChallenge(
   req: Request,
-  body: { kind: "email" | "ethereum"; value: string; link?: boolean },
+  body: {
+    kind: "email" | "ethereum";
+    value: string;
+    link?: boolean;
+    chainId?: number;
+  },
 ) {
   const origin = checkOrigin(req);
   const user = body.link ? await currentUser(req) : undefined;
@@ -99,7 +104,7 @@ export async function startChallenge(
         : "Sign in to Bittrees CRM. This does not authorize transactions.",
       uri: origin,
       version: "1",
-      chainId: 1,
+      chainId: body.chainId || 1,
       nonce,
       issuedAt: new Date().toISOString(),
       expirationTime: new Date(Date.now() + 600000).toISOString(),
@@ -138,6 +143,7 @@ export async function startChallenge(
     if (process.env.RESEND_API_KEY && process.env.EMAIL_FROM) {
       const response = await fetch("https://api.resend.com/emails", {
         method: "POST",
+        signal: AbortSignal.timeout(10000),
         headers: {
           Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
           "Content-Type": "application/json",

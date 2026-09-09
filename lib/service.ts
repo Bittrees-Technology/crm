@@ -99,6 +99,14 @@ export async function saveRecord(userId: string, w: string, input: unknown) {
         "Active opportunities need an owner, a next action, and a due date.",
       );
     const id = body.id || randomUUID();
+    const previous = body.id
+      ? (
+          await db.query(
+            "SELECT data FROM records WHERE id=$1 AND workspace_id=$2",
+            [id, w],
+          )
+        ).rows[0]?.data
+      : undefined;
     let record;
     if (body.id) {
       if (!body.version)
@@ -128,7 +136,27 @@ export async function saveRecord(userId: string, w: string, input: unknown) {
       userId,
       body.id ? "Record updated" : "Record created",
       id,
-      { kind: body.kind, name: body.data.name, version: record.version },
+      {
+        kind: body.kind,
+        name: body.data.name,
+        version: record.version,
+        changes: previous
+          ? Object.fromEntries(
+              ["stage", "status", "dueDate", "nextAction", "ownerId"]
+                .filter((k) => previous[k] !== body.data[k as keyof RecordData])
+                .map((k) => [
+                  k,
+                  { from: previous[k], to: body.data[k as keyof RecordData] },
+                ]),
+            )
+          : {},
+        relatedIds: [
+          ...new Set([
+            ...(await contextIds(db, w, body.data)),
+            ...(await contextIds(db, w, previous)),
+          ]),
+        ],
+      },
     );
     return record;
   });
@@ -164,6 +192,7 @@ export async function deleteRecord(
     await audit(db, w, userId, "Record deleted", id, {
       kind: rows[0].kind,
       name: rows[0].data.name,
+      relatedIds: await contextIds(db, w, rows[0].data),
     });
     return { ok: true };
   });
@@ -236,6 +265,11 @@ export async function createInvite(userId: string, w: string, input: unknown) {
   const raw = token();
   await transaction(async (db) => {
     await membership(w, userId, true, true, db);
+    await db.query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE", [w]);
+    await db.query(
+      "UPDATE invites SET revoked_at=now() WHERE workspace_id=$1 AND email=$2 AND accepted_at IS NULL AND revoked_at IS NULL",
+      [w, body.email.toLowerCase()],
+    );
     await db.query(
       "INSERT INTO invites(hash,workspace_id,email,role,expires_at) VALUES($1,$2,$3,$4,now()+interval '7 days')",
       [hash(raw), w, body.email.toLowerCase(), body.role],
@@ -251,7 +285,7 @@ export async function acceptInvite(userId: string, raw: string) {
   return transaction(async (db) => {
     const invite = (
       await db.query(
-        "SELECT * FROM invites WHERE hash=$1 AND expires_at>now() AND accepted_at IS NULL FOR UPDATE",
+        "SELECT * FROM invites WHERE hash=$1 AND expires_at>now() AND accepted_at IS NULL AND revoked_at IS NULL FOR UPDATE",
         [hash(raw)],
       )
     ).rows[0];
@@ -326,4 +360,93 @@ export async function updateMember(userId: string, w: string, input: unknown) {
     await audit(db, w, userId, "Member access changed", null, body);
     return { ok: true };
   });
+}
+
+async function contextIds(
+  db: PoolClient,
+  w: string,
+  data?: RecordData,
+): Promise<string[]> {
+  if (!data) return [];
+  const seeds = [
+    data.personId,
+    data.organizationId,
+    data.projectId,
+    data.opportunityId,
+  ].filter(Boolean);
+  if (!seeds.length) return [];
+  const rows = await db.query(
+    `WITH RECURSIVE parents AS (
+ SELECT id,data FROM records WHERE workspace_id=$1 AND id=ANY($2::uuid[])
+ UNION SELECT r.id,r.data FROM records r JOIN parents p ON r.id::text IN (p.data->>'personId',p.data->>'organizationId',p.data->>'projectId',p.data->>'opportunityId') WHERE r.workspace_id=$1
+ ) SELECT id FROM parents`,
+    [w, seeds],
+  );
+  return rows.rows.map((r) => r.id);
+}
+export async function timeline(userId: string, w: string, id: string) {
+  await membership(w, userId);
+  z.uuid().parse(id);
+  if (
+    !(
+      await pool().query(
+        "SELECT id FROM records WHERE workspace_id=$1 AND id=$2",
+        [w, id],
+      )
+    ).rowCount
+  )
+    throw new HttpError(404, "Record not found.");
+  const rows = await pool().query(
+    `WITH RECURSIVE related AS (
+ SELECT id FROM records WHERE workspace_id=$1 AND id=$2
+ UNION SELECT r.id FROM records r JOIN related p ON p.id::text IN(r.data->>'personId',r.data->>'organizationId',r.data->>'projectId',r.data->>'opportunityId') WHERE r.workspace_id=$1
+ ) SELECT a.id,a.record_id,a.action,a.detail,a.created_at,u.name AS actor,
+ CASE WHEN r.kind='notes' AND a.id=(SELECT max(b.id) FROM audit b WHERE b.workspace_id=$1 AND b.record_id=r.id) THEN r.data->>'description' ELSE NULL END AS note
+ FROM audit a JOIN users u ON u.id=a.actor_id LEFT JOIN records r ON r.id=a.record_id AND r.workspace_id=$1
+ WHERE a.workspace_id=$1 AND (a.record_id IN(SELECT id FROM related) OR a.detail->'relatedIds' @> to_jsonb(ARRAY[$2::text]))
+ ORDER BY a.created_at DESC,a.id DESC LIMIT 100`,
+    [w, id],
+  );
+  return { events: rows.rows };
+}
+export async function listInvites(userId: string, w: string) {
+  await membership(w, userId, false, true);
+  const rows = await pool().query(
+    `SELECT id,email,role,created_at,expires_at,CASE WHEN revoked_at IS NOT NULL THEN 'Revoked' WHEN accepted_at IS NOT NULL THEN 'Accepted' WHEN expires_at<now() THEN 'Expired' ELSE 'Pending' END AS status FROM invites WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 100`,
+    [w],
+  );
+  return { invites: rows.rows };
+}
+export async function revokeInvite(userId: string, w: string, id: string) {
+  z.uuid().parse(id);
+  return transaction(async (db) => {
+    await membership(w, userId, true, true, db);
+    const r = await db.query(
+      "UPDATE invites SET revoked_at=now() WHERE id=$1 AND workspace_id=$2 AND revoked_at IS NULL AND accepted_at IS NULL RETURNING email",
+      [id, w],
+    );
+    if (!r.rowCount)
+      throw new HttpError(
+        409,
+        "This invitation has already been accepted or revoked.",
+      );
+    await audit(db, w, userId, "Invitation revoked", null, {
+      email: r.rows[0].email,
+    });
+    return { ok: true };
+  });
+}
+export async function previewInvite(raw: string) {
+  const row = (
+    await pool().query(
+      `SELECT w.name,i.email,i.role FROM invites i JOIN workspaces w ON w.id=i.workspace_id WHERE i.hash=$1 AND i.expires_at>now() AND i.accepted_at IS NULL AND i.revoked_at IS NULL`,
+      [hash(raw)],
+    )
+  ).rows[0];
+  if (!row)
+    throw new HttpError(
+      400,
+      "This invitation is expired, revoked, or already accepted. Ask the workspace owner for a new link.",
+    );
+  return row;
 }

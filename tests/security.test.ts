@@ -387,3 +387,250 @@ test("expired sessions fail and session secrets are only stored as hashes", asyn
     /sign in/,
   );
 });
+
+test("wallet sign-in messages use the requested network", async () => {
+  const w = Wallet.createRandom();
+  const c = await startChallenge(request(), {
+    kind: "ethereum",
+    value: w.address,
+    chainId: 8453,
+  });
+  assert.match(c.body.message!, /Chain ID: 8453/);
+  const v = await verifyChallenge(request(cookiePair(c.cookie)), {
+    id: c.body.id,
+    proof: await w.signMessage(c.body.message!),
+  });
+  assert.ok(await currentUser(request(cookiePair(v.cookie))));
+});
+test("invitation recreation revokes old links and owner can revoke the replacement", async () => {
+  const { listInvites, revokeInvite, previewInvite } =
+    await import("../lib/service");
+  const a = await createInvite(owner, workspace, {
+    email: "fresh@example.com",
+    role: "viewer",
+  });
+  const b = await createInvite(owner, workspace, {
+    email: "fresh@example.com",
+    role: "editor",
+  });
+  await assert.rejects(() => previewInvite(a.token), /expired, revoked/);
+  assert.equal((await previewInvite(b.token)).role, "editor");
+  const list = await listInvites(owner, workspace);
+  assert.ok(list.invites.every((r) => !("hash" in r)));
+  const pending = list.invites.find(
+    (r) => r.email === "fresh@example.com" && r.status === "Pending",
+  );
+  assert.ok(pending);
+  await assert.rejects(
+    () => revokeInvite(other, workspace, pending.id),
+    /not found/,
+  );
+  await revokeInvite(owner, workspace, pending.id);
+  await assert.rejects(() => previewInvite(b.token), /expired, revoked/);
+});
+test("relationship timeline includes indirect task completions, stage changes, and notes", async () => {
+  const { timeline } = await import("../lib/service");
+  const org = await saveRecord(owner, workspace, {
+    kind: "organizations",
+    data: { name: "Timeline organization" },
+  });
+  const person = await saveRecord(owner, workspace, {
+    kind: "people",
+    data: { name: "Timeline contact", organizationId: org.id },
+  });
+  const opp = await saveRecord(owner, workspace, {
+    kind: "opportunities",
+    data: {
+      name: "Timeline opportunity",
+      personId: person.id,
+      ownerId: owner,
+      nextAction: "Talk",
+      dueDate: "2026-10-03",
+    },
+  });
+  await saveRecord(owner, workspace, {
+    id: opp.id,
+    version: 1,
+    kind: opp.kind,
+    data: { ...opp.data, stage: "Proposal" },
+  });
+  const task = await saveRecord(owner, workspace, {
+    kind: "tasks",
+    data: { name: "Timeline task", opportunityId: opp.id },
+  });
+  const done = await saveRecord(owner, workspace, {
+    id: task.id,
+    version: 1,
+    kind: "tasks",
+    data: { ...task.data, status: "Done" },
+  });
+  await saveRecord(owner, workspace, {
+    kind: "notes",
+    data: {
+      name: "Timeline note",
+      personId: person.id,
+      description: "Useful context",
+    },
+  });
+  const history = await timeline(owner, workspace, org.id);
+  assert.ok(
+    history.events.some((e) => e.detail.changes?.status?.to === "Done"),
+  );
+  assert.ok(
+    history.events.some((e) => e.detail.changes?.stage?.to === "Proposal"),
+  );
+  assert.ok(history.events.some((e) => e.note === "Useful context"));
+  await deleteRecord(owner, workspace, done.id, done.version);
+  assert.ok(
+    (await timeline(owner, workspace, org.id)).events.some(
+      (e) => e.action === "Record deleted" && e.detail.name === "Timeline task",
+    ),
+  );
+  await assert.rejects(() => timeline(other, workspace, org.id), /not found/);
+});
+test("daily digest is opt-in, verified, assigned-only, skips empty work, and deduplicates concurrent runs", async () => {
+  const { sendDigest, saveDigestPreference } = await import("../lib/digest");
+  const sent: { message: any; key: string }[] = [];
+  const sender = async (message: any, key: string) => {
+    sent.push({ message, key });
+  };
+  assert.equal(await sendDigest(owner, "2026-10-02", sender), "skipped");
+  await assert.rejects(
+    () =>
+      saveDigestPreference(owner, {
+        enabled: true,
+        email: "not-verified@example.com",
+      }),
+    /verify/,
+  );
+  await saveDigestPreference(owner, {
+    enabled: true,
+    email: "owner@example.com",
+  });
+  await saveRecord(owner, workspace, {
+    kind: "tasks",
+    data: { name: "Digest due task", ownerId: owner, dueDate: "2026-10-02" },
+  });
+  await saveRecord(owner, workspace, {
+    kind: "tasks",
+    data: {
+      name: "Completed excluded",
+      ownerId: owner,
+      dueDate: "2026-10-02",
+      status: "Done",
+    },
+  });
+  await saveRecord(owner, workspace, {
+    kind: "tasks",
+    data: { name: "Unassigned excluded", dueDate: "2026-10-02" },
+  });
+  await saveRecord(owner, workspace, {
+    kind: "tasks",
+    data: { name: "Future excluded", ownerId: owner, dueDate: "2026-11-01" },
+  });
+  const result = await Promise.all([
+    sendDigest(owner, "2026-10-02", sender),
+    sendDigest(owner, "2026-10-02", sender),
+  ]);
+  assert.deepEqual(result.sort(), ["sent", "skipped"]);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].message.text, /Digest due task/);
+  assert.doesNotMatch(
+    sent[0].message.text,
+    /Completed excluded|Unassigned excluded|Future excluded/,
+  );
+  assert.deepEqual(sent[0].message.to, ["owner@example.com"]);
+  await saveDigestPreference(owner, {
+    enabled: false,
+    email: "owner@example.com",
+  });
+  assert.equal(await sendDigest(owner, "2026-10-03", sender), "skipped");
+});
+test("digest retries preserve provider idempotency and disabling cancels delivery", async () => {
+  const { sendDigest, saveDigestPreference } = await import("../lib/digest");
+  await saveDigestPreference(owner, {
+    enabled: true,
+    email: "owner@example.com",
+  });
+  let first: any;
+  let key = "";
+  assert.equal(
+    await sendDigest(owner, "2026-10-04", async (m, k) => {
+      first = m;
+      key = k;
+      throw new Error("Temporary provider error");
+    }),
+    "failed",
+  );
+  assert.equal(
+    await sendDigest(owner, "2026-10-04", async (m, k) => {
+      assert.deepEqual(m, first);
+      assert.equal(k, key);
+    }),
+    "sent",
+  );
+  assert.equal(
+    await sendDigest(owner, "2026-10-05", async () => {
+      throw new Error("Temporary provider error");
+    }),
+    "failed",
+  );
+  await saveDigestPreference(owner, {
+    enabled: false,
+    email: "owner@example.com",
+  });
+  assert.equal(
+    await sendDigest(owner, "2026-10-05", async () => {
+      throw new Error("Should not send");
+    }),
+    "skipped",
+  );
+});
+test("empty digests and removed workspace access never deliver record contents", async () => {
+  const { sendDigest, saveDigestPreference } = await import("../lib/digest");
+  // The other account has a verified invitation email but no due work in its own workspace.
+  const email = (
+    await pool().query(
+      "SELECT value FROM identities WHERE user_id=$1 AND kind='email' LIMIT 1",
+      [other],
+    )
+  ).rows[0].value;
+  await saveDigestPreference(other, { enabled: true, email });
+  let delivered = 0;
+  assert.equal(
+    await sendDigest(other, "2026-10-06", async () => {
+      delivered++;
+    }),
+    "skipped",
+  );
+  assert.equal(delivered, 0);
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'editor')",
+    [workspace, other],
+  );
+  await saveRecord(owner, workspace, {
+    kind: "tasks",
+    data: {
+      name: "Revoked private follow-up",
+      ownerId: other,
+      dueDate: "2026-10-06",
+    },
+  });
+  assert.equal(
+    await sendDigest(other, "2026-10-06", async () => {
+      throw new Error("Temporary outage");
+    }),
+    "failed",
+  );
+  await pool().query(
+    "DELETE FROM members WHERE workspace_id=$1 AND user_id=$2",
+    [workspace, other],
+  );
+  assert.equal(
+    await sendDigest(other, "2026-10-06", async () => {
+      delivered++;
+    }),
+    "skipped",
+  );
+  assert.equal(delivered, 0);
+});

@@ -23,7 +23,18 @@ import {
   saveRecord,
   snapshot,
   updateMember,
+  listInvites,
+  revokeInvite,
+  previewInvite,
+  timeline,
 } from "@/lib/service";
+import {
+  digestPreference,
+  saveDigestPreference,
+  runDigests,
+} from "@/lib/digest";
+import { timingSafeEqual } from "node:crypto";
+export const maxDuration = 300;
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 async function handle(req: NextRequest) {
@@ -38,6 +49,18 @@ async function handle(req: NextRequest) {
       headers: { "Cache-Control": "no-store", ...headers },
     });
   try {
+    if (path === "cron/digest" && req.method === "GET") {
+      const expected = Buffer.from("Bearer " + (process.env.CRON_SECRET || "")),
+        actual = Buffer.from(req.headers.get("authorization") || "");
+      if (
+        !process.env.CRON_SECRET ||
+        actual.length !== expected.length ||
+        !timingSafeEqual(actual, expected)
+      )
+        throw new HttpError(401, "Unauthorized.");
+      const result = await runDigests();
+      return json(result, result.failed || result.remaining ? 503 : 200);
+    }
     if (path === "config" && req.method === "GET")
       return json({
         emailEnabled:
@@ -50,7 +73,7 @@ async function handle(req: NextRequest) {
       });
     if (path === "health" && req.method === "GET") {
       await pool().query("SELECT id FROM workspaces LIMIT 1");
-      return json({ status: "ok", version: "0.1.0" });
+      return json({ status: "ok", version: "0.2.0" });
     }
     let body: Record<string, unknown> = {};
     if (req.method !== "GET") {
@@ -78,6 +101,12 @@ async function handle(req: NextRequest) {
               kind: z.enum(["email", "ethereum"]),
               value: z.string().max(254),
               link: z.boolean().optional(),
+              chainId: z
+                .number()
+                .int()
+                .positive()
+                .max(Number.MAX_SAFE_INTEGER)
+                .optional(),
             })
             .parse(body),
         );
@@ -101,6 +130,19 @@ async function handle(req: NextRequest) {
     }
     const user = (await currentUser(req))!;
     if (req.method !== "GET") await rateLimit("user:" + user.id, 300);
+    if (path === "me/digest" && req.method === "GET")
+      return json(await digestPreference(user.id));
+    if (path === "me/digest" && req.method === "PATCH")
+      return json(await saveDigestPreference(user.id, body));
+    if (path === "invites/preview" && req.method === "POST")
+      return json(
+        await previewInvite(
+          z
+            .string()
+            .regex(/^[a-f0-9]{64}$/)
+            .parse(body.token),
+        ),
+      );
     if (path === "me" && req.method === "GET") {
       const [workspaces, identities] = await Promise.all([
         pool().query(
@@ -179,6 +221,13 @@ async function handle(req: NextRequest) {
         );
       if (resource === "import" && req.method === "POST")
         return json(await importRecords(user.id, w, body));
+      const timelineMatch = resource?.match(/^records\/([^/]+)\/timeline$/);
+      if (timelineMatch && req.method === "GET")
+        return json(await timeline(user.id, w, timelineMatch[1]));
+      if (resource === "invites" && req.method === "GET")
+        return json(await listInvites(user.id, w));
+      if (resource === "invites" && req.method === "DELETE")
+        return json(await revokeInvite(user.id, w, z.uuid().parse(body.id)));
       if (resource === "invites" && req.method === "POST")
         return json(await createInvite(user.id, w, body));
       if (resource === "members" && req.method === "PATCH")
