@@ -75,7 +75,7 @@ async function handle(req: NextRequest) {
       });
     if (path === "health" && req.method === "GET") {
       await pool().query("SELECT id FROM workspaces LIMIT 1");
-      return json({ status: "ok", version: "0.3.0" });
+      return json({ status: "ok", version: "0.3.1" });
     }
     let body: Record<string, unknown> = {};
     if (req.method !== "GET") {

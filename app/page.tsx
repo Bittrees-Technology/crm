@@ -13,6 +13,13 @@ import {
 } from "@/lib/auth-client";
 import Papa from "papaparse";
 import {
+  currencyGroups,
+  currencyCodes,
+  amountPattern,
+  formatAmount as money,
+  sumAmounts,
+} from "@/lib/currencies";
+import {
   ArrowDownToLine,
   ArrowRight,
   ArrowUpRight,
@@ -126,12 +133,6 @@ const dateLabel = (v: string) =>
         day: "numeric",
       })
     : "No date";
-const money = (v: number, c = "EUR") =>
-  new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: c,
-    maximumFractionDigits: 2,
-  }).format(v);
 const initials = (s: string) =>
   s
     .split(/[ @]/)
@@ -1122,6 +1123,9 @@ export default function App() {
     records.find((r) => r.id === id)?.data.name || "—";
   const ownerOf = (id: string) =>
     snapshot.members.find((m) => m.id === id)?.name || "Unassigned";
+  const reportCurrencies = currencyCodes.filter((c) =>
+    records.some((r) => r.kind === "opportunities" && r.data.currency === c),
+  );
   const due = records.filter(
     (r) =>
       ((r.kind === "tasks" && r.data.status !== "Done") ||
@@ -1701,9 +1705,9 @@ export default function App() {
                       <tr>
                         <th>Stage</th>
                         <th>Opportunities</th>
-                        <th>EUR</th>
-                        <th>USD</th>
-                        <th>GBP</th>
+                        {reportCurrencies.map((c) => (
+                          <th key={c}>{c}</th>
+                        ))}
                         <th>Avg. days in stage</th>
                       </tr>
                     </thead>
@@ -1720,12 +1724,14 @@ export default function App() {
                               <span className="badge">{stage}</span>
                             </td>
                             <td>{rows.length}</td>
-                            {["EUR", "USD", "GBP"].map((c) => (
+                            {reportCurrencies.map((c) => (
                               <td key={c}>
                                 {money(
-                                  rows
-                                    .filter((r) => r.data.currency === c)
-                                    .reduce((a, r) => a + r.data.value, 0),
+                                  sumAmounts(
+                                    rows
+                                      .filter((r) => r.data.currency === c)
+                                      .map((r) => r.data.value),
+                                  ),
                                   c,
                                 )}
                               </td>
@@ -2215,7 +2221,7 @@ export default function App() {
                                   ? nameOf(r.data.organizationId)
                                   : "No organization linked"}
                               </p>
-                              {r.data.value > 0 && (
+                              {Number(r.data.value) > 0 && (
                                 <strong className="card-value">
                                   {money(r.data.value, r.data.currency)}
                                 </strong>
@@ -2829,13 +2835,41 @@ function RecordEditor({
                   stages.map((v) => ({ value: v, label: v })),
                   true,
                 )}
-                {input("value", "Estimated value", "number")}
-                {select(
-                  "currency",
-                  "Currency",
-                  ["EUR", "USD", "GBP"].map((v) => ({ value: v, label: v })),
-                  true,
-                )}
+                <label>
+                  Estimated value
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    required
+                    pattern={amountPattern}
+                    maxLength={32}
+                    value={String(data.value)}
+                    onChange={(e) => update("value", e.target.value)}
+                    aria-label="Estimated value"
+                    aria-describedby="amount-help"
+                  />
+                  <span id="amount-help" className="small">
+                    Up to 18 decimal places. Use a dot for decimals.
+                  </span>
+                </label>
+                <label>
+                  Currency
+                  <select
+                    value={data.currency}
+                    required
+                    onChange={(e) => update("currency", e.target.value)}
+                  >
+                    {currencyGroups.map((group) => (
+                      <optgroup key={group.label} label={group.label}>
+                        {group.options.map(([code, name]) => (
+                          <option key={code} value={code}>
+                            {code} — {name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </label>
                 {ref("organizationId", "Organization", "organizations")}
                 {ref("personId", "Contact", "people")}
                 {input(

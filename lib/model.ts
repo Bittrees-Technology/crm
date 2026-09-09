@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { currencyCodes, validAmount } from "./currencies";
 export const kinds = [
   "people",
   "organizations",
@@ -39,8 +40,14 @@ export const recordSchema = z
     nextAction: short,
     dueDate: date,
     stage: z.enum(stages).default("Introduction"),
-    value: z.number().min(0).max(1e12).default(0),
-    currency: z.enum(["USD", "EUR", "GBP"]).default("EUR"),
+    value: z
+      .union([z.number(), z.string().max(32)])
+      .refine(
+        validAmount,
+        "Enter an amount from 0 to 1 trillion, with up to 18 decimal places.",
+      )
+      .default(0),
+    currency: z.enum(currencyCodes).default("EUR"),
     status: z.enum(["Open", "Done"]).default("Open"),
     wallet: z
       .union([z.string().regex(/^0x[a-fA-F0-9]{40}$/), z.literal("")])

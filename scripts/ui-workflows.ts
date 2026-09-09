@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { expect, type Page } from "@playwright/test";
 import { pool, transaction } from "../lib/db";
+import { formatAmount } from "../lib/currencies";
 type Api = (
   page: Page,
   path: string,
@@ -87,7 +88,7 @@ export async function checkWorkflows(
   assert.equal(records.length, 6);
   assert.equal(
     records.find((r: any) => r.kind === "opportunities").data.value,
-    12.5,
+    "12.50",
   );
   // Search, saved views, browser navigation, and exports.
   await page.getByRole("button", { name: "People", exact: true }).click();
@@ -113,6 +114,52 @@ export async function checkWorkflows(
   await page.getByRole("button", { name: "Reports", exact: true }).click();
   await expect(page.getByText(/12[.,]50/).first()).toBeVisible();
   await checkAccessibility(page, "Reports");
+  // Every denomination can be edited, persisted, reopened, and totaled exactly.
+  for (const [currency, value] of [
+    ["CAD", "123.45"],
+    ["BTC", "0.00000001"],
+    ["ETH", "0.000000000000000001"],
+    ["USDC", "1.000001"],
+    ["BIT", "123456789.123456789123456789"],
+    ["BTREE", "0.000000000000000001"],
+    ["EUR", "12.50"],
+  ]) {
+    await page
+      .getByRole("button", { name: "Opportunities", exact: true })
+      .click();
+    await page.getByText("UX opportunity", { exact: true }).click();
+    const editor = page.getByRole("dialog");
+    await editor
+      .getByRole("combobox", { name: "Currency", exact: true })
+      .selectOption(currency);
+    await editor.getByLabel("Estimated value", { exact: true }).fill(value);
+    await editor.getByRole("button", { name: "Save record" }).click();
+    await expect(editor).not.toBeVisible();
+    await page.reload();
+    await page.getByText("UX opportunity", { exact: true }).click();
+    await expect(
+      editor.getByLabel("Estimated value", { exact: true }),
+    ).toHaveValue(value);
+    await expect(
+      editor.getByRole("combobox", { name: "Currency", exact: true }),
+    ).toHaveValue(currency);
+    await editor.getByLabel("Close", { exact: true }).click();
+    const saved = (await api(page, base)).records.find(
+      (r: any) => r.kind === "opportunities",
+    );
+    assert.equal(saved.data.value, value);
+    assert.equal(saved.data.currency, currency);
+    await page.getByRole("button", { name: "Reports", exact: true }).click();
+    await expect(
+      page.getByRole("columnheader", { name: currency, exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("cell", {
+        name: formatAmount(value, currency),
+        exact: true,
+      }),
+    ).toBeVisible();
+  }
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const jsonDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export all workspace data" }).click();

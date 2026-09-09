@@ -64,7 +64,7 @@ try {
       ownerId: userId,
     },
   });
-  const opportunity = await request(base + "/records", "POST", {
+  let opportunity = await request(base + "/records", "POST", {
     kind: "opportunities",
     data: {
       name: "Temporary smoke opportunity",
@@ -75,6 +75,20 @@ try {
       dueDate: "2026-10-01",
     },
   });
+  for (const currency of ["CAD", "JPY", "BTC", "ETH", "USDC", "BIT", "BTREE"]) {
+    const value = "123456789.123456789123456789";
+    opportunity = await request(base + "/records", "POST", {
+      id: opportunity.id,
+      version: opportunity.version,
+      kind: "opportunities",
+      data: { ...opportunity.data, currency, value },
+    });
+    const saved = (await request(base)).records.find(
+      (r: any) => r.id === opportunity.id,
+    );
+    assert.equal(saved.data.currency, currency);
+    assert.equal(saved.data.value, value);
+  }
   const task = await request(base + "/records", "POST", {
     kind: "tasks",
     data: {
@@ -100,6 +114,10 @@ try {
   assert.ok(snapshot.audit.length >= 5);
   const exported = await request(base + "/export");
   assert.equal(exported.records.length, 4);
+  assert.equal(
+    exported.records.find((r: any) => r.id === opportunity.id).data.value,
+    "123456789.123456789123456789",
+  );
   for (const record of [done, opportunity, person, organization])
     await request(base + "/records", "DELETE", {
       id: record.id,
@@ -108,7 +126,7 @@ try {
   await request("auth/logout", "POST");
   await request("me", "GET", undefined, 401);
   console.log(
-    "HTTP smoke passed: SIWE sign-in, authenticated CRUD, linked records, conflict detection, audit, export, and logout.",
+    "HTTP smoke passed: SIWE sign-in, authenticated CRUD, linked records, conflict detection, audit, exact fiat/crypto/BIT/BTREE amounts, export, and logout.",
   );
 } finally {
   // Clean only the new random wallet identity created by this invocation.
