@@ -111,9 +111,14 @@ async function grant(db: any, bearer: string) {
       g.id,
     ])
   ).rows[0];
-  if (locked.revoked_at) throw new HttpError(401, "Connection revoked.");
+  if (
+    !locked ||
+    locked.revoked_at ||
+    new Date(locked.expires_at).getTime() <= Date.now()
+  )
+    throw new HttpError(401, "Connection expired or revoked.");
   await checkRecordAccess(db, g.user_id, g.workspace_id, g.target_id);
-  return g;
+  return locked;
 }
 export async function publish(bearer: string, input: unknown) {
   const d = z
@@ -133,6 +138,10 @@ export async function publish(bearer: string, input: unknown) {
     })
     .strict()
     .parse(input);
+  if (!d.summary.trim() && !d.actions.length)
+    throw new HttpError(400, "Choose content to publish.");
+  if (new Set(d.actions.map((a) => a.id)).size !== d.actions.length)
+    throw new HttpError(400, "Action identifiers must be unique.");
   return transaction(async (db) => {
     const g = await grant(db, bearer);
     const target = (

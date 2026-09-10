@@ -2126,3 +2126,63 @@ td,
 .shared-content-help {
   margin: 0 24px 16px;
 }
+
+.integration-page {
+  width: min(760px, 100%);
+  margin: 40px auto;
+  padding: 24px;
+  display: grid;
+  gap: 22px;
+  overflow-wrap: anywhere;
+}
+.integration-page > a {
+  color: var(--green);
+  text-underline-offset: 4px;
+}
+.integration-page h1 {
+  font-size: clamp(26px, 5vw, 34px);
+}
+.integration-card {
+  display: grid;
+  gap: 20px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  background: white;
+  border-radius: 14px;
+  min-width: 0;
+}
+.integration-page select {
+  min-height: 46px;
+  min-width: 0;
+  max-width: 100%;
+  appearance: none;
+  padding-right: 40px;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%235f6d67' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+.integration-page select:disabled {
+  background-color: #f1f5f3;
+  color: var(--muted);
+}
+.integration-page .button {
+  min-height: 44px;
+  white-space: normal;
+}
+.integration-page [role="alert"] {
+  border: 1px solid #edc9c2;
+  background: #fff3ef;
+  padding: 14px;
+  border-radius: 8px;
+}
+@media (max-width: 620px) {
+  .integration-page {
+    margin: 16px auto;
+    padding: 20px;
+  }
+  .integration-card {
+    padding: 18px;
+  }
+}

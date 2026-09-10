@@ -1547,6 +1547,15 @@ test("AutoNote grants enforce PKCE, sharing, idempotency and revocation", async 
     summary: "Approved summary",
     actions: [{ id: "action-1", text: "Prepare report", dueDate: null }],
   };
+  await assert.rejects(
+    api.publish(grant.token, { ...content, summary: " ", actions: [] }),
+  );
+  await assert.rejects(
+    api.publish(grant.token, {
+      ...content,
+      actions: [content.actions[0], content.actions[0]],
+    }),
+  );
   const first = await api.publish(grant.token, content),
     repeated = await api.publish(grant.token, content);
   assert.equal(first.items.length, 2);
