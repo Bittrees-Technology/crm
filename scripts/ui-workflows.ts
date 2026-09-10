@@ -282,9 +282,21 @@ export async function checkWorkflows(
     .getByRole("button", { name: "Close", exact: true })
     .last()
     .click();
-  await page
-    .getByRole("button", { name: "Refresh workspace", exact: true })
-    .click();
+  const refreshButton = page.getByRole("button", {
+    name: "Refresh workspace",
+    exact: true,
+  });
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/" + base) &&
+        response.request().method() === "GET" &&
+        response.ok(),
+    ),
+    refreshButton.click(),
+  ]);
+  // The response must also be applied before reopening the versioned record.
+  await expect(refreshButton).toBeEnabled();
   await page.getByText("UX person", { exact: true }).click();
   dialog = page.getByRole("dialog");
   await dialog.getByLabel("Name", { exact: true }).fill("Recovered contact");
