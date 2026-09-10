@@ -204,3 +204,7 @@ The editor lists effective access and proposed record-count changes before savin
 **Your private note** is a separate author-only field, available while its author is a workspace owner. Each owner has their own note. It is excluded from shared descriptions, search, exports, timelines, access reports, and daily emails. Shared and private changes save atomically, with conflict detection. Account recovery preserves both accounts' notes (combining text if both wrote on the same record); workspace merges preserve authorship. Record or workspace deletion deletes associated private notes. Database operators and private database backups remain trusted infrastructure.
 
 Apply the additive migration (`records.visibility_ids`, `record_private_notes`) before deploying 0.5.0. Existing records retain workspace sharing. Older deployments must remain deployment-protected because their code does not enforce these new restrictions.
+
+### AutoNote connection
+
+`/connect/autonote` approves or revokes AutoNote grants for one destination. AutoNote presents a review before publishing a summary and accepted actions. CRM rechecks current access, preserves destination sharing, and skips already-published items. Grants expire after 30 days. Private owner notes are not exposed. Published copies remain after disconnect or source deletion. Set `AUTONOTE_URL` to the matching environment's origin; its production default is `https://autonote.bittrees.org`. Run the additive database migration before deploying this integration.

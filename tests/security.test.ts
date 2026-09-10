@@ -1513,3 +1513,67 @@ test("record sharing restricts whole-workspace members and grants scoped members
   const reinvited = await snapshot(f.collaborator, f.w);
   assert.ok(!reinvited.records.some((r: any) => r.id === direct.id));
 });
+
+test("AutoNote grants enforce PKCE, sharing, idempotency and revocation", async () => {
+  const api = await import("../lib/autonote");
+  const { createHash, randomBytes } = await import("node:crypto");
+  const actor = await walletLogin(),
+    uid = (await currentUser(request(cookiePair(actor.result.cookie))))!.id;
+  const ws = (
+    await pool().query("SELECT workspace_id FROM members WHERE user_id=$1", [
+      uid,
+    ])
+  ).rows[0].workspace_id;
+  const dest = await saveRecord(uid, ws, {
+    kind: "organizations",
+    data: { name: "Synthetic AutoNote target" },
+    visibilityIds: [uid],
+  });
+  const verifier = randomBytes(32).toString("hex"),
+    state = randomBytes(32).toString("hex");
+  const connect = await api.authorize(uid, {
+    workspaceId: ws,
+    targetId: dest.id,
+    state,
+    challenge: createHash("sha256").update(verifier).digest("base64url"),
+  });
+  const code = new URL(connect.url).searchParams.get("code")!;
+  await assert.rejects(api.exchange({ code, verifier: "0".repeat(64) }));
+  const grant = await api.exchange({ code, verifier });
+  await assert.rejects(api.exchange({ code, verifier }));
+  const content = {
+    meetingId: randomUUID(),
+    title: "Synthetic meeting",
+    summary: "Approved summary",
+    actions: [{ id: "action-1", text: "Prepare report", dueDate: null }],
+  };
+  const first = await api.publish(grant.token, content),
+    repeated = await api.publish(grant.token, content);
+  assert.equal(first.items.length, 2);
+  assert.ok(repeated.items.every((i) => i.existing));
+  assert.deepEqual(
+    first.items.map((i) => i.recordId),
+    repeated.items.map((i) => i.recordId),
+  );
+  for (const item of first.items) {
+    const record = (
+      await pool().query("SELECT * FROM records WHERE id=$1", [item.recordId])
+    ).rows[0];
+    assert.deepEqual(record.visibility_ids, [uid]);
+    assert.equal(record.data.organizationId, dest.id);
+    assert.ok(!record.data.ownerId);
+  }
+  await pool().query(
+    "UPDATE members SET role='viewer' WHERE user_id=$1 AND workspace_id=$2",
+    [uid, ws],
+  );
+  await assert.rejects(
+    api.publish(grant.token, { ...content, meetingId: randomUUID() }),
+  );
+  await pool().query(
+    "UPDATE members SET role='owner' WHERE user_id=$1 AND workspace_id=$2",
+    [uid, ws],
+  );
+  await api.revokeUser(uid, grant.grantId);
+  await assert.rejects(api.publish(grant.token, content));
+});

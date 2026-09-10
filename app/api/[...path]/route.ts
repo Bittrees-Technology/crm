@@ -1,3 +1,4 @@
+import * as autonote from "@/lib/autonote";
 import { privateNote, inspectAccess } from "@/lib/sharing";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -80,6 +81,27 @@ async function handle(req: NextRequest) {
       await pool().query("SELECT id FROM workspaces LIMIT 1");
       return json({ status: "ok", version: "0.5.0" });
     }
+    if (
+      path.startsWith("integrations/autonote/") &&
+      ["exchange", "publish", "disconnect"].includes(path.split("/").at(-1)!) &&
+      req.method === "POST"
+    ) {
+      const raw = await req.text();
+      if (raw.length > 150000) throw new HttpError(413, "Request too large.");
+      const input = JSON.parse(raw || "{}");
+      const operation = path.split("/").at(-1);
+      if (operation === "exchange") return json(await autonote.exchange(input));
+      const bearer = req.headers
+        .get("authorization")
+        ?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+      if (!bearer) throw new HttpError(401, "Connection token required.");
+      await rateLimit("autonote:" + hash(bearer), 100);
+      return json(
+        operation === "publish"
+          ? await autonote.publish(bearer, input)
+          : await autonote.revokeBearer(bearer),
+      );
+    }
     let body: Record<string, unknown> = {};
     if (req.method !== "GET") {
       checkOrigin(req);
@@ -155,6 +177,19 @@ async function handle(req: NextRequest) {
     }
     const user = (await currentUser(req))!;
     if (req.method !== "GET") await rateLimit("user:" + user.id, 300);
+    if (path === "integrations/autonote/destinations" && req.method === "GET")
+      return json(
+        await autonote.destinations(
+          user.id,
+          req.nextUrl.searchParams.get("workspace") || "",
+        ),
+      );
+    if (path === "integrations/autonote/authorize" && req.method === "POST")
+      return json(await autonote.authorize(user.id, body));
+    if (path === "integrations/autonote/connections" && req.method === "GET")
+      return json(await autonote.listGrants(user.id));
+    if (path === "integrations/autonote/connections" && req.method === "DELETE")
+      return json(await autonote.revokeUser(user.id, String(body.id)));
     if (path === "me/digest/preview" && req.method === "POST")
       return json(await previewDigest(user.id, body));
     if (path === "me/digest" && req.method === "GET")

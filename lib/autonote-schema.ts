@@ -1,0 +1,4 @@
+export const integrationSchema = `
+CREATE TABLE IF NOT EXISTS autonote_grants(id uuid PRIMARY KEY,user_id uuid NOT NULL REFERENCES users(id),workspace_id uuid NOT NULL REFERENCES workspaces(id),target_id uuid NOT NULL REFERENCES records(id) ON DELETE CASCADE,code_hash text UNIQUE,challenge text NOT NULL,code_expires timestamptz NOT NULL,token_hash text UNIQUE,expires_at timestamptz NOT NULL,revoked_at timestamptz,created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS autonote_receipts(user_id uuid NOT NULL REFERENCES users(id),workspace_id uuid NOT NULL REFERENCES workspaces(id),target_id uuid NOT NULL REFERENCES records(id) ON DELETE CASCADE,meeting_id uuid NOT NULL,item_id text NOT NULL,record_id uuid NOT NULL REFERENCES records(id) ON DELETE CASCADE,PRIMARY KEY(user_id,workspace_id,target_id,meeting_id,item_id));
+`;
