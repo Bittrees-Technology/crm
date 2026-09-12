@@ -142,7 +142,7 @@ export function MemberAccess({
             onChange={setValue}
             disabled={busy}
           />
-          <button
+          <button data-insights="save-collaboration-access"
             className="button"
             disabled={busy || value?.length === 0}
             onClick={async () => {
@@ -210,7 +210,7 @@ export function WorkspaceActions({
   return (
     <div className="panel-pad workspace-actions">
       <div className="button-stack">
-        <button
+        <button data-insights="merge-workspace"
           type="button"
           className="button"
           disabled={busy}
@@ -222,7 +222,7 @@ export function WorkspaceActions({
         >
           Merge workspace
         </button>
-        <button
+        <button data-insights="delete-workspace"
           type="button"
           className="button danger"
           disabled={busy}
@@ -372,7 +372,7 @@ export function WorkspaceActions({
                     : "Permanently delete workspace"
                   : "Review changes"}
             </button>
-            <button
+            <button data-insights="cancel"
               type="button"
               className="button"
               disabled={busy}

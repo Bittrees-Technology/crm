@@ -325,7 +325,7 @@ function Modal({
     >
       <div className="modal-head">
         <h2>{title}</h2>
-        <button className="icon-button" onClick={onClose} aria-label="Close">
+        <button data-insights="close" className="icon-button" onClick={onClose} aria-label="Close">
           <X size={20} />
         </button>
       </div>
@@ -466,7 +466,7 @@ function AccountRecovery({
               ? "Confirm and combine accounts"
               : "Verify current account"}
         </button>
-        <button
+        <button data-insights="keep-accounts-separate"
           type="button"
           className="text-button"
           disabled={busy}
@@ -707,7 +707,7 @@ function Auth({
             wallet app.
           </p>
           {operation !== "wallet-verify" && (
-            <button type="button" className="text-button" onClick={cancel}>
+            <button data-insights="cancel-wallet-request-/-use-email" type="button" className="text-button" onClick={cancel}>
               Cancel wallet request / use email
             </button>
           )}
@@ -766,7 +766,7 @@ function Auth({
               <ArrowRight size={17} />
             </button>
             {challenge && (
-              <button
+              <button data-insights="use-a-different-email-or-request-a-new-code"
                 type="button"
                 className="text-button"
                 onClick={() => {
@@ -801,12 +801,12 @@ function Auth({
         <span>No passwords. Wallet sign-in never requests a transaction.</span>
       </div>
       {onDemo && (
-        <button className="text-button" onClick={onDemo}>
+        <button data-insights="explore-with-fictional-demo-data" className="text-button" onClick={onDemo}>
           Explore with fictional demo data <ArrowRight size={15} />
         </button>
       )}
       {onClose && (
-        <button className="text-button" onClick={onClose}>
+        <button data-insights="cancel" className="text-button" onClick={onClose}>
           Cancel
         </button>
       )}
@@ -1318,7 +1318,7 @@ export default function App() {
   return (
     <div className="app">
       {mobile && (
-        <button
+        <button data-insights="close-navigation"
           className="mobile-backdrop"
           aria-label="Close navigation"
           onClick={() => setMobile(false)}
@@ -1332,7 +1332,7 @@ export default function App() {
               me.workspaces.find((w) => w.id === workspace)?.name || "W",
             )}
           </span>
-          <select
+          <select data-insights="workspace"
             aria-label="Workspace"
             value={workspace}
             onChange={(e) => setWorkspace(e.target.value)}
@@ -1386,7 +1386,7 @@ export default function App() {
             <span className="live-dot" />
             {demo ? "Fictional demo workspace" : "A place for the next step"}
           </div>
-          <button
+          <button data-insights="settings"
             className={page === "settings" ? "nav-item active" : "nav-item"}
             onClick={() => nav("settings")}
           >
@@ -1427,7 +1427,7 @@ export default function App() {
       </aside>
       <div className="main">
         <header className="topbar">
-          <button
+          <button data-insights="toggle-navigation"
             className="icon-button mobile-menu"
             onClick={() => setMobile(!mobile)}
             aria-label="Toggle navigation"
@@ -1439,7 +1439,7 @@ export default function App() {
           </div>
           <div className="top-actions">
             {demo ? (
-              <button
+              <button data-insights="sign-in-to-save-your-work"
                 className="text-button"
                 onClick={() => {
                   setMe(null);
@@ -1485,7 +1485,7 @@ export default function App() {
         {!me.workspaces.length && (
           <div className="panel-pad">
             <p>You do not belong to a workspace yet.</p>
-            <button
+            <button data-insights="create-your-workspace"
               className="button primary"
               onClick={() => setCreatingWorkspace(true)}
             >
@@ -1496,7 +1496,7 @@ export default function App() {
         {error && (
           <div role="alert" className="error global-message">
             {error}
-            <button
+            <button data-insights="dismiss-error"
               className="icon-button"
               aria-label="Dismiss error"
               onClick={() => setError("")}
@@ -1523,11 +1523,11 @@ export default function App() {
               !me.identities.some(
                 (i) => i.kind === "email" && i.value === inviteInfo.email,
               ) && (
-                <button className="button" onClick={() => setLinking(true)}>
+                <button data-insights="verify-invited-email" className="button" onClick={() => setLinking(true)}>
                   Verify invited email
                 </button>
               )}
-            <button
+            <button data-insights="accept-invitation"
               className="button primary"
               disabled={
                 !inviteInfo ||
@@ -1552,7 +1552,7 @@ export default function App() {
             >
               Accept invitation
             </button>
-            <button className="text-button" onClick={() => setInviteToken("")}>
+            <button data-insights="dismiss" className="text-button" onClick={() => setInviteToken("")}>
               Dismiss
             </button>
           </div>
@@ -1577,7 +1577,7 @@ export default function App() {
                   </p>
                 </div>
                 {canEdit && (
-                  <button
+                  <button data-insights="new-opportunity"
                     className="button primary"
                     onClick={() => setEditing({ kind: "opportunities" })}
                   >
@@ -1619,7 +1619,7 @@ export default function App() {
                       Your next steps{" "}
                       <span className="count">{due.length}</span>
                     </h2>
-                    <button
+                    <button data-insights="all-tasks"
                       className="text-button"
                       onClick={() => nav("tasks")}
                     >
@@ -1706,7 +1706,7 @@ export default function App() {
                         </div>
                       );
                     })}
-                  <button
+                  <button data-insights="open-opportunities"
                     className="text-button"
                     onClick={() => nav("opportunities")}
                   >
@@ -1749,7 +1749,7 @@ export default function App() {
                   <h1>Progress, in perspective.</h1>
                   <p>A practical view of follow-through and outcomes.</p>
                 </div>
-                <button className="button" onClick={exportData}>
+                <button data-insights="export-workspace" className="button" onClick={exportData}>
                   <ArrowDownToLine size={17} />
                   Export workspace
                 </button>
@@ -1902,7 +1902,7 @@ export default function App() {
                         maxLength={80}
                       />
                     </label>
-                    <button className="button" disabled={busy}>
+                    <button data-insights="save-name" className="button" disabled={busy}>
                       Save name
                     </button>
                   </form>
@@ -1923,7 +1923,7 @@ export default function App() {
                     ))}
                   </div>
                   <div className="panel-pad">
-                    <button
+                    <button data-insights="link-email-or-wallet"
                       className="button"
                       disabled={demo}
                       onClick={() => setLinking(true)}
@@ -1982,7 +1982,7 @@ export default function App() {
                         disabled={busy || snapshot.role !== "owner"}
                       />
                     </label>
-                    <button
+                    <button data-insights="save-workspace"
                       className="button"
                       disabled={busy || snapshot.role !== "owner"}
                     >
@@ -1990,11 +1990,11 @@ export default function App() {
                     </button>
                   </form>
                   <div className="panel-pad button-stack">
-                    <button className="button" onClick={exportData}>
+                    <button data-insights="export-all-workspace-data" className="button" onClick={exportData}>
                       <ArrowDownToLine size={17} />
                       Export all workspace data
                     </button>
-                    <button
+                    <button data-insights="create-another-workspace"
                       className="button"
                       disabled={demo}
                       onClick={() => setCreatingWorkspace(true)}
@@ -2123,7 +2123,7 @@ export default function App() {
                       </label>
                       <label>
                         Role
-                        <select name="role">
+                        <select data-insights="role" name="role">
                           <option value="editor">Editor</option>
                           <option value="viewer">Viewer</option>
                         </select>
@@ -2134,7 +2134,7 @@ export default function App() {
                         onChange={setInviteScope}
                         disabled={busy || demo}
                       />
-                      <button
+                      <button data-insights="create-invite-link"
                         className="button primary"
                         disabled={busy || demo || inviteScope?.length === 0}
                       >
@@ -2235,7 +2235,7 @@ export default function App() {
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
-                <select
+                <select data-insights="filter-records"
                   aria-label="Filter records"
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
@@ -2247,7 +2247,7 @@ export default function App() {
                   )}
                 </select>
                 {savedViews.some((v) => v.page === page) && (
-                  <select
+                  <select data-insights="saved-views"
                     aria-label="Saved views"
                     value=""
                     onChange={(e) => {
@@ -2271,7 +2271,7 @@ export default function App() {
                       ))}
                   </select>
                 )}
-                <button className="button subtle" onClick={saveView}>
+                <button data-insights="save-view" className="button subtle" onClick={saveView}>
                   Save view
                 </button>
                 <div className="toolbar-spacer" />
@@ -2296,7 +2296,7 @@ export default function App() {
                 {["people", "organizations"].includes(page) &&
                   canEdit &&
                   !snapshot.limited && (
-                    <button
+                    <button data-insights="import-csv"
                       className="button subtle"
                       onClick={() => setImporting(true)}
                     >
@@ -2393,7 +2393,7 @@ export default function App() {
                           <div className="column-empty">No opportunities</div>
                         )}
                         {canEdit && (
-                          <button
+                          <button data-insights="add-opportunity"
                             className="column-add"
                             aria-label={`Add opportunity in ${stage}`}
                             onClick={() =>
@@ -2572,7 +2572,7 @@ export default function App() {
         <footer className="app-footer">
           <Sprout size={13} /> Bittrees CRM{" "}
           <span>Independent. Open source.</span>
-          <a
+          <a data-insights="navigate-githubcom/bittrees-technology/crm"
             href="https://github.com/Bittrees-Technology/crm"
             target="_blank"
             rel="noreferrer"
@@ -2723,7 +2723,7 @@ export default function App() {
                 {error}
               </div>
             )}
-            <button className="button primary" disabled={busy}>
+            <button data-insights="create-workspace" className="button primary" disabled={busy}>
               Create workspace
             </button>
           </form>
@@ -3179,7 +3179,7 @@ function RecordEditor({
               ) : privateError ? (
                 <div className="error" role="alert">
                   {privateError}{" "}
-                  <button
+                  <button data-insights="retry-private-note"
                     type="button"
                     className="button"
                     onClick={() => setPrivateRetry((v) => v + 1)}
@@ -3233,7 +3233,7 @@ function RecordEditor({
         )}
         <div className="modal-actions">
           {onDelete && canEdit && (
-            <button
+            <button data-insights="delete-record"
               type="button"
               className="text-button danger"
               onClick={onDelete}
@@ -3243,7 +3243,7 @@ function RecordEditor({
             </button>
           )}
           <div className="toolbar-spacer" />
-          <button
+          <button data-insights="close"
             type="button"
             className="button"
             onClick={closeEditor}
@@ -3398,7 +3398,7 @@ function Importer({
         )}
       </div>
       <div className="modal-actions">
-        <button className="button" onClick={onClose}>
+        <button data-insights="cancel" className="button" onClick={onClose}>
           Cancel
         </button>
         <button

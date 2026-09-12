@@ -76,7 +76,7 @@ export default function Connect() {
   }
   return (
     <main className="integration-page">
-      <a href="/">Bittrees CRM</a>
+      <a data-insights="navigate-/" href="/">Bittrees CRM</a>
       <h1>Connect AutoNote</h1>
       <p>
         Let AutoNote add reviewed meeting notes and tasks to one CRM
@@ -87,10 +87,10 @@ export default function Connect() {
       ) : !ready ? (
         <>
           <p>Sign in to your CRM account, then return here.</p>
-          <a href="/" target="_blank" rel="noreferrer">
+          <a data-insights="navigate-/" href="/" target="_blank" rel="noreferrer">
             Open CRM sign-in
           </a>
-          <button className="button" onClick={load}>
+          <button data-insights="im-signed-in-refresh" className="button" onClick={load}>
             I’m signed in · refresh
           </button>
         </>
@@ -213,7 +213,7 @@ export default function Connect() {
                         new Date(c.expires_at).toLocaleDateString()}
                 </p>
                 {!c.revoked_at && (
-                  <button
+                  <button data-insights="disconnect"
                     className="button"
                     disabled={busy}
                     onClick={async () => {

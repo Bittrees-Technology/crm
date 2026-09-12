@@ -48,7 +48,7 @@ export function RecordSharing({
       </p>
       <label>
         Record access
-        <select
+        <select data-insights="record-access"
           aria-label="Record access"
           disabled={disabled}
           value={value === null ? "workspace" : "selected"}
@@ -197,7 +197,7 @@ export function AccessInspector({
       {error ? (
         <div role="alert" className="error">
           {error}{" "}
-          <button
+          <button data-insights="retry-access-review"
             type="button"
             className="button"
             onClick={() => setRetry((v) => v + 1)}
@@ -211,7 +211,7 @@ export function AccessInspector({
         <>
           <label>
             Review access for
-            <select
+            <select data-insights="review-access-for"
               aria-label="Review access for"
               value={selected?.id || ""}
               onChange={(e) => setMember(e.target.value)}

@@ -224,7 +224,7 @@ export function RelationshipTimeline({
       ) : error ? (
         <div className="error">
           {error}
-          <button
+          <button data-insights="retry"
             type="button"
             className="text-button"
             onClick={() => setRetry((v) => v + 1)}
@@ -372,7 +372,7 @@ export function DigestSettings({
             </select>
           </label>
         ) : (
-          <button
+          <button data-insights="link-a-verified-email-to-enable-reminders"
             type="button"
             className="text-button"
             disabled={demo}
@@ -491,10 +491,10 @@ export function DigestSettings({
           )}
         </fieldset>
         <div className="button-stack">
-          <button className="button" disabled={busy || demo || !emails.length}>
+          <button data-insights="save-email-preference" className="button" disabled={busy || demo || !emails.length}>
             Save email preference
           </button>
-          <button
+          <button data-insights="preview-follow-up-email"
             type="button"
             className="button"
             disabled={busy || demo}
@@ -652,7 +652,7 @@ export function InviteManager({
                   <td>{new Date(i.expires_at).toLocaleDateString()}</td>
                   <td className="invite-actions">
                     {i.status === "Pending" && (
-                      <button
+                      <button data-insights="revoke"
                         type="button"
                         className="text-button danger"
                         disabled={busy}
@@ -672,7 +672,7 @@ export function InviteManager({
                       </button>
                     )}
                     {i.status !== "Accepted" && (
-                      <button
+                      <button data-insights="recreate-link"
                         type="button"
                         className="text-button"
                         disabled={busy}
