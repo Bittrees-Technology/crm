@@ -1387,7 +1387,7 @@ export default function App() {
                 <section className="panel">
                   <div className="section-heading">
                     <h2>
-                      Upcoming follow-ups{" "}
+                      Follow-ups due{" "}
                       <span className="count">{due.length}</span>
                     </h2>
                     <button data-insights="all-tasks"
