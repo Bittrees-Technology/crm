@@ -2,9 +2,9 @@ import InsightsScript from "next/script";
 import type { Metadata } from "next";
 import "./globals.css";
 export const metadata: Metadata = {
-  title: "Bittrees CRM · Relationships, in motion",
+  title: "Bittrees CRM",
   description:
-    "An independent, open-source relationship workspace. People, partnerships, and the next step.",
+    "Manage contacts, organizations, opportunities, projects, tasks, and notes.",
   robots: { index: false, follow: false },
 };
 export default function Layout({ children }: { children: React.ReactNode }) {

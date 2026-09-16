@@ -79,7 +79,7 @@ async function handle(req: NextRequest) {
       });
     if (path === "health" && req.method === "GET") {
       await pool().query("SELECT id FROM workspaces LIMIT 1");
-      return json({ status: "ok", version: "0.5.0" });
+      return json({ status: "ok", version: "0.5.1" });
     }
     if (
       path.startsWith("integrations/autonote/") &&

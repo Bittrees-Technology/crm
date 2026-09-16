@@ -47,7 +47,6 @@ import {
   LoaderCircle,
   LogOut,
   Menu,
-  Network,
   Plus,
   RefreshCw,
   Search,
@@ -63,7 +62,6 @@ import {
   LayoutGrid,
   List,
   Mail,
-  LockKeyhole,
 } from "lucide-react";
 import {
   recordSchema,
@@ -137,15 +135,7 @@ const icons: Record<Page, typeof Users> = {
   reports: LayoutGrid,
   settings: Settings2,
 };
-const demoUser = "00000000-0000-4000-8000-000000000001";
-const demoOrg = "00000000-0000-4000-8000-000000000002";
-const demoProject = "00000000-0000-4000-8000-000000000003";
 const today = () => new Date().toLocaleDateString("en-CA");
-const relativeDate = (days: number) => {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return d.toLocaleDateString("en-CA");
-};
 const dateLabel = (v: string) =>
   v
     ? new Date(v + "T12:00:00").toLocaleDateString(undefined, {
@@ -188,115 +178,6 @@ async function api(path: string, method = "GET", body?: unknown) {
     window.dispatchEvent(new Event("crm-session-expired"));
   if (!response.ok) throw new Error(data.error || "Something went wrong.");
   return data;
-}
-function demoRecords(): CrmRecord[] {
-  const rows: [Kind, Partial<RecordData> & { name: string }, string?][] = [
-    [
-      "organizations",
-      {
-        name: "Northstar Labs",
-        category: "Technology partner",
-        website: "https://example.com",
-        description: "Fictional organization for this demo.",
-      },
-      demoOrg,
-    ],
-    [
-      "organizations",
-      { name: "Fieldwork Collective", category: "Research partner" },
-    ],
-    [
-      "projects",
-      {
-        name: "Partner pilot",
-        category: "Partnerships",
-        description: "Explore a shared product pilot.",
-      },
-      demoProject,
-    ],
-    [
-      "people",
-      {
-        name: "Alex Morgan",
-        email: "alex@example.com",
-        title: "Co-founder",
-        organizationId: demoOrg,
-        communication: "Allowed",
-      },
-    ],
-    [
-      "people",
-      { name: "Sam Rivera", email: "sam@example.com", title: "Research lead" },
-    ],
-    [
-      "people",
-      {
-        name: "Jordan Lee",
-        email: "jordan@example.com",
-        title: "Community builder",
-      },
-    ],
-    [
-      "opportunities",
-      {
-        name: "Northstar product pilot",
-        organizationId: demoOrg,
-        projectId: demoProject,
-        category: "Partnership",
-        stage: "Discovery",
-        value: 12000,
-        nextAction: "Share the pilot outline",
-        dueDate: relativeDate(0),
-      },
-    ],
-    [
-      "opportunities",
-      {
-        name: "Research collaboration",
-        category: "Research",
-        stage: "Qualified",
-        nextAction: "Agree on research questions",
-        dueDate: relativeDate(2),
-      },
-    ],
-    [
-      "opportunities",
-      {
-        name: "Community workshop",
-        category: "Partnership",
-        stage: "Proposal",
-        value: 2400,
-        nextAction: "Review workshop proposal",
-        dueDate: relativeDate(-2),
-      },
-    ],
-    [
-      "tasks",
-      {
-        name: "Prepare the partner briefing",
-        dueDate: relativeDate(0),
-        projectId: demoProject,
-      },
-    ],
-    ["tasks", { name: "Follow up with Jordan", dueDate: relativeDate(1) }],
-    [
-      "notes",
-      {
-        name: "Discovery conversation",
-        organizationId: demoOrg,
-        description:
-          "The team is interested in a small, focused pilot. Next step: share an outline with scope, timing, and a clear owner.",
-      },
-    ],
-  ];
-  return rows.map(([kind, data, id]) => ({
-    id: id || crypto.randomUUID(),
-    kind,
-    data: recordSchema.parse({ ownerId: demoUser, ...data }),
-    version: 1,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  }));
 }
 function Modal({
   title,
@@ -482,7 +363,6 @@ function Auth({
   onSuccess,
   link = false,
   onClose,
-  onDemo,
   initialEmail = "",
   invitation = false,
   recoveryToken,
@@ -492,7 +372,6 @@ function Auth({
   onSuccess: () => void | Promise<void>;
   link?: boolean;
   onClose?: () => void;
-  onDemo?: () => void;
   initialEmail?: string;
   invitation?: boolean;
   compact?: boolean;
@@ -643,9 +522,6 @@ function Auth({
     );
   const form = (
     <div className="auth-form">
-      <span className="eyebrow">
-        <LockKeyhole size={14} /> YOUR IDENTITY, VERIFIED
-      </span>
       {invitation && (
         <div className="invite-banner">
           You have a workspace invitation. Sign in with the invited email, or
@@ -656,20 +532,20 @@ function Auth({
         {recoveryToken
           ? "Verify your current account"
           : link
-            ? "Connect another identity"
-            : "Welcome to your next chapter."}
+            ? "Add a sign-in method"
+            : "Sign in"}
       </h1>
       <p>
         {recoveryToken
           ? "Use one of the sign-in methods listed below. This verifies your current account before the final confirmation."
           : link
             ? "Verify an email or Ethereum wallet to use either one with your existing account."
-            : "A clear view of your relationships. A place for every next step."}
+            : "Use your email address or Ethereum wallet."}
       </p>
       {!link && !compact && (
         <p className="small">
-          First time? Signing in creates a private account. If you already use
-          CRM, sign in with your existing method and add another in Settings.
+          New users receive a private workspace. To add a sign-in method to an
+          existing account, use Settings.
         </p>
       )}
       {allowedIdentities && (
@@ -800,11 +676,7 @@ function Auth({
         <ShieldCheck size={16} />
         <span>No passwords. Wallet sign-in never requests a transaction.</span>
       </div>
-      {onDemo && (
-        <button data-insights="explore-with-fictional-demo-data" className="text-button" onClick={onDemo}>
-          Explore with fictional demo data <ArrowRight size={15} />
-        </button>
-      )}
+
       {onClose && (
         <button data-insights="cancel" className="text-button" onClick={onClose}>
           Cancel
@@ -818,65 +690,14 @@ function Auth({
       <div className="auth-left">
         <Brand />
         {form}
-        <footer>Independent software. Open source. MIT licensed.</footer>
       </div>
-      <aside className="auth-story">
-        <div className="story-top">
-          <span className="pill light">THE RELATIONSHIP WORKSPACE</span>
-          <span>01 / CRM</span>
-        </div>
-        <h2>
-          Good relationships.
-          <br />
-          <em>Real momentum.</em>
-        </h2>
-        <p>Keep the people, the context, and the next step together.</p>
-        <div className="story-card">
-          <div className="story-card-title">
-            <span className="avatar">NL</span>
-            <div>
-              <strong>Northstar Labs</strong>
-              <small>Example partnership</small>
-            </div>
-            <span className="badge">Discovery</span>
-          </div>
-          <div className="story-timeline">
-            <div>
-              <span className="dot done" />
-              <div>
-                <strong>A conversation starts</strong>
-                <small>Introduction recorded</small>
-              </div>
-            </div>
-            <div>
-              <span className="dot done" />
-              <div>
-                <strong>A shared direction</strong>
-                <small>Opportunity scoped</small>
-              </div>
-            </div>
-            <div>
-              <span className="dot" />
-              <div>
-                <strong>One clear next step</strong>
-                <small>Share the pilot outline</small>
-              </div>
-              <ArrowUpRight size={19} />
-            </div>
-          </div>
-        </div>
-        <div className="story-bottom">
-          <Network size={20} />
-          <span>People → possibilities → progress</span>
-        </div>
-      </aside>
     </main>
   );
 }
 export default function App() {
   const [me, setMe] = useState<Me | null>(null),
     [loading, setLoading] = useState(true),
-    [demo, setDemo] = useState(false),
+    [demo] = useState(false),
     [workspace, setWorkspace] = useState(""),
     [snapshot, setSnapshot] = useState<Snapshot>({
       role: "viewer",
@@ -991,14 +812,9 @@ export default function App() {
     setInviteToken(params.get("invite") || "");
     if (Object.hasOwn(labels, params.get("view") || ""))
       setPage(params.get("view") as Page);
-    if (params.has("demo")) {
-      startDemo();
-      setLoading(false);
-    } else {
-      loadMe()
-        .catch(() => {})
-        .finally(() => setLoading(false));
-    }
+    loadMe()
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
   useEffect(() => {
     let live = true;
@@ -1130,21 +946,6 @@ export default function App() {
       window.history.replaceState(null, "", "/?" + params.toString());
     }
   }, [snapshot.records, workspace]);
-  function startDemo() {
-    setDemo(true);
-    setMe({
-      user: { id: demoUser, name: "Taylor" },
-      workspaces: [{ id: "demo", name: "Bittrees · Demo", role: "owner" }],
-      identities: [],
-    });
-    setWorkspace("demo");
-    setSnapshot({
-      role: "owner",
-      records: demoRecords(),
-      members: [{ id: demoUser, name: "Taylor", role: "owner" }],
-      audit: [],
-    });
-  }
   function notify(s: string) {
     setNotice(s);
     setError("");
@@ -1312,7 +1113,6 @@ export default function App() {
         onSuccess={async () => {
           await loadMe();
         }}
-        onDemo={startDemo}
       />
     );
   return (
@@ -1382,10 +1182,6 @@ export default function App() {
           })}
         </nav>
         <div className="sidebar-bottom">
-          <div className="sidebar-note">
-            <span className="live-dot" />
-            {demo ? "Fictional demo workspace" : "A place for the next step"}
-          </div>
           <button data-insights="settings"
             className={page === "settings" ? "nav-item active" : "nav-item"}
             onClick={() => nav("settings")}
@@ -1408,7 +1204,6 @@ export default function App() {
                 void action(async () => {
                   if (!demo) await api("auth/logout", "POST");
                   setMe(null);
-                  setDemo(false);
                   setWorkspace("");
                   setSnapshot({
                     role: "viewer",
@@ -1438,23 +1233,10 @@ export default function App() {
             Workspace <span>/</span> <strong>{labels[page]}</strong>
           </div>
           <div className="top-actions">
-            {demo ? (
-              <button data-insights="sign-in-to-save-your-work"
-                className="text-button"
-                onClick={() => {
-                  setMe(null);
-                  setDemo(false);
-                  setWorkspace("");
-                }}
-              >
-                Sign in to save your work <ArrowUpRight size={15} />
-              </button>
-            ) : (
-              <span className="secure-label">
-                <ShieldCheck size={15} />
-                Verified session
-              </span>
-            )}
+            <span className="secure-label">
+              <ShieldCheck size={15} />
+              Verified session
+            </span>
             <button
               className="icon-button"
               disabled={busy}
@@ -1465,15 +1247,6 @@ export default function App() {
             </button>
           </div>
         </header>
-        {demo && (
-          <div className="demo-bar">
-            DEMO{" "}
-            <span>
-              All names and records are fictional. Changes last only for this
-              session.
-            </span>
-          </div>
-        )}
         {snapshot.limited && (
           <div className="demo-bar">
             Limited collaboration{" "}
@@ -1571,10 +1344,8 @@ export default function App() {
                       })
                       .toUpperCase()}
                   </span>
-                  <h1>Make the next move.</h1>
-                  <p>
-                    Welcome back, {me.user.name}. Here’s where things stand.
-                  </p>
+                  <h1>Today</h1>
+                  <p>Tasks and opportunities requiring attention.</p>
                 </div>
                 {canEdit && (
                   <button data-insights="new-opportunity"
@@ -1616,7 +1387,7 @@ export default function App() {
                 <section className="panel">
                   <div className="section-heading">
                     <h2>
-                      Your next steps{" "}
+                      Upcoming follow-ups{" "}
                       <span className="count">{due.length}</span>
                     </h2>
                     <button data-insights="all-tasks"
@@ -1735,7 +1506,7 @@ export default function App() {
                 ) : (
                   <div className="quiet-empty">
                     {snapshot.role === "owner"
-                      ? "Your team’s updates will appear here as work moves forward."
+                      ? "No recent activity."
                       : "Open a record to see activity for work you can access."}
                   </div>
                 )}
@@ -1745,9 +1516,8 @@ export default function App() {
             <>
               <div className="page-heading">
                 <div>
-                  <span className="eyebrow">WORKSPACE HEALTH</span>
-                  <h1>Progress, in perspective.</h1>
-                  <p>A practical view of follow-through and outcomes.</p>
+                  <h1>Reports</h1>
+                  <p>Pipeline, activity, and follow-up summary.</p>
                 </div>
                 <button data-insights="export-workspace" className="button" onClick={exportData}>
                   <ArrowDownToLine size={17} />
@@ -1855,9 +1625,8 @@ export default function App() {
             <>
               <div className="page-heading">
                 <div>
-                  <span className="eyebrow">YOUR WORKSPACE</span>
-                  <h1>Identity & coordination.</h1>
-                  <p>Keep access clear and your team connected.</p>
+                  <h1>Settings</h1>
+                  <p>Account, workspace, and team access.</p>
                 </div>
               </div>
               {!demo && (
@@ -2182,11 +1951,6 @@ export default function App() {
             <>
               <div className="page-heading">
                 <div>
-                  <span className="eyebrow">
-                    {page === "opportunities"
-                      ? "TURN CONVERSATIONS INTO PROGRESS"
-                      : "YOUR RELATIONSHIP WORKSPACE"}
-                  </span>
                   <h1>
                     {labels[page]}
                     <span className="heading-count">
@@ -2197,14 +1961,15 @@ export default function App() {
                     {
                       (
                         {
-                          people: "The people behind every possibility.",
-                          organizations: "A shared view of who you work with.",
+                          people: "Contact details and relationships.",
+                          organizations:
+                            "Organization details and related records.",
                           opportunities:
-                            "Every conversation, with a clear next step.",
+                            "Track opportunities, stages, and follow-ups.",
                           projects:
-                            "Connect relationships to the work that matters.",
-                          tasks: "Small steps. Steady progress.",
-                          notes: "Keep the context close.",
+                            "Projects and related contacts, tasks, and notes.",
+                          tasks: "Assigned work and due dates.",
+                          notes: "Notes linked to your records.",
                         } as Record<string, string>
                       )[page]
                     }
@@ -2555,7 +2320,7 @@ export default function App() {
                     text={
                       search || filter !== "all"
                         ? "Try another search or change your filter."
-                        : "Add your first record to start connecting people, context, and next steps."
+                        : "No records yet. Add a record to get started."
                     }
                     action={
                       canEdit
@@ -2571,7 +2336,6 @@ export default function App() {
         </main>
         <footer className="app-footer">
           <Sprout size={13} /> Bittrees CRM{" "}
-          <span>Independent. Open source.</span>
           <a data-insights="navigate-githubcom/bittrees-technology/crm"
             href="https://github.com/Bittrees-Technology/crm"
             target="_blank"

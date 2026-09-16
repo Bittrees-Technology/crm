@@ -1,8 +1,8 @@
 # Bittrees CRM
 
-**Live:** [crm.bittrees.org](https://crm.bittrees.org) · [Try the fictional demo](https://crm.bittrees.org/?demo=1)
+**Live:** [crm.bittrees.org](https://crm.bittrees.org)
 
-An independent relationship workspace for people, organizations, partnerships, and the next step.
+Contact, organization, opportunity, project, task, and note management.
 
 **MIT licensed.** Next.js, React, PostgreSQL, Sign-In with Ethereum, and passwordless email verification.
 
@@ -20,7 +20,7 @@ An independent relationship workspace for people, organizations, partnerships, a
 - Pending invitation status, revocation, replacement links, and guided email matching.
 - Backup sign-in prompts, verified-method visibility, cancellable wallet requests, and bounded waits.
 - Optimistic edit versions, atomic writes, relationship integrity, and a workspace activity history.
-- Responsive interface and an isolated fictional demo (`/?demo=1`). Demo edits are intentionally session-only.
+- Responsive desktop and mobile interface.
 
 No other Bittrees product, control plane, token, or contract deployment is required.
 
@@ -138,7 +138,7 @@ Deployments must run the additive database migration before publishing this rele
 
 ## Opportunity types
 
-Built-in types include Partnership, Customer, Research, Contributor, Grant, Investment, Sponsorship, Integration, Consulting, Licensing, Community, and Event. Choose **Create custom type** in an opportunity to enter a label. Saving the opportunity also saves the label to your account for reuse across workspaces, devices, and sign-in methods. Personal options remain available after records are deleted; teammates can see a shared record's label without receiving your personal option list. Duplicate labels ignore capitalization and extra whitespace. Account recovery preserves both accounts' saved labels. Demo labels last only for the demo session.
+Built-in types include Partnership, Customer, Research, Contributor, Grant, Investment, Sponsorship, Integration, Consulting, Licensing, Community, and Event. Choose **Create custom type** in an opportunity to enter a label. Saving the opportunity also saves the label to your account for reuse across workspaces, devices, and sign-in methods. Personal options remain available after records are deleted; teammates can see a shared record's label without receiving your personal option list. Duplicate labels ignore capitalization and extra whitespace. Account recovery preserves both accounts' saved labels.
 
 ## Opportunity currencies
 

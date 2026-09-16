@@ -63,6 +63,14 @@ server.stderr.on("data", (chunk) => {
   logs += chunk.toString();
 });
 const browser = await chromium.launch();
+// Keep synthetic accounts out of analytics and make CRM checks independent of the consent service.
+async function testContext() {
+  const context = await browser.newContext();
+  await context.route("https://insights.bittrees.org/**", (route) =>
+    route.abort(),
+  );
+  return context;
+}
 const accounts: { id: string; workspace: string }[] = [];
 async function api(
   page: Page,
@@ -100,7 +108,7 @@ async function emailFlow(page: Page, email: string) {
   await expect(page.getByRole("dialog")).not.toBeVisible();
 }
 async function walletPage() {
-  const context = await browser.newContext();
+  const context = await testContext();
   const wallet = Wallet.createRandom();
   await context.exposeBinding("testWalletSign", async (_, hex: string) =>
     wallet.signMessage(getBytes(hex)),
@@ -508,7 +516,7 @@ try {
   await expect(
     timeout.getByLabel("Email address", { exact: true }),
   ).toBeEnabled();
-  const plain = await (await browser.newContext()).newPage();
+  const plain = await (await testContext()).newPage();
   await plain.goto(origin);
   await plain
     .getByRole("button", { name: "Sign in with Ethereum", exact: true })
@@ -518,14 +526,27 @@ try {
     plain.getByLabel("Email address", { exact: true }),
   ).toBeEnabled();
   await accessibility(plain, "Sign-in");
-  const demo = await (await browser.newContext()).newPage();
-  await demo.goto(origin + "/?demo=1");
+  const legacyDemo = await (await testContext()).newPage();
+  await legacyDemo.goto(origin + "/?demo=1");
   await expect(
-    demo.getByText("All names and records are fictional.", { exact: false }),
+    legacyDemo.getByRole("heading", { name: "Sign in", exact: true }),
   ).toBeVisible();
-  await demo.getByRole("button", { name: "Settings", exact: true }).click();
-  await expect(demo.getByLabel("Email me a daily digest")).toBeDisabled();
-  await accessibility(demo, "Demo settings");
+  await expect(
+    legacyDemo.getByText("Northstar Labs", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    legacyDemo.getByRole("button", { name: /Explore with fictional/ }),
+  ).toHaveCount(0);
+  await legacyDemo.screenshot({
+    path: "/tmp/crm-signin-professional.png",
+    fullPage: true,
+  });
+  await legacyDemo.setViewportSize({ width: 390, height: 844 });
+  await accessibility(legacyDemo, "Mobile sign-in");
+  await legacyDemo.screenshot({
+    path: "/tmp/crm-signin-professional-mobile.png",
+    fullPage: true,
+  });
   writeFileSync(
     "/tmp/crm-accessibility.json",
     JSON.stringify(accessibilityFindings, null, 2),
