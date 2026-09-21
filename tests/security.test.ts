@@ -1586,3 +1586,205 @@ test("AutoNote grants enforce PKCE, sharing, idempotency and revocation", async 
   await api.revokeUser(uid, grant.grantId);
   await assert.rejects(api.publish(grant.token, content));
 });
+
+test("AI selected-record grants enforce PKCE, privacy, current membership and revocation", async () => {
+  const ai = await import("../lib/ai");
+  const { createHash } = await import("node:crypto");
+  const { recordSchema, kinds } = await import("../lib/model");
+  const actor = randomUUID(),
+    stranger = randomUUID(),
+    reader = randomUUID(),
+    w = randomUUID(),
+    hidden = randomUUID(),
+    ids = kinds.map(() => randomUUID());
+  await pool().query(
+    "INSERT INTO users(id,name) VALUES($1,'AI fixture'),($2,'Other fixture'),($3,'Viewer fixture')",
+    [actor, stranger, reader],
+  );
+  await pool().query(
+    "INSERT INTO workspaces(id,name) VALUES($1,'AI isolated fixture')",
+    [w],
+  );
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'owner'),($1,$3,'viewer')",
+    [w, actor, reader],
+  );
+  await pool().query(
+    "INSERT INTO records(id,workspace_id,kind,data,visibility_ids) VALUES($1,$2,'projects',$3,$4)",
+    [
+      hidden,
+      w,
+      JSON.stringify(recordSchema.parse({ name: "HIDDEN_REFERENCE_SENTINEL" })),
+      [actor],
+    ],
+  );
+  for (let i = 0; i < kinds.length; i++)
+    await pool().query(
+      "INSERT INTO records(id,workspace_id,kind,data) VALUES($1,$2,$3,$4)",
+      [
+        ids[i],
+        w,
+        kinds[i],
+        JSON.stringify(
+          recordSchema.parse({
+            name: "Selected " + kinds[i],
+            projectId: hidden,
+            ownerId: actor,
+          }),
+        ),
+      ],
+    );
+  await pool().query(
+    "INSERT INTO record_private_notes(record_id,author_id,content) VALUES($1,$2,'PRIVATE_OWNER_NOTE_SENTINEL')",
+    [ids[0], actor],
+  );
+  const verifier = "v".repeat(64),
+    challenge = createHash("sha256").update(verifier).digest("base64url");
+  const input = {
+    workspaceId: w,
+    recordIds: ids,
+    actions: ["read"],
+    challenge,
+    expiresInDays: 1,
+  };
+  delete process.env.AI_CONNECTOR_ENABLED;
+  await assert.rejects(
+    ai.authorize(actor, input),
+    (e: any) => e.status === 404,
+  );
+  process.env.AI_CONNECTOR_ENABLED = "true";
+  try {
+    await assert.rejects(
+      ai.authorize(stranger, input),
+      (e: any) => e.status === 404,
+    );
+    await assert.rejects(
+      ai.authorize(actor, { ...input, subjectId: stranger }),
+    );
+    await assert.rejects(
+      ai.authorize(actor, { ...input, actions: ["publish"] }),
+    );
+    const approved = await ai.authorize(actor, input);
+    await assert.rejects(
+      ai.exchange({ code: approved.code, verifier: "x".repeat(64) }),
+      (e: any) => e.status === 401,
+    );
+    const exchanged = await Promise.allSettled([
+      ai.exchange({ code: approved.code, verifier }),
+      ai.exchange({ code: approved.code, verifier }),
+    ]);
+    assert.equal(exchanged.filter((r) => r.status === "fulfilled").length, 1);
+    const granted = (
+      exchanged.find(
+        (r) => r.status === "fulfilled",
+      ) as PromiseFulfilledResult<any>
+    ).value;
+    const result = await ai.read(granted.token, { recordIds: ids });
+    assert.equal(result.records.length, 6);
+    assert.equal(result.subjectId, actor);
+    assert.equal(
+      result.records.every(
+        (r) => r.data.projectId === "" && r.data.ownerId === "",
+      ),
+      true,
+    );
+    assert.equal(
+      JSON.stringify(result).includes("PRIVATE_OWNER_NOTE_SENTINEL"),
+      false,
+    );
+    assert.equal(
+      JSON.stringify(result).includes("HIDDEN_REFERENCE_SENTINEL"),
+      false,
+    );
+    assert.equal(JSON.stringify(result).includes("visibility_ids"), false);
+    await assert.rejects(
+      ai.read(granted.token, { recordIds: [hidden] }),
+      (e: any) => e.status === 403,
+    );
+    await assert.rejects(
+      ai.read(granted.token, { recordIds: ids, subjectId: stranger }),
+    );
+    assert.equal((await ai.connections(actor))[0].last_used_at !== null, true);
+    assert.deepEqual(await ai.connections(stranger), []);
+    await assert.rejects(
+      ai.revoke(stranger, granted.grantId),
+      (e: any) => e.status === 404,
+    );
+    await ai.revoke(actor, granted.grantId);
+    await assert.rejects(
+      ai.read(granted.token, { recordIds: ids }),
+      (e: any) => e.status === 401,
+    );
+    const pending = await ai.authorize(actor, input);
+    await pool().query(
+      "UPDATE ai_grants SET code_expires=now()-interval '1 second' WHERE id=$1",
+      [pending.grantId],
+    );
+    await assert.rejects(
+      ai.exchange({ code: pending.code, verifier }),
+      (e: any) => e.status === 401,
+    );
+    const other = await ai.authorize(actor, input),
+      active = await ai.exchange({ code: other.code, verifier });
+    await pool().query(
+      "UPDATE ai_grants SET expires_at=now()-interval '1 second' WHERE id=$1",
+      [active.grantId],
+    );
+    await assert.rejects(
+      ai.read(active.token, { recordIds: ids }),
+      (e: any) => e.status === 401,
+    );
+    // A separately shared record proves read-only members can opt in without gaining write rights.
+    const readable = randomUUID();
+    await pool().query(
+      "INSERT INTO records(id,workspace_id,kind,data) VALUES($1,$2,'notes',$3)",
+      [readable, w, JSON.stringify(recordSchema.parse({ name: "Readable" }))],
+    );
+    const consent = await ai.authorize(reader, {
+        ...input,
+        recordIds: [readable],
+      }),
+      readGrant = await ai.exchange({ code: consent.code, verifier });
+    assert.equal(
+      (await ai.read(readGrant.token, { recordIds: [readable] })).records
+        .length,
+      1,
+    );
+    await pool().query("UPDATE records SET visibility_ids=$2 WHERE id=$1", [
+      readable,
+      [actor],
+    ]);
+    await assert.rejects(
+      ai.read(readGrant.token, { recordIds: [readable] }),
+      (e: any) => e.status === 404,
+    );
+    await pool().query("UPDATE records SET visibility_ids=NULL WHERE id=$1", [
+      readable,
+    ]);
+    await pool().query(
+      "DELETE FROM members WHERE workspace_id=$1 AND user_id=$2",
+      [w, reader],
+    );
+    await assert.rejects(
+      ai.read(readGrant.token, { recordIds: [readable] }),
+      (e: any) => e.status === 404,
+    );
+    const finalConsent = await ai.authorize(actor, input),
+      finalGrant = await ai.exchange({ code: finalConsent.code, verifier });
+    await pool().query("DELETE FROM records WHERE id=$1", [ids[0]]);
+    await assert.rejects(
+      ai.read(finalGrant.token, { recordIds: ids }),
+      (e: any) => e.status === 404,
+    );
+    await pool().query("UPDATE users SET merged_into=$2 WHERE id=$1", [
+      actor,
+      stranger,
+    ]);
+    await assert.rejects(
+      ai.read(finalGrant.token, { recordIds: [ids[1]] }),
+      (e: any) => e.status === 401,
+    );
+  } finally {
+    delete process.env.AI_CONNECTOR_ENABLED;
+  }
+});
