@@ -2070,3 +2070,9 @@ td,
     font-size: 26px;
   }
 }
+
+.review-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+}
