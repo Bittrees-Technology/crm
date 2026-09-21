@@ -198,12 +198,16 @@ export async function prepare(bearer: string, raw: unknown) {
       payloadHash = digest(input);
     const old = (
       await db.query(
-        "SELECT * FROM ai_write_reviews WHERE grant_id=$1 AND operation_id=$2",
-        [g.id, input.operationId],
+        "SELECT * FROM ai_write_reviews WHERE user_id=$1 AND workspace_id=$2 AND operation_id=$3",
+        [g.user_id, g.workspace_id, input.operationId],
       )
     ).rows[0];
     if (old) {
-      if (old.payload_hash !== payloadHash || old.write_epoch !== p.epoch)
+      if (
+        old.grant_id !== g.id ||
+        old.payload_hash !== payloadHash ||
+        old.write_epoch !== p.epoch
+      )
         throw new HttpError(
           409,
           "Operation changed. Use a new reviewed operation.",
@@ -238,7 +242,7 @@ export async function prepare(bearer: string, raw: unknown) {
       expiresAt: expiresAt.toISOString(),
     });
     await db.query(
-      "INSERT INTO ai_write_reviews(id,grant_id,write_epoch,operation_id,payload_hash,payload,target_version,audience_hash,audience_count,digest,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+      "INSERT INTO ai_write_reviews(id,grant_id,write_epoch,operation_id,payload_hash,payload,target_version,audience_hash,audience_count,digest,expires_at,user_id,workspace_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
       [
         id,
         g.id,
@@ -251,6 +255,8 @@ export async function prepare(bearer: string, raw: unknown) {
         state.audienceCount,
         actionDigest,
         expiresAt,
+        g.user_id,
+        g.workspace_id,
       ],
     );
     return { reviewId: id, digest: actionDigest, expiresAt };

@@ -1982,6 +1982,27 @@ test("AI writes require separate consent and exact source-user review, preserve 
     assert.equal(saved.data.projectId, target);
     assert.deepEqual(saved.visibility_ids, [actor, viewer]);
     assert.equal(saved.data.ownerId, "");
+    const reconnectConsent = await ai.authorize(actor, {
+      workspaceId: w,
+      recordIds: [target],
+      actions: ["read"],
+      challenge,
+      expiresInDays: 1,
+    });
+    const reconnect = await ai.exchange({
+      code: reconnectConsent.code,
+      verifier,
+    });
+    await writes.authorizeWrites(actor, {
+      grantId: reconnect.grantId,
+      targetId: target,
+      kinds: ["notes"],
+      expiresInDays: 1,
+    });
+    await assert.rejects(
+      writes.prepare(reconnect.token, payload),
+      (e: any) => e.status === 409,
+    );
     // Audience change after approval must require a fresh review even without a target version change.
     const second = await writes.prepare(g.token, {
       ...payload,
