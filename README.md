@@ -208,3 +208,16 @@ Apply the additive migration (`records.visibility_ids`, `record_private_notes`) 
 ### AutoNote connection
 
 `/connect/autonote` approves or revokes AutoNote grants for one destination. AutoNote presents a review before publishing a summary and accepted actions. CRM rechecks current access, preserves destination sharing, and skips already-published items. Grants expire after 30 days. Private owner notes are not exposed. Published copies remain after disconnect or source deletion. Set `AUTONOTE_URL` to the matching environment's origin; its production default is `https://autonote.bittrees.org`. Run the additive database migration before deploying this integration.
+
+
+## AI connector foundation (disabled)
+
+AI_CONNECTOR_ENABLED defaults to off. The additive ai_grants migration introduces a separate read-only connection type; it does not reuse AutoNote grants or change human record permissions. Do not enable production access until the CRM consent UI and companion connection/revoke workflow are accepted.
+
+Authenticated, same-origin POST /api/integrations/ai/authorize accepts workspaceId, 1–100 distinct recordIds, actions [read], an S256 challenge, and expiresInDays (1–30). It returns a one-use 60-second code. POST /api/integrations/ai/exchange exchanges that code and its verifier for a 30-day-or-shorter token. Only token hashes are stored. Tokens are specific to the authorizing user, workspace and exact selected records; children and future records are not automatically included.
+
+POST /api/integrations/ai/read requires a bearer token and an explicit recordIds subset. It rechecks the active account, current workspace membership, record visibility, grant expiry and revocation on every use, serialized with source permission changes. The bounded response contains contractVersion, grantId, subjectId, workspaceId, policyRevision and records with id/kind/version/data. Private owner notes, sharing lists, audit events and member directories are never queried for output. Reference IDs outside the requested set and owner IDs are removed. Current content of selected records may be read again until revocation/expiry; permissions can always narrow access earlier.
+
+GET /api/integrations/ai/connections exposes only the signed-in user's grants, expiry and last-use metadata. DELETE at the same path accepts its id and revokes it. No grants are automatically created, and no note/task writes, delegation expansion or outreach is implemented by these endpoints. Exact reviewed publishing, consent UI, companion credential storage and end-to-end draft acceptance remain pending.
+
+Deployment requires the additive schema migration before enabling the flag. Disable the flag before rolling back application code; retain grant revocations and do not restore an older database to revive access. Integration tests use only the dedicated crm_test database.

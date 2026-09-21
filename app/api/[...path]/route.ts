@@ -1,3 +1,4 @@
+import * as ai from "@/lib/ai";
 import * as autonote from "@/lib/autonote";
 import { privateNote, inspectAccess } from "@/lib/sharing";
 import { NextRequest, NextResponse } from "next/server";
@@ -102,6 +103,23 @@ async function handle(req: NextRequest) {
           : await autonote.revokeBearer(bearer),
       );
     }
+
+    if (
+      ["integrations/ai/exchange", "integrations/ai/read"].includes(path) &&
+      req.method === "POST"
+    ) {
+      ai.requireAiEnabled();
+      const raw = await req.text();
+      if (raw.length > 20000) throw new HttpError(413, "Request too large.");
+      const input = JSON.parse(raw || "{}");
+      if (path.endsWith("/exchange")) return json(await ai.exchange(input));
+      const bearer = req.headers
+        .get("authorization")
+        ?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+      if (!bearer) throw new HttpError(401, "AI connection required.");
+      await rateLimit("ai:" + hash(bearer), 100);
+      return json(await ai.read(bearer, input));
+    }
     let body: Record<string, unknown> = {};
     if (req.method !== "GET") {
       checkOrigin(req);
@@ -177,6 +195,18 @@ async function handle(req: NextRequest) {
     }
     const user = (await currentUser(req))!;
     if (req.method !== "GET") await rateLimit("user:" + user.id, 300);
+
+    if (path === "integrations/ai/authorize" && req.method === "POST")
+      return json(await ai.authorize(user.id, body));
+    if (path === "integrations/ai/connections" && req.method === "GET")
+      return json(await ai.connections(user.id));
+    if (path === "integrations/ai/connections" && req.method === "DELETE")
+      return json(
+        await ai.revoke(
+          user.id,
+          z.strictObject({ id: z.uuid() }).parse(body).id,
+        ),
+      );
     if (path === "integrations/autonote/destinations" && req.method === "GET")
       return json(
         await autonote.destinations(
