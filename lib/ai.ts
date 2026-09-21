@@ -31,7 +31,7 @@ type Grant = {
 };
 const digest = (value: string) =>
   createHash("sha256").update(value).digest("base64url");
-async function selected(
+export async function selected(
   db: PoolClient,
   user: string,
   workspace: string,
@@ -91,10 +91,11 @@ export async function authorize(user: string, raw: unknown) {
     };
   });
 }
-async function locked(
+export async function locked(
   db: PoolClient,
   bearer: string,
   field: "code_hash" | "token_hash",
+  write = false,
 ) {
   if (!/^[a-f0-9]{64}$/.test(bearer))
     throw new HttpError(401, "AI connection required.");
@@ -104,7 +105,7 @@ async function locked(
     ])
   ).rows[0] as Grant | undefined;
   if (!found) throw new HttpError(401, "AI connection expired or revoked.");
-  await membership(found.workspace_id, found.user_id, false, false, db);
+  await membership(found.workspace_id, found.user_id, write, false, db);
   const current = (
     await db.query(
       "SELECT * FROM ai_grants WHERE id=$1 AND " + field + "=$2 FOR UPDATE",

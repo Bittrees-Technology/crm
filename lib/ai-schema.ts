@@ -1,4 +1,12 @@
 export const aiSchema = [
   "CREATE TABLE IF NOT EXISTS ai_grants(id uuid PRIMARY KEY,user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,record_ids uuid[] NOT NULL CHECK(cardinality(record_ids) BETWEEN 1 AND 100),actions text[] NOT NULL CHECK(actions=ARRAY['read']::text[]),code_hash text UNIQUE,challenge text NOT NULL,code_expires timestamptz NOT NULL,token_hash text UNIQUE,expires_at timestamptz NOT NULL,revoked_at timestamptz,last_used_at timestamptz,created_at timestamptz NOT NULL DEFAULT now());",
   "CREATE INDEX IF NOT EXISTS ai_grants_owner ON ai_grants(user_id,created_at);",
+  "CREATE TABLE IF NOT EXISTS ai_write_permissions(grant_id uuid PRIMARY KEY REFERENCES ai_grants(id) ON DELETE CASCADE,epoch uuid NOT NULL,target_id uuid NOT NULL,kinds text[] NOT NULL CHECK(cardinality(kinds) BETWEEN 1 AND 2 AND kinds <@ ARRAY['notes','tasks']::text[]),expires_at timestamptz NOT NULL,revoked_at timestamptz);",
+  "CREATE TABLE IF NOT EXISTS ai_write_reviews(id uuid PRIMARY KEY,grant_id uuid NOT NULL REFERENCES ai_grants(id) ON DELETE CASCADE,write_epoch uuid NOT NULL,operation_id uuid NOT NULL,payload_hash text NOT NULL,payload jsonb NOT NULL,target_version int NOT NULL,audience_hash text NOT NULL,audience_count int NOT NULL,digest text NOT NULL,expires_at timestamptz NOT NULL,approved_at timestamptz,record_id uuid,UNIQUE(grant_id,operation_id));",
+  "ALTER TABLE ai_write_reviews ADD COLUMN IF NOT EXISTS user_id uuid;",
+  "ALTER TABLE ai_write_reviews ADD COLUMN IF NOT EXISTS workspace_id uuid;",
+  "UPDATE ai_write_reviews r SET user_id=g.user_id,workspace_id=g.workspace_id FROM ai_grants g WHERE r.grant_id=g.id AND (r.user_id IS NULL OR r.workspace_id IS NULL);",
+  "ALTER TABLE ai_write_reviews ALTER COLUMN user_id SET NOT NULL;",
+  "ALTER TABLE ai_write_reviews ALTER COLUMN workspace_id SET NOT NULL;",
+  "CREATE UNIQUE INDEX IF NOT EXISTS ai_write_operation_owner ON ai_write_reviews(user_id,workspace_id,operation_id);",
 ].join("\n");
