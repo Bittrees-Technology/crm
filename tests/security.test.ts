@@ -1835,3 +1835,289 @@ test("AI selected-record grants enforce PKCE, privacy, current membership and re
     delete process.env.AI_CONNECTOR_ENABLED;
   }
 });
+
+test("AI writes require separate consent and exact source-user review, preserve sharing and reconcile duplicate publication", async () => {
+  const ai = await import("../lib/ai"),
+    writes = await import("../lib/ai-writes"),
+    { createHash } = await import("node:crypto"),
+    { recordSchema } = await import("../lib/model");
+  const actor = randomUUID(),
+    viewer = randomUUID(),
+    stranger = randomUUID(),
+    w = randomUUID(),
+    target = randomUUID();
+  await pool().query(
+    "INSERT INTO users(id,name) VALUES($1,'Writer'),($2,'Viewer'),($3,'Stranger')",
+    [actor, viewer, stranger],
+  );
+  await pool().query(
+    "INSERT INTO workspaces(id,name) VALUES($1,'AI write fixture')",
+    [w],
+  );
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'owner'),($1,$3,'viewer')",
+    [w, actor, viewer],
+  );
+  await pool().query(
+    "INSERT INTO records(id,workspace_id,kind,data,visibility_ids) VALUES($1,$2,'projects',$3,$4)",
+    [
+      target,
+      w,
+      recordSchema.parse({ name: "Selected destination" }),
+      [actor, viewer],
+    ],
+  );
+  const verifier = "w".repeat(64),
+    challenge = createHash("sha256").update(verifier).digest("base64url");
+  process.env.AI_CONNECTOR_ENABLED = "true";
+  try {
+    const consent = await ai.authorize(actor, {
+      workspaceId: w,
+      recordIds: [target],
+      actions: ["read"],
+      challenge,
+      expiresInDays: 1,
+    });
+    const g = await ai.exchange({ code: consent.code, verifier });
+    const snapshot = await ai.read(g.token, { recordIds: [target] });
+    const payload = {
+      operationId: randomUUID(),
+      targetId: target,
+      kind: "notes",
+      name: "Reviewed note",
+      description: "Exact reviewed text",
+      dueDate: "",
+      sources: snapshot.records.map((r) => ({ id: r.id, version: r.version })),
+      projectionHash: createHash("sha256")
+        .update(JSON.stringify(snapshot.records))
+        .digest("hex"),
+    };
+    await assert.rejects(
+      writes.prepare(g.token, payload),
+      (e: any) => e.status === 403,
+    );
+    await assert.rejects(
+      writes.authorizeWrites(stranger, {
+        grantId: g.grantId,
+        targetId: target,
+        kinds: ["notes"],
+        expiresInDays: 1,
+      }),
+      (e: any) => e.status === 404,
+    );
+    await assert.rejects(
+      writes.authorizeWrites(actor, {
+        grantId: g.grantId,
+        targetId: randomUUID(),
+        kinds: ["notes"],
+        expiresInDays: 1,
+      }),
+      (e: any) => e.status === 403,
+    );
+    const vConsent = await ai.authorize(viewer, {
+      workspaceId: w,
+      recordIds: [target],
+      actions: ["read"],
+      challenge,
+      expiresInDays: 1,
+    });
+    const vg = await ai.exchange({ code: vConsent.code, verifier });
+    await assert.rejects(
+      writes.authorizeWrites(viewer, {
+        grantId: vg.grantId,
+        targetId: target,
+        kinds: ["notes"],
+        expiresInDays: 1,
+      }),
+      (e: any) => e.status === 403,
+    );
+    await writes.authorizeWrites(actor, {
+      grantId: g.grantId,
+      targetId: target,
+      kinds: ["notes"],
+      expiresInDays: 1,
+    });
+    await assert.rejects(
+      writes.prepare(g.token, { ...payload, kind: "tasks" }),
+      (e: any) => e.status === 403,
+    );
+    const prepared = await writes.prepare(g.token, payload);
+    assert.equal(
+      (await writes.prepare(g.token, payload)).reviewId,
+      prepared.reviewId,
+    );
+    await assert.rejects(
+      writes.prepare(g.token, { ...payload, description: "Changed text" }),
+      (e: any) => e.status === 409,
+    );
+    const decision = { reviewId: prepared.reviewId, digest: prepared.digest };
+    await assert.rejects(
+      writes.publish(g.token, decision),
+      (e: any) => e.status === 403,
+    );
+    await assert.rejects(
+      writes.approve(stranger, decision),
+      (e: any) => e.status === 404,
+    );
+    const review = await writes.reviewForUser(actor, prepared.reviewId);
+    assert.equal(review.payload.description, payload.description);
+    assert.equal(review.audience.memberCount, 2);
+    await assert.rejects(
+      writes.approve(actor, { ...decision, digest: "0".repeat(64) }),
+      (e: any) => e.status === 409,
+    );
+    await writes.approve(actor, decision);
+    const published = await Promise.all([
+      writes.publish(g.token, decision),
+      writes.publish(g.token, decision),
+    ]);
+    assert.equal(published[0].recordId, published[1].recordId);
+    assert.equal(published.filter((r) => !r.existing).length, 1);
+    const saved = (
+      await pool().query("SELECT * FROM records WHERE id=$1", [
+        published[0].recordId,
+      ])
+    ).rows[0];
+    assert.equal(saved.data.description, payload.description);
+    assert.equal(saved.data.projectId, target);
+    assert.deepEqual(saved.visibility_ids, [actor, viewer]);
+    assert.equal(saved.data.ownerId, "");
+    // Audience change after approval must require a fresh review even without a target version change.
+    const second = await writes.prepare(g.token, {
+      ...payload,
+      operationId: randomUUID(),
+    });
+    await writes.approve(actor, {
+      reviewId: second.reviewId,
+      digest: second.digest,
+    });
+    await pool().query(
+      "UPDATE members SET scope_ids=$3 WHERE workspace_id=$1 AND user_id=$2",
+      [w, viewer, []],
+    );
+    // Explicit sharing still grants the viewer. Remove it without bumping version to test audience hashing itself.
+    await pool().query("UPDATE records SET visibility_ids=$2 WHERE id=$1", [
+      target,
+      [actor],
+    ]);
+    await assert.rejects(
+      writes.publish(g.token, {
+        reviewId: second.reviewId,
+        digest: second.digest,
+      }),
+      (e: any) => e.status === 409,
+    );
+    await pool().query("UPDATE records SET visibility_ids=$2 WHERE id=$1", [
+      target,
+      [actor, viewer],
+    ]);
+    const third = await writes.prepare(g.token, {
+      ...payload,
+      operationId: randomUUID(),
+    });
+    await writes.approve(actor, {
+      reviewId: third.reviewId,
+      digest: third.digest,
+    });
+    await pool().query("UPDATE records SET version=version+1 WHERE id=$1", [
+      target,
+    ]);
+    await assert.rejects(
+      writes.publish(g.token, {
+        reviewId: third.reviewId,
+        digest: third.digest,
+      }),
+      (e: any) => e.status === 409,
+    );
+    const latest = await ai.read(g.token, { recordIds: [target] });
+    const taskPayload = {
+      ...payload,
+      operationId: randomUUID(),
+      kind: "tasks",
+      name: "Reviewed task",
+      dueDate: "2026-10-01",
+      sources: latest.records.map((r) => ({ id: r.id, version: r.version })),
+      projectionHash: createHash("sha256")
+        .update(JSON.stringify(latest.records))
+        .digest("hex"),
+    };
+    await writes.authorizeWrites(actor, {
+      grantId: g.grantId,
+      targetId: target,
+      kinds: ["notes", "tasks"],
+      expiresInDays: 1,
+    });
+    const taskReview = await writes.prepare(g.token, taskPayload);
+    const taskDecision = {
+      reviewId: taskReview.reviewId,
+      digest: taskReview.digest,
+    };
+    await writes.approve(actor, taskDecision);
+    // Reconsenting changes the permission epoch, invalidating outstanding approval.
+    await writes.authorizeWrites(actor, {
+      grantId: g.grantId,
+      targetId: target,
+      kinds: ["notes", "tasks"],
+      expiresInDays: 1,
+    });
+    await assert.rejects(
+      writes.publish(g.token, taskDecision),
+      (e: any) => e.status === 409,
+    );
+    const fresh = await writes.prepare(g.token, {
+      ...taskPayload,
+      operationId: randomUUID(),
+    });
+    const freshDecision = { reviewId: fresh.reviewId, digest: fresh.digest };
+    await writes.approve(actor, freshDecision);
+    const taskReceipt = await writes.publish(g.token, freshDecision);
+    const taskRecord = (
+      await pool().query("SELECT kind,data FROM records WHERE id=$1", [
+        taskReceipt.recordId,
+      ])
+    ).rows[0];
+    assert.equal(taskRecord.kind, "tasks");
+    assert.equal(taskRecord.data.dueDate, "2026-10-01");
+    assert.equal(taskRecord.data.ownerId, "");
+    await pool().query("DELETE FROM records WHERE id=$1", [
+      taskReceipt.recordId,
+    ]);
+    const deletedReceipt = await writes.publish(g.token, freshDecision);
+    assert.equal(deletedReceipt.state, "deleted");
+    assert.equal(deletedReceipt.existing, true);
+    assert.equal(
+      (
+        await pool().query("SELECT id FROM records WHERE id=$1", [
+          taskReceipt.recordId,
+        ])
+      ).rowCount,
+      0,
+    );
+    const expired = await writes.prepare(g.token, {
+      ...taskPayload,
+      operationId: randomUUID(),
+    });
+    await pool().query(
+      "UPDATE ai_write_reviews SET expires_at=now()-interval '1 second' WHERE id=$1",
+      [expired.reviewId],
+    );
+    await assert.rejects(
+      writes.approve(actor, {
+        reviewId: expired.reviewId,
+        digest: expired.digest,
+      }),
+      (e: any) => e.status === 409,
+    );
+    await writes.revokeWrites(actor, g.grantId);
+    await assert.rejects(
+      writes.prepare(g.token, { ...payload, operationId: randomUUID() }),
+      (e: any) => e.status === 403,
+    );
+    assert.equal(
+      (await ai.read(g.token, { recordIds: [target] })).records.length,
+      1,
+    );
+  } finally {
+    delete process.env.AI_CONNECTOR_ENABLED;
+  }
+});

@@ -231,3 +231,8 @@ The AI page uses a separate root layout. Moving between it and the ordinary work
 
 
 AI clients can POST an empty object to /api/integrations/ai/disconnect with their AI bearer to revoke only that grant. This scope-reduction endpoint remains available after feature shutdown, membership loss or expiry. It returns the same acknowledgement for a cleared/unknown well-formed token, permitting retry after an uncertain response without disclosing grant existence. It accepts no caller-selected grant/user/workspace. Read/exchange remain behind AI_CONNECTOR_ENABLED.
+
+
+AI reviewed-write foundation (not yet exposed through routes/UI): lib/ai-writes.ts provides separate source-session write consent for one selected destination and notes/tasks, bounded by the parent read grant. Existing read grants remain read-only. Preparing a proposal requires this permission and exact selected-source revisions/projection. The source user must approve an immutable ten-minute review; publishing rechecks source rights, destination revision, exact audience and permission epoch. Changed content needs a new operation/review.
+
+Publication preserves destination sharing, uses source transactions and operation receipts, and creates no inferred owner or deadline. Concurrent retries create one record; removed records are never recreated from an old receipt. Write-only revocation leaves read access intact; parent revoke disables both. New tables are additive, and old versions cannot use the unexposed write path. No production migration, write permission or public endpoint is enabled in this increment. Consent/review UI, authenticated routing, companion integration and full acceptance remain pending.
