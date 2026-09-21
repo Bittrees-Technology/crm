@@ -2114,6 +2114,34 @@ test("AI writes require separate consent and exact source-user review, preserve 
       ).rowCount,
       0,
     );
+    const discardedPayload = { ...taskPayload, operationId: randomUUID() };
+    const discarded = await writes.prepare(g.token, discardedPayload);
+    const discardDecision = {
+      reviewId: discarded.reviewId,
+      digest: discarded.digest,
+    };
+    await writes.approve(actor, discardDecision);
+    await assert.rejects(
+      writes.deleteReview(stranger, discarded.reviewId),
+      (e: any) => e.status === 404,
+    );
+    await writes.deleteReview(actor, discarded.reviewId);
+    assert.deepEqual(
+      (
+        await pool().query("SELECT payload FROM ai_write_reviews WHERE id=$1", [
+          discarded.reviewId,
+        ])
+      ).rows[0].payload,
+      {},
+    );
+    await assert.rejects(
+      writes.publish(g.token, discardDecision),
+      (e: any) => e.status === 409,
+    );
+    await assert.rejects(
+      writes.prepare(g.token, discardedPayload),
+      (e: any) => e.status === 409,
+    );
     const expired = await writes.prepare(g.token, {
       ...taskPayload,
       operationId: randomUUID(),

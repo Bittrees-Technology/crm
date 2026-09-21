@@ -9,4 +9,5 @@ export const aiSchema = [
   "ALTER TABLE ai_write_reviews ALTER COLUMN user_id SET NOT NULL;",
   "ALTER TABLE ai_write_reviews ALTER COLUMN workspace_id SET NOT NULL;",
   "CREATE UNIQUE INDEX IF NOT EXISTS ai_write_operation_owner ON ai_write_reviews(user_id,workspace_id,operation_id);",
+  "ALTER TABLE ai_write_reviews ADD COLUMN IF NOT EXISTS cancelled_at timestamptz;",
 ].join("\n");

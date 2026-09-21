@@ -204,6 +204,7 @@ export async function prepare(bearer: string, raw: unknown) {
     ).rows[0];
     if (old) {
       if (
+        old.cancelled_at ||
         old.grant_id !== g.id ||
         old.payload_hash !== payloadHash ||
         old.write_epoch !== p.epoch
@@ -271,6 +272,7 @@ async function review(db: PoolClient, g: any, p: any, id: string) {
   ).rows[0];
   if (!r) throw new HttpError(404, "Review not found.");
   if (
+    r.cancelled_at ||
     r.write_epoch !== p.epoch ||
     new Date(r.expires_at).getTime() <= Date.now()
   )
@@ -414,6 +416,69 @@ export async function revokeWrites(user: string, grantId: string) {
     await db.query(
       "UPDATE ai_write_permissions SET revoked_at=COALESCE(revoked_at,now()) WHERE grant_id=$1",
       [grantId],
+    );
+    return { ok: true };
+  });
+}
+
+export async function writeOptions(user: string, grantId: string) {
+  requireAiEnabled();
+  return transaction(async (db) => {
+    const g = await owned(db, user, grantId);
+    const rows = await selected(db, user, g.workspace_id, g.record_ids);
+    const saved =
+      (
+        await db.query(
+          "SELECT target_id,kinds,expires_at,revoked_at FROM ai_write_permissions WHERE grant_id=$1",
+          [g.id],
+        )
+      ).rows[0] ?? null;
+    return {
+      targets: rows
+        .filter((r) =>
+          ["people", "organizations", "projects", "opportunities"].includes(
+            r.kind,
+          ),
+        )
+        .map((r) => ({
+          id: r.id,
+          kind: r.kind,
+          name: recordSchema.parse(r.data).name,
+        })),
+      permission: saved,
+    };
+  });
+}
+export async function writeStatus(bearer: string) {
+  requireAiEnabled();
+  return transaction(async (db) => {
+    const g = await locked(db, bearer, "token_hash", true),
+      p = await permission(db, g),
+      target = await destination(db, g, p.target_id);
+    return {
+      grantId: g.id,
+      epoch: p.epoch,
+      targetId: p.target_id,
+      targetName: target.data.name,
+      kinds: p.kinds,
+      expiresAt: p.expires_at,
+    };
+  });
+}
+
+export async function deleteReview(user: string, id: string) {
+  z.uuid().parse(id);
+  return transaction(async (db) => {
+    const row = (
+      await db.query(
+        "SELECT g.id FROM ai_grants g JOIN ai_write_reviews r ON r.grant_id=g.id WHERE r.id=$1 AND g.user_id=$2 FOR UPDATE OF g",
+        [id, user],
+      )
+    ).rows[0];
+    if (!row) throw new HttpError(404, "Review not found.");
+    await db.query(
+      "UPDATE ai_write_reviews SET payload='{}',cancelled_at=COALESCE(cancelled_at,now()) WHERE id=$1",
+      [id],
     );
     return { ok: true };
   });

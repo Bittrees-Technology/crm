@@ -1,4 +1,5 @@
 "use client";
+import { WriteConsent, ExactReview } from "./writes";
 import { useState, useEffect, useRef } from "react";
 type Choice = { id: string; name: string; kind: string };
 type Grant = {
@@ -25,6 +26,7 @@ export default function Consent() {
     [review, setReview] = useState(false),
     [code, setCode] = useState(""),
     [truncated, setTruncated] = useState(false);
+  const [reviewId, setReviewId] = useState("");
   const [codeExpiresAt, setCodeExpiresAt] = useState(0);
   const request = useRef(0);
   async function api(
@@ -65,6 +67,7 @@ export default function Consent() {
   }
   useEffect(() => {
     setChallenge(new URLSearchParams(location.search).get("challenge") || "");
+    setReviewId(new URLSearchParams(location.search).get("review") || "");
     void load();
   }, []);
   useEffect(() => {
@@ -118,6 +121,7 @@ export default function Consent() {
         </section>
       ) : (
         <>
+          {reviewId && <ExactReview id={reviewId} api={api} />}
           {code ? (
             <section className="integration-card">
               <h2>Finish in your companion</h2>
@@ -297,7 +301,7 @@ export default function Consent() {
                     ? "Revoked"
                     : new Date(g.expires_at) <= new Date()
                       ? "Expired"
-                      : "Read-only"}{" "}
+                      : "Read grant"}{" "}
                   · Expires {new Date(g.expires_at).toLocaleString()}
                 </p>
                 <p>
@@ -306,6 +310,9 @@ export default function Consent() {
                     ? new Date(g.last_used_at).toLocaleString()
                     : "Not used"}
                 </p>
+                {!g.revoked_at && new Date(g.expires_at) > new Date() && (
+                  <WriteConsent grantId={g.id} api={api} />
+                )}
                 {!g.revoked_at && (
                   <button
                     className="button"

@@ -1,3 +1,4 @@
+import * as aiWrites from "@/lib/ai-writes";
 import * as ai from "@/lib/ai";
 import * as autonote from "@/lib/autonote";
 import { privateNote, inspectAccess } from "@/lib/sharing";
@@ -109,6 +110,9 @@ async function handle(req: NextRequest) {
         "integrations/ai/exchange",
         "integrations/ai/read",
         "integrations/ai/disconnect",
+        "integrations/ai/writes/status",
+        "integrations/ai/writes/prepare",
+        "integrations/ai/writes/publish",
       ].includes(path) &&
       req.method === "POST"
     ) {
@@ -122,6 +126,14 @@ async function handle(req: NextRequest) {
         ?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
       if (!bearer) throw new HttpError(401, "AI connection required.");
       await rateLimit("ai:" + hash(bearer), 100);
+      if (path === "integrations/ai/writes/status") {
+        z.strictObject({}).parse(input);
+        return json(await aiWrites.writeStatus(bearer));
+      }
+      if (path === "integrations/ai/writes/prepare")
+        return json(await aiWrites.prepare(bearer, input));
+      if (path === "integrations/ai/writes/publish")
+        return json(await aiWrites.publish(bearer, input));
       return json(
         path.endsWith("/disconnect")
           ? await ai.revokeBearer(bearer, input)
@@ -204,6 +216,38 @@ async function handle(req: NextRequest) {
     const user = (await currentUser(req))!;
     if (req.method !== "GET") await rateLimit("user:" + user.id, 300);
 
+    if (path === "integrations/ai/writes/options" && req.method === "GET")
+      return json(
+        await aiWrites.writeOptions(
+          user.id,
+          req.nextUrl.searchParams.get("grantId") || "",
+        ),
+      );
+    if (path === "integrations/ai/writes/authorize" && req.method === "POST")
+      return json(await aiWrites.authorizeWrites(user.id, body));
+    if (path === "integrations/ai/writes/revoke" && req.method === "POST")
+      return json(
+        await aiWrites.revokeWrites(
+          user.id,
+          z.strictObject({ grantId: z.uuid() }).parse(body).grantId,
+        ),
+      );
+    if (path === "integrations/ai/writes/review" && req.method === "GET")
+      return json(
+        await aiWrites.reviewForUser(
+          user.id,
+          req.nextUrl.searchParams.get("id") || "",
+        ),
+      );
+    if (path === "integrations/ai/writes/review" && req.method === "DELETE")
+      return json(
+        await aiWrites.deleteReview(
+          user.id,
+          z.strictObject({ reviewId: z.uuid() }).parse(body).reviewId,
+        ),
+      );
+    if (path === "integrations/ai/writes/approve" && req.method === "POST")
+      return json(await aiWrites.approve(user.id, body));
     if (path === "integrations/ai/choices" && req.method === "GET")
       return json(
         await ai.choices(
