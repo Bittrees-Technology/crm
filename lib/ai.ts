@@ -68,7 +68,7 @@ export async function authorize(user: string, raw: unknown) {
       code = token();
     const row = (
       await db.query(
-        "INSERT INTO ai_grants(id,user_id,workspace_id,record_ids,actions,code_hash,challenge,code_expires,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '60 seconds',now()+($8*interval '1 day')) RETURNING expires_at",
+        "INSERT INTO ai_grants(id,user_id,workspace_id,record_ids,actions,code_hash,challenge,code_expires,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '60 seconds',now()+($8*interval '1 day')) RETURNING expires_at,code_expires",
         [
           id,
           user,
@@ -85,6 +85,7 @@ export async function authorize(user: string, raw: unknown) {
       code,
       grantId: id,
       expiresAt: row.expires_at,
+      codeExpiresAt: row.code_expires,
       actions: input.actions,
       recordIds: input.recordIds,
     };
@@ -212,4 +213,20 @@ export async function revoke(user: string, id: string) {
   );
   if (!result.rowCount) throw new HttpError(404, "Connection not found.");
   return { ok: true };
+}
+
+export async function choices(user: string, workspace: string) {
+  requireAiEnabled();
+  z.uuid().parse(workspace);
+  return transaction(async (db) => {
+    await membership(workspace, user, false, false, db);
+    const allowed = await accessIds(db, user, workspace);
+    const rows = (
+      await db.query(
+        "SELECT id,kind,data->>'name' AS name,version FROM records WHERE workspace_id=$1 AND ($2::uuid[] IS NULL OR id=ANY($2)) ORDER BY lower(data->>'name'),id LIMIT 1001",
+        [workspace, allowed],
+      )
+    ).rows;
+    return { items: rows.slice(0, 1000), truncated: rows.length > 1000 };
+  });
 }

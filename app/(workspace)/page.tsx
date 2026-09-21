@@ -12,12 +12,12 @@ import {
   type EthereumProvider,
 } from "@/lib/auth-client";
 import Papa from "papaparse";
-import { RecordSharing, AccessInspector } from "./components/sharing";
+import { RecordSharing, AccessInspector } from "../components/sharing";
 import {
   ScopePicker,
   MemberAccess,
   WorkspaceActions,
-} from "./components/workspace-controls";
+} from "../components/workspace-controls";
 import {
   typeOptions,
   normalizeType,
@@ -78,7 +78,7 @@ import {
   RelationshipTimeline,
   DigestSettings,
   InviteManager,
-} from "./components/coordination";
+} from "../components/coordination";
 
 type SavedView = {
   name: string;
