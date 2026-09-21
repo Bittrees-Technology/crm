@@ -221,3 +221,10 @@ POST /api/integrations/ai/read requires a bearer token and an explicit recordIds
 GET /api/integrations/ai/connections exposes only the signed-in user's grants, expiry and last-use metadata. DELETE at the same path accepts its id and revokes it. No grants are automatically created, and no note/task writes, delegation expansion or outreach is implemented by these endpoints. Exact reviewed publishing, consent UI, companion credential storage and end-to-end draft acceptance remain pending.
 
 Deployment requires the additive schema migration before enabling the flag. Disable the flag before rolling back application code; retain grant revocations and do not restore an older database to revive access. Integration tests use only the dedicated crm_test database.
+
+
+### Private AI consent screen
+
+When the feature flag is enabled, /connect/ai accepts only a public PKCE challenge in its query string. The user signs in through ordinary CRM, chooses up to 100 visible records, reviews the exact selection and expiry, and explicitly allows read access. The returned one-time code is displayed for manual transfer to the initiating local companion and hidden at its server-reported expiry. Codes and bearer tokens never appear in redirects. The page lists the user's connection expiry/last use and offers source-owned revoke.
+
+The AI page uses a separate root layout. Moving between it and the ordinary workspace creates a fresh document, so existing analytics scripts cannot remain in its document. The workspace and AutoNote keep their original URLs and analytics behavior. Remote fonts are confined to the ordinary workspace layout; AI consent loads no external fonts or analytics. A dynamic nonce policy restricts scripts and connections to the same origin, disallows framing and suppresses referrers. The local companion connection workflow remains a separate integration step before production activation.

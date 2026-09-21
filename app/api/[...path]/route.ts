@@ -196,6 +196,13 @@ async function handle(req: NextRequest) {
     const user = (await currentUser(req))!;
     if (req.method !== "GET") await rateLimit("user:" + user.id, 300);
 
+    if (path === "integrations/ai/choices" && req.method === "GET")
+      return json(
+        await ai.choices(
+          user.id,
+          req.nextUrl.searchParams.get("workspace") || "",
+        ),
+      );
     if (path === "integrations/ai/authorize" && req.method === "POST")
       return json(await ai.authorize(user.id, body));
     if (path === "integrations/ai/connections" && req.method === "GET")

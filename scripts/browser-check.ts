@@ -1,3 +1,4 @@
+import { checkAiConsent } from "./ai-consent-check";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -10,6 +11,7 @@ import { pool, transaction, schema } from "../lib/db";
 import { checkAdminWorkflows } from "./admin-workflows";
 import { checkWorkflows } from "./ui-workflows";
 const origin = "http://127.0.0.1:3040";
+process.env.AI_CONNECTOR_ENABLED = "true";
 if (
   process.env.APP_URL !== origin ||
   process.env.DEV_EMAIL_CONSOLE !== "true" ||
@@ -210,6 +212,7 @@ try {
     page.getByText("Two verified ways to sign in", { exact: true }),
   ).toBeVisible();
   await accessibility(page, "Settings");
+  await checkAiConsent(page, api, first, origin);
   await checkWorkflows(page, api, first, origin, accessibility);
   await checkAdminWorkflows(page, api, first, origin, accessibility);
   await page.goto(origin + "/?view=settings");

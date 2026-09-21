@@ -1664,6 +1664,16 @@ test("AI selected-record grants enforce PKCE, privacy, current membership and re
     await assert.rejects(
       ai.authorize(actor, { ...input, actions: ["publish"] }),
     );
+    const visibleChoices = await ai.choices(reader, w);
+    assert.equal(
+      visibleChoices.items.some((r) => r.id === hidden),
+      false,
+    );
+    assert.equal(
+      JSON.stringify(visibleChoices).includes("PRIVATE_OWNER_NOTE_SENTINEL"),
+      false,
+    );
+    await assert.rejects(ai.choices(stranger, w), (e: any) => e.status === 404);
     const approved = await ai.authorize(actor, input);
     await assert.rejects(
       ai.exchange({ code: approved.code, verifier: "x".repeat(64) }),

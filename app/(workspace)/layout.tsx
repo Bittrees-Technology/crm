@@ -1,6 +1,7 @@
 import InsightsScript from "next/script";
 import type { Metadata } from "next";
-import "./globals.css";
+import "../fonts.css";
+import "../globals.css";
 export const metadata: Metadata = {
   title: "Bittrees CRM",
   description:
@@ -10,7 +11,13 @@ export const metadata: Metadata = {
 export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}<InsightsScript src="https://insights.bittrees.org/consent.js" data-insights-site="bittrees-crm" strategy="afterInteractive" />
+      <body>
+        {children}
+        <InsightsScript
+          src="https://insights.bittrees.org/consent.js"
+          data-insights-site="bittrees-crm"
+          strategy="afterInteractive"
+        />
       </body>
     </html>
   );
