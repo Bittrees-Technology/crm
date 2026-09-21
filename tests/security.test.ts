@@ -1779,6 +1779,43 @@ test("AI selected-record grants enforce PKCE, privacy, current membership and re
       ai.read(readGrant.token, { recordIds: [readable] }),
       (e: any) => e.status === 404,
     );
+    // Disconnect reduces only the bearer grant, even after membership loss/expiry or feature shutdown.
+    await pool().query(
+      "UPDATE ai_grants SET expires_at=now()-interval '1 second' WHERE id=$1",
+      [readGrant.grantId],
+    );
+    delete process.env.AI_CONNECTOR_ENABLED;
+    await assert.rejects(
+      ai.revokeBearer("invalid", {}),
+      (e: any) => e.status === 401,
+    );
+    await assert.rejects(
+      ai.revokeBearer(readGrant.token, { grantId: granted.grantId }),
+    );
+    assert.deepEqual(await ai.revokeBearer(readGrant.token, {}), { ok: true });
+    assert.deepEqual(await ai.revokeBearer(readGrant.token, {}), { ok: true });
+    const disconnected = (
+      await pool().query(
+        "SELECT revoked_at,token_hash,code_hash FROM ai_grants WHERE id=$1",
+        [readGrant.grantId],
+      )
+    ).rows[0];
+    assert.ok(disconnected.revoked_at);
+    assert.equal(disconnected.token_hash, null);
+    assert.equal(disconnected.code_hash, null);
+    assert.equal(
+      (
+        await pool().query("SELECT revoked_at FROM ai_grants WHERE id=$1", [
+          active.grantId,
+        ])
+      ).rows[0].revoked_at,
+      null,
+    );
+    process.env.AI_CONNECTOR_ENABLED = "true";
+    await assert.rejects(
+      ai.read(readGrant.token, { recordIds: [readable] }),
+      (e: any) => e.status === 401,
+    );
     const finalConsent = await ai.authorize(actor, input),
       finalGrant = await ai.exchange({ code: finalConsent.code, verifier });
     await pool().query("DELETE FROM records WHERE id=$1", [ids[0]]);

@@ -105,10 +105,14 @@ async function handle(req: NextRequest) {
     }
 
     if (
-      ["integrations/ai/exchange", "integrations/ai/read"].includes(path) &&
+      [
+        "integrations/ai/exchange",
+        "integrations/ai/read",
+        "integrations/ai/disconnect",
+      ].includes(path) &&
       req.method === "POST"
     ) {
-      ai.requireAiEnabled();
+      if (!path.endsWith("/disconnect")) ai.requireAiEnabled();
       const raw = await req.text();
       if (raw.length > 20000) throw new HttpError(413, "Request too large.");
       const input = JSON.parse(raw || "{}");
@@ -118,7 +122,11 @@ async function handle(req: NextRequest) {
         ?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
       if (!bearer) throw new HttpError(401, "AI connection required.");
       await rateLimit("ai:" + hash(bearer), 100);
-      return json(await ai.read(bearer, input));
+      return json(
+        path.endsWith("/disconnect")
+          ? await ai.revokeBearer(bearer, input)
+          : await ai.read(bearer, input),
+      );
     }
     let body: Record<string, unknown> = {};
     if (req.method !== "GET") {

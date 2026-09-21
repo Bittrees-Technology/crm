@@ -89,6 +89,18 @@ export async function checkAiConsent(
       (await api(page, "integrations/ai/connections"))[0].revoked_at !== null,
       true,
     );
+    // Retry after source UI revocation must acknowledge without requiring a browser session.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const disconnected = await page.request.post(
+        origin + "/api/integrations/ai/disconnect",
+        {
+          headers: { Authorization: "Bearer " + grant.token },
+          data: {},
+        },
+      );
+      assert.equal(disconnected.status(), 200);
+      assert.deepEqual(await disconnected.json(), { ok: true });
+    }
     assert.deepEqual(outgoing, []);
     assert.equal(await page.locator('script[src*="insights"]').count(), 0);
   } finally {

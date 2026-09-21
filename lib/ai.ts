@@ -230,3 +230,16 @@ export async function choices(user: string, workspace: string) {
     return { items: rows.slice(0, 1000), truncated: rows.length > 1000 };
   });
 }
+
+/** Destructive scope reduction only; remains available after expiry, membership loss or feature shutdown. */
+export async function revokeBearer(bearer: string, raw: unknown) {
+  z.strictObject({}).parse(raw);
+  if (!/^[a-f0-9]{64}$/.test(bearer))
+    throw new HttpError(401, "AI connection required.");
+  await pool().query(
+    "UPDATE ai_grants SET revoked_at=COALESCE(revoked_at,now()),code_hash=NULL,token_hash=NULL WHERE token_hash=$1",
+    [hash(bearer)],
+  );
+  // An unknown/already-cleared token cannot read either. Stable acknowledgement permits uncertain retries.
+  return { ok: true };
+}
