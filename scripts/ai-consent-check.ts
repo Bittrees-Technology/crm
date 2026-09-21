@@ -28,6 +28,12 @@ export async function checkAiConsent(
     if (!request.url().startsWith(origin)) outgoing.push(request.url());
   };
   page.on("request", collect);
+  const errors: string[] = [];
+  const onConsole = (message: { type(): string; text(): string }) => {
+    if (message.type() === "error") errors.push(message.text());
+  };
+  page.on("console", onConsole);
+
   try {
     const response = await page.goto(
       origin + "/connect/ai?challenge=" + challenge,
@@ -36,7 +42,20 @@ export async function checkAiConsent(
     await expect(
       page.getByRole("heading", { name: "Connect your local AI", exact: true }),
     ).toBeVisible();
-    await page.getByLabel("Workspace", { exact: true }).selectOption(workspace);
+    try {
+      await page
+        .getByLabel("Workspace", { exact: true })
+        .selectOption(workspace);
+    } catch (error) {
+      console.error(
+        "AI consent initialization diagnostics",
+        JSON.stringify({
+          text: await page.locator("body").innerText(),
+          errors,
+        }),
+      );
+      throw error;
+    }
     await page
       .getByLabel("AI consent synthetic note · notes", { exact: true })
       .check();
@@ -74,6 +93,7 @@ export async function checkAiConsent(
     assert.equal(await page.locator('script[src*="insights"]').count(), 0);
   } finally {
     page.off("request", collect);
+    page.off("console", onConsole);
     await api(
       page,
       "workspaces/" + workspace + "/records",
