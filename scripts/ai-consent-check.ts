@@ -51,7 +51,7 @@ export async function checkAiConsent(
         "AI consent initialization diagnostics",
         JSON.stringify({
           text: await page.locator("body").innerText(),
-          errors,
+          errors: errors.slice(0, 5),
         }),
       );
       throw error;
@@ -64,7 +64,7 @@ export async function checkAiConsent(
       .click();
     await expect(
       page.getByRole("heading", {
-        name: "Allow read access to 1 selected records",
+        name: "Allow read access to 1 selected record",
         exact: true,
       }),
     ).toBeVisible();

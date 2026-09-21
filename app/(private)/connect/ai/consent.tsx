@@ -142,21 +142,20 @@ export default function Consent() {
           ) : /^[A-Za-z0-9_-]{43}$/.test(challenge) ? (
             <section className="integration-card">
               <h2>Select records</h2>
-              <label>
-                Workspace
-                <select
-                  disabled={busy || review}
-                  value={workspace}
-                  onChange={(e) => void chooseWorkspace(e.target.value)}
-                >
-                  <option value="">Choose workspace</option>
-                  {workspaces.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <label htmlFor="ai-workspace">Workspace</label>
+              <select
+                id="ai-workspace"
+                disabled={busy || review}
+                value={workspace}
+                onChange={(e) => void chooseWorkspace(e.target.value)}
+              >
+                <option value="">Choose workspace</option>
+                {workspaces.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
               {truncated && (
                 <p>
                   Only the first 1,000 visible records are shown. A narrower
@@ -168,7 +167,7 @@ export default function Consent() {
                   <fieldset disabled={busy}>
                     <legend>Records ({selected.length}/100)</legend>
                     {records.map((r) => (
-                      <label key={r.id}>
+                      <label className="checkbox-label" key={r.id}>
                         <input
                           type="checkbox"
                           checked={selected.includes(r.id)}
@@ -190,20 +189,19 @@ export default function Consent() {
                       <p>No visible records in this workspace.</p>
                     )}
                   </fieldset>
-                  <label>
-                    Connection expires after
-                    <select
-                      disabled={busy}
-                      value={days}
-                      onChange={(e) => setDays(Number(e.target.value))}
-                    >
-                      {[1, 7, 30].map((n) => (
-                        <option key={n} value={n}>
-                          {n} {n === 1 ? "day" : "days"}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <label htmlFor="ai-expiry">Connection expires after</label>
+                  <select
+                    id="ai-expiry"
+                    disabled={busy}
+                    value={days}
+                    onChange={(e) => setDays(Number(e.target.value))}
+                  >
+                    {[1, 7, 30].map((n) => (
+                      <option key={n} value={n}>
+                        {n} {n === 1 ? "day" : "days"}
+                      </option>
+                    ))}
+                  </select>
                   <button
                     className="button primary"
                     disabled={busy || !selected.length}
@@ -215,7 +213,8 @@ export default function Consent() {
               ) : (
                 <>
                   <h3>
-                    Allow read access to {selected.length} selected records
+                    Allow read access to {selected.length} selected{" "}
+                    {selected.length === 1 ? "record" : "records"}
                   </h3>
                   <ul>
                     {records
