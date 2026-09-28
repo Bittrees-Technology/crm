@@ -690,6 +690,7 @@ function Auth({
       <div className="auth-left">
         <Brand />
         {form}
+        <a href="/about" className="small">About Bittrees CRM</a>
       </div>
     </main>
   );

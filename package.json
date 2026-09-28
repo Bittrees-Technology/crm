@@ -12,7 +12,8 @@
     "db:migrate": "tsx --env-file=.env.local scripts/migrate.ts",
     "format": "prettier --write app lib scripts tests",
     "smoke": "tsx --env-file=.env.local scripts/smoke.ts",
-    "test:browser": "tsx --env-file=.env.local scripts/browser-check.ts"
+    "test:browser": "tsx --env-file=.env.local scripts/browser-check.ts",
+    "test:seo": "node scripts/seo-check.mjs"
   },
   "dependencies": {
     "ethers": "^6.16.0",
