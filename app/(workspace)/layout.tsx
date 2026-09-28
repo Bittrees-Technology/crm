@@ -1,8 +1,10 @@
+import { productMetadata } from "@/lib/site-metadata";
 import InsightsScript from "next/script";
 import type { Metadata } from "next";
 import "../fonts.css";
 import "../globals.css";
 export const metadata: Metadata = {
+  ...productMetadata,
   title: "Bittrees CRM",
   description:
     "Manage contacts, organizations, opportunities, projects, tasks, and notes.",
