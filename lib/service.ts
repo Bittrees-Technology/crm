@@ -7,7 +7,7 @@ import {
   validateVisibility,
 } from "./access";
 import { normalizeType, typeKey, defaultType } from "./opportunity-types";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { PoolClient } from "pg";
 import { pool, transaction } from "./db";
@@ -66,10 +66,11 @@ async function audit(
   id: string | null,
   detail: unknown,
 ) {
-  await db.query(
-    "INSERT INTO audit(workspace_id,actor_id,action,record_id,detail) VALUES($1,$2,$3,$4,$5)",
+  const result = await db.query(
+    "INSERT INTO audit(workspace_id,actor_id,action,record_id,detail) VALUES($1,$2,$3,$4,$5) RETURNING id,action,record_id,detail,created_at,(SELECT name FROM users WHERE id=$2) AS actor",
     [w, u, action, id, JSON.stringify(detail)],
   );
+  return result.rows[0];
 }
 async function validateReferences(db: PoolClient, w: string, data: RecordData) {
   for (const [field, kind] of Object.entries({
@@ -107,6 +108,7 @@ async function validateReferences(db: PoolClient, w: string, data: RecordData) {
 export async function saveRecord(userId: string, w: string, input: unknown) {
   const body = z
     .object({
+      operationId: z.uuid().optional(),
       id: z.uuid().optional(),
       kind: z.enum(kinds),
       version: z.number().int().positive().optional(),
@@ -120,6 +122,11 @@ export async function saveRecord(userId: string, w: string, input: unknown) {
         .optional(),
     })
     .parse(input);
+  const fingerprint = body.operationId
+    ? createHmac("sha256", process.env.AUTH_SECRET!)
+        .update(JSON.stringify(body))
+        .digest("hex")
+    : null;
   return transaction(async (db) => {
     const role = await membership(w, userId, true, false, db);
     if (
@@ -134,6 +141,46 @@ export async function saveRecord(userId: string, w: string, input: unknown) {
       await validateVisibility(db, w, body.visibilityIds);
     // Workspace lock makes reference checks, deletion, and import deduplication atomic.
     await db.query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE", [w]);
+    if (body.operationId) {
+      const receipt = (
+        await db.query(
+          "SELECT payload_hash,record_id,record_version FROM record_save_receipts WHERE user_id=$1 AND workspace_id=$2 AND operation_id=$3",
+          [userId, w, body.operationId],
+        )
+      ).rows[0];
+      if (receipt) {
+        if (receipt.payload_hash !== fingerprint)
+          throw new HttpError(
+            409,
+            "The previous save succeeded with different fields. Refresh and reopen the saved record before making further changes.",
+          );
+        await checkRecordAccess(db, userId, w, receipt.record_id);
+        const saved = (
+          await db.query(
+            "SELECT * FROM records WHERE id=$1 AND workspace_id=$2",
+            [receipt.record_id, w],
+          )
+        ).rows[0];
+        if (!saved || saved.version !== receipt.record_version)
+          throw new HttpError(
+            409,
+            "The previous save succeeded, but the record has since changed or been removed. Refresh before continuing.",
+          );
+        const activity =
+          role === "owner"
+            ? (
+                await db.query(
+                  "SELECT a.id,a.action,a.record_id,a.detail,a.created_at,u.name AS actor FROM audit a JOIN users u ON u.id=a.actor_id WHERE a.workspace_id=$1 AND a.record_id=$2 ORDER BY a.id DESC LIMIT 1",
+                  [w, saved.id],
+                )
+              ).rows[0]
+            : undefined;
+        return {
+          ...redactRecord(saved, await accessIds(db, userId, w)),
+          ...(activity ? { activity } : {}),
+        };
+      }
+    }
     await checkRecordAccess(db, userId, w, body.id, body.data);
     await validateReferences(db, w, body.data);
     if (
@@ -206,7 +253,7 @@ export async function saveRecord(userId: string, w: string, input: unknown) {
         [id, userId, body.privateNote.content],
       );
     }
-    await audit(
+    const activity = await audit(
       db,
       w,
       userId,
@@ -244,7 +291,15 @@ export async function saveRecord(userId: string, w: string, input: unknown) {
         [userId, typeKey(body.data.category), body.data.category],
       );
     }
-    return redactRecord(record, await accessIds(db, userId, w));
+    if (body.operationId)
+      await db.query(
+        "INSERT INTO record_save_receipts(user_id,workspace_id,operation_id,payload_hash,record_id,record_version) VALUES($1,$2,$3,$4,$5,$6)",
+        [userId, w, body.operationId, fingerprint, id, record.version],
+      );
+    return {
+      ...redactRecord(record, await accessIds(db, userId, w)),
+      ...(role === "owner" ? { activity } : {}),
+    };
   });
 }
 export async function deleteRecord(
@@ -255,7 +310,7 @@ export async function deleteRecord(
 ) {
   z.uuid().parse(id);
   return transaction(async (db) => {
-    await membership(w, userId, true, false, db);
+    const role = await membership(w, userId, true, false, db);
     await db.query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE", [w]);
     await checkRecordAccess(db, userId, w, id);
     const linked = await db.query(
@@ -276,12 +331,12 @@ export async function deleteRecord(
         409,
         "This record changed or was removed. Refresh and try again.",
       );
-    await audit(db, w, userId, "Record deleted", id, {
+    const activity = await audit(db, w, userId, "Record deleted", id, {
       kind: rows[0].kind,
       name: rows[0].data.name,
       relatedIds: await contextIds(db, w, rows[0].data),
     });
-    return { ok: true };
+    return { ok: true, ...(role === "owner" ? { activity } : {}) };
   });
 }
 export async function importRecords(userId: string, w: string, input: unknown) {
@@ -338,14 +393,85 @@ export async function importRecords(userId: string, w: string, input: unknown) {
     return { imported, skipped };
   });
 }
-export async function snapshot(userId: string, w: string) {
+export async function snapshot(
+  userId: string,
+  w: string,
+  paging?: { cursor?: string; limit?: number },
+) {
   return transaction(async (db) => {
     const role = await membership(w, userId, false, false, db);
     const ids = await accessIds(db, userId, w);
+    const revision = (
+      await db.query(
+        "SELECT read_revision::text AS revision FROM workspaces WHERE id=$1",
+        [w],
+      )
+    ).rows[0].revision;
+    const limit = paging
+      ? z
+          .number()
+          .int()
+          .min(1)
+          .max(200)
+          .parse(paging.limit ?? 100)
+      : null;
+    let after: string | null = null;
+    if (paging?.cursor) {
+      let cursor;
+      try {
+        cursor = JSON.parse(Buffer.from(paging.cursor, "base64url").toString());
+      } catch {
+        throw new HttpError(400, "Invalid page cursor.");
+      }
+      const parsed = z
+        .object({
+          id: z.uuid(),
+          revision: z.string(),
+          workspace: z.uuid(),
+          user: z.uuid(),
+        })
+        .safeParse(cursor);
+      if (
+        !parsed.success ||
+        parsed.data.workspace !== w ||
+        parsed.data.user !== userId
+      )
+        throw new HttpError(400, "Invalid page cursor.");
+      if (parsed.data.revision !== revision)
+        throw new HttpError(
+          409,
+          "Workspace changed while loading. Please refresh.",
+        );
+      after = parsed.data.id;
+    }
     const records = await db.query(
-      "SELECT * FROM records WHERE workspace_id=$1 AND ($2::uuid[] IS NULL OR id=ANY($2)) ORDER BY updated_at DESC",
-      [w, ids],
+      paging
+        ? "SELECT * FROM records WHERE workspace_id=$1 AND ($2::uuid[] IS NULL OR id=ANY($2)) AND ($3::uuid IS NULL OR id>$3) ORDER BY id LIMIT $4"
+        : "SELECT * FROM records WHERE workspace_id=$1 AND ($2::uuid[] IS NULL OR id=ANY($2)) ORDER BY updated_at DESC,id",
+      paging ? [w, ids, after, limit! + 1] : [w, ids],
     );
+    const hasMore = limit !== null && records.rows.length > limit;
+    const pageRows =
+      limit === null ? records.rows : records.rows.slice(0, limit);
+    const nextCursor = hasMore
+      ? Buffer.from(
+          JSON.stringify({
+            id: pageRows.at(-1).id,
+            revision,
+            workspace: w,
+            user: userId,
+          }),
+        ).toString("base64url")
+      : null;
+    if (after)
+      return {
+        records: pageRows.map((r) => redactRecord(r, ids)),
+        nextCursor,
+        role,
+        limited: false,
+        members: [],
+        audit: [],
+      };
     const members = await db.query(
       "SELECT u.id,u.name,m.role,m.scope_ids FROM members m JOIN users u ON u.id=m.user_id WHERE workspace_id=$1 ORDER BY u.name",
       [w],
@@ -360,7 +486,8 @@ export async function snapshot(userId: string, w: string) {
     return {
       role,
       limited: members.rows.find((m) => m.id === userId)?.scope_ids !== null,
-      records: records.rows.map((r) => redactRecord(r, ids)),
+      records: pageRows.map((r) => redactRecord(r, ids)),
+      ...(paging ? { nextCursor } : {}),
       members: members.rows.map((m) =>
         role === "owner" ? m : { id: m.id, name: m.name, role: m.role },
       ),

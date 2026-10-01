@@ -355,7 +355,20 @@ async function handle(req: NextRequest) {
       const [, w, resource] = match;
       z.uuid().parse(w);
       if (!resource && req.method === "GET")
-        return json(await snapshot(user.id, w));
+        return json(
+          await snapshot(
+            user.id,
+            w,
+            req.nextUrl.searchParams.get("paged") === "1"
+              ? {
+                  cursor: req.nextUrl.searchParams.get("cursor") || undefined,
+                  limit: req.nextUrl.searchParams.has("limit")
+                    ? Number(req.nextUrl.searchParams.get("limit"))
+                    : undefined,
+                }
+              : undefined,
+          ),
+        );
       if (!resource && req.method === "PATCH") {
         const name = z.string().trim().min(1).max(100).parse(body.name);
         await transaction(async (db) => {

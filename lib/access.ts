@@ -7,6 +7,11 @@ import {
   type AccessRecord,
 } from "./access-graph";
 export { referenceFields } from "./access-graph";
+// Access resolution needs links and names, never descriptions or contact details.
+export const accessProjection = `id,kind,visibility_ids,jsonb_build_object(
+ 'name',data->>'name','organizationId',data->>'organizationId',
+ 'personId',data->>'personId','projectId',data->>'projectId',
+ 'opportunityId',data->>'opportunityId') AS data`;
 export type Db = Pick<PoolClient, "query">;
 export const scopeSchema = z.array(z.uuid()).max(100).nullable();
 export async function accessIds(
@@ -22,9 +27,18 @@ export async function accessIds(
   ).rows[0];
   if (!member) throw new HttpError(404, "Workspace not found.");
   if (member.role === "owner") return null;
+  if (member.scope_ids === null) {
+    // Whole-workspace members need only record IDs, with per-record sharing enforced in SQL.
+    return (
+      await db.query(
+        "SELECT id FROM records WHERE workspace_id=$1 AND (visibility_ids IS NULL OR $2::uuid=ANY(visibility_ids))",
+        [workspace, user],
+      )
+    ).rows.map((r) => r.id);
+  }
   const records = (
     await db.query(
-      "SELECT id,kind,data,visibility_ids FROM records WHERE workspace_id=$1",
+      `SELECT ${accessProjection} FROM records WHERE workspace_id=$1`,
       [workspace],
     )
   ).rows;
@@ -85,7 +99,7 @@ export async function checkRecordAccess(
   if (member.role === "owner") return;
   const records: AccessRecord[] = (
     await db.query(
-      "SELECT id,kind,data,visibility_ids FROM records WHERE workspace_id=$1",
+      `SELECT ${accessProjection} FROM records WHERE workspace_id=$1`,
       [workspace],
     )
   ).rows;

@@ -243,3 +243,8 @@ The private AI consent page now exposes separate write-permission management and
 The private page keeps its no-analytics/no-remote-font layout and same-origin CSP. Approval alone does not publish; the companion must submit the approved digest to the source publication endpoint. Source browser tests exercise grant opt-in, review, publication, idempotent retry and revoke using synthetic records. Companion publication controls and full pilot acceptance remain pending.
 
 Delete proposal copy removes staged content and cancels any unpublished approval while retaining a content-free operation tombstone for deduplication. It does not delete an independently published CRM record. Only the source user can delete their proposal, including after grant expiry/revoke; bearer credentials cannot approve or delete reviews.
+
+
+## Loading and save reliability
+
+Workspace loading uses revision-checked record pages. Routine saves update the returned record without reloading the full workspace, and stable per-editor operation IDs prevent duplicate writes after lost responses. Apply `scripts/migrate-performance.ts` with a restricted environment file before deploying this release. See [the implementation report and scoped MCP lead-generation plan](docs/performance-and-lead-generation.md) for verification, measured transfer sizes, rollout notes and remaining limitations.

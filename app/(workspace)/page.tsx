@@ -1,4 +1,5 @@
 "use client";
+import { ApiError, loadWorkspacePages } from "@/lib/workspace-loader";
 import {
   useEffect,
   useRef,
@@ -150,11 +151,18 @@ const initials = (s: string) =>
     .map((v) => v[0])
     .join("")
     .toUpperCase();
-async function api(path: string, method = "GET", body?: unknown) {
+async function api(
+  path: string,
+  method = "GET",
+  body?: unknown,
+  signal?: AbortSignal,
+) {
   let response: Response;
   try {
     response = await fetch("/api/" + path, {
-      signal: AbortSignal.timeout(15000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(15000)])
+        : AbortSignal.timeout(15000),
       method,
       headers: body ? { "Content-Type": "application/json" } : undefined,
       body: body ? JSON.stringify(body) : undefined,
@@ -176,7 +184,8 @@ async function api(path: string, method = "GET", body?: unknown) {
   }
   if (response.status === 401 && !path.startsWith("auth/"))
     window.dispatchEvent(new Event("crm-session-expired"));
-  if (!response.ok) throw new Error(data.error || "Something went wrong.");
+  if (!response.ok)
+    throw new ApiError(data.error || "Something went wrong.", response.status);
   return data;
 }
 function Modal({
@@ -206,7 +215,12 @@ function Modal({
     >
       <div className="modal-head">
         <h2>{title}</h2>
-        <button data-insights="close" className="icon-button" onClick={onClose} aria-label="Close">
+        <button
+          data-insights="close"
+          className="icon-button"
+          onClick={onClose}
+          aria-label="Close"
+        >
           <X size={20} />
         </button>
       </div>
@@ -347,7 +361,8 @@ function AccountRecovery({
               ? "Confirm and combine accounts"
               : "Verify current account"}
         </button>
-        <button data-insights="keep-accounts-separate"
+        <button
+          data-insights="keep-accounts-separate"
           type="button"
           className="text-button"
           disabled={busy}
@@ -583,7 +598,12 @@ function Auth({
             wallet app.
           </p>
           {operation !== "wallet-verify" && (
-            <button data-insights="cancel-wallet-request-/-use-email" type="button" className="text-button" onClick={cancel}>
+            <button
+              data-insights="cancel-wallet-request-/-use-email"
+              type="button"
+              className="text-button"
+              onClick={cancel}
+            >
               Cancel wallet request / use email
             </button>
           )}
@@ -642,7 +662,8 @@ function Auth({
               <ArrowRight size={17} />
             </button>
             {challenge && (
-              <button data-insights="use-a-different-email-or-request-a-new-code"
+              <button
+                data-insights="use-a-different-email-or-request-a-new-code"
                 type="button"
                 className="text-button"
                 onClick={() => {
@@ -678,7 +699,11 @@ function Auth({
       </div>
 
       {onClose && (
-        <button data-insights="cancel" className="text-button" onClick={onClose}>
+        <button
+          data-insights="cancel"
+          className="text-button"
+          onClick={onClose}
+        >
           Cancel
         </button>
       )}
@@ -690,7 +715,9 @@ function Auth({
       <div className="auth-left">
         <Brand />
         {form}
-        <a href="/about" className="small">About Bittrees CRM</a>
+        <a href="/about" className="small">
+          About Bittrees CRM
+        </a>
       </div>
     </main>
   );
@@ -706,6 +733,9 @@ export default function App() {
       members: [],
       audit: [],
     });
+  const loadingRequest = useRef<AbortController | null>(null);
+  const [loadedCount, setLoadedCount] = useState<number | null>(null);
+  const quickOperations = useRef(new Map<string, string>());
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [page, setPage] = useState<Page>("today"),
     [search, setSearch] = useState(""),
@@ -882,27 +912,81 @@ export default function App() {
           ),
         }));
       else {
-        await api("workspaces/" + workspace + "/records", "POST", {
+        const body = {
           id: record.id,
           kind: record.kind,
           version: record.version,
           data: { ...record.data, ...patch },
-        });
-        await refresh();
+        };
+        const key = JSON.stringify(body);
+        const operationId =
+          quickOperations.current.get(key) || crypto.randomUUID();
+        quickOperations.current.set(key, operationId);
+        const saved = await api(
+          "workspaces/" + workspace + "/records",
+          "POST",
+          {
+            operationId,
+            id: record.id,
+            kind: record.kind,
+            version: record.version,
+            data: { ...record.data, ...patch },
+          },
+        );
+        applySaved(saved);
+        quickOperations.current.delete(key);
       }
       notify("Updated.");
     } catch (e) {
       setError((e as Error).message);
-      if (!demo) await refresh().catch(() => {});
+      if (e instanceof ApiError && [403, 404, 409].includes(e.status)) {
+        if (e.status !== 409)
+          setSnapshot((s) => ({ ...s, records: [], audit: [] }));
+        await refresh().catch(() => {});
+      }
       throw e;
     } finally {
       setBusy(false);
     }
   }
+  function applySaved(
+    saved: CrmRecord & { activity?: Snapshot["audit"][number] },
+  ) {
+    if (workspaceRef.current !== workspace) return;
+    loadingRequest.current?.abort();
+    const { activity, ...record } = saved;
+    setSnapshot((s) => ({
+      ...s,
+      records: [record, ...s.records.filter((r) => r.id !== record.id)],
+      audit: activity
+        ? [activity, ...s.audit.filter((a) => a.id !== activity.id)].slice(
+            0,
+            100,
+          )
+        : s.audit,
+    }));
+  }
+  async function readWorkspace(requested: string) {
+    loadingRequest.current?.abort();
+    const controller = new AbortController();
+    loadingRequest.current = controller;
+    setLoadedCount(0);
+    try {
+      return await loadWorkspacePages<Snapshot>(
+        (path) => api(path, "GET", undefined, controller.signal),
+        requested,
+        (count) => {
+          if (!controller.signal.aborted) setLoadedCount(count);
+        },
+      );
+    } finally {
+      if (loadingRequest.current === controller) setLoadedCount(null);
+    }
+  }
   async function refresh() {
     if (!workspace || demo) return;
     const requested = workspace;
-    const s = await api("workspaces/" + requested);
+    const s = await readWorkspace(requested);
     if (workspaceRef.current === requested) setSnapshot(s);
   }
   useEffect(() => {
@@ -915,7 +999,7 @@ export default function App() {
     if (workspace && !demo) {
       setSnapshot({ role: "viewer", records: [], members: [], audit: [] });
       setBusy(true);
-      api("workspaces/" + workspace)
+      readWorkspace(workspace)
         .then((s) => {
           if (!cancelled) setSnapshot(s);
         })
@@ -928,6 +1012,7 @@ export default function App() {
     }
     return () => {
       cancelled = true;
+      loadingRequest.current?.abort();
     };
   }, [workspace, demo]);
   useEffect(() => {
@@ -958,6 +1043,11 @@ export default function App() {
       await fn();
     } catch (e) {
       setError((e as Error).message);
+      if (e instanceof ApiError && [403, 404, 409].includes(e.status)) {
+        if (e.status !== 409)
+          setSnapshot((s) => ({ ...s, records: [], audit: [] }));
+        await refresh().catch(() => {});
+      }
     } finally {
       setBusy(false);
     }
@@ -1003,7 +1093,9 @@ export default function App() {
     data: RecordData,
     record?: CrmRecord,
     ownerFields?: OwnerRecordFields,
+    operationId?: string,
   ) {
+    let refreshWarning = false;
     await action(async () => {
       if (demo) {
         const r: CrmRecord = {
@@ -1019,14 +1111,36 @@ export default function App() {
           records: [r, ...s.records.filter((v) => v.id !== r.id)],
         }));
       } else {
-        await api("workspaces/" + workspace + "/records", "POST", {
-          kind,
-          data,
-          id: record?.id,
-          version: record?.version,
-          ...ownerFields,
-        });
-        await refresh();
+        const saved = await api(
+          "workspaces/" + workspace + "/records",
+          "POST",
+          {
+            operationId,
+            kind,
+            data,
+            id: record?.id,
+            version: record?.version,
+            ...ownerFields,
+          },
+        );
+        applySaved(saved);
+        const graphChanged =
+          ownerFields?.visibilityIds !== undefined ||
+          (!!record &&
+            ["organizationId", "personId", "projectId", "opportunityId"].some(
+              (k) =>
+                record.data[k as keyof RecordData] !==
+                data[k as keyof RecordData],
+            ));
+        if (graphChanged) {
+          // Changed links can change other records' visibility; only publish a fresh complete view.
+          try {
+            await refresh();
+          } catch {
+            refreshWarning = true;
+            setSnapshot((s) => ({ ...s, records: [], audit: [] }));
+          }
+        }
       }
       if (kind === "opportunities" && normalizeType(data.category)) {
         const label =
@@ -1046,7 +1160,11 @@ export default function App() {
         );
       }
       setEditing(null);
-      notify("Record saved.");
+      notify(
+        refreshWarning
+          ? "Record saved. The workspace could not refresh. Use Refresh to reload your current access."
+          : "Record saved.",
+      );
     });
   }
   async function remove(record: CrmRecord) {
@@ -1059,11 +1177,22 @@ export default function App() {
           records: s.records.filter((r) => r.id !== record.id),
         }));
       else {
-        await api("workspaces/" + workspace + "/records", "DELETE", {
-          id: record.id,
-          version: record.version,
-        });
-        await refresh();
+        const result = await api(
+          "workspaces/" + workspace + "/records",
+          "DELETE",
+          {
+            id: record.id,
+            version: record.version,
+          },
+        );
+        loadingRequest.current?.abort();
+        setSnapshot((s) => ({
+          ...s,
+          records: s.records.filter((r) => r.id !== record.id),
+          audit: result.activity
+            ? [result.activity, ...s.audit].slice(0, 100)
+            : s.audit,
+        }));
       }
       setEditing(null);
       notify("Record deleted.");
@@ -1119,7 +1248,8 @@ export default function App() {
   return (
     <div className="app">
       {mobile && (
-        <button data-insights="close-navigation"
+        <button
+          data-insights="close-navigation"
           className="mobile-backdrop"
           aria-label="Close navigation"
           onClick={() => setMobile(false)}
@@ -1133,8 +1263,10 @@ export default function App() {
               me.workspaces.find((w) => w.id === workspace)?.name || "W",
             )}
           </span>
-          <select data-insights="workspace"
+          <select
+            data-insights="workspace"
             aria-label="Workspace"
+            disabled={busy}
             value={workspace}
             onChange={(e) => setWorkspace(e.target.value)}
           >
@@ -1183,7 +1315,8 @@ export default function App() {
           })}
         </nav>
         <div className="sidebar-bottom">
-          <button data-insights="settings"
+          <button
+            data-insights="settings"
             className={page === "settings" ? "nav-item active" : "nav-item"}
             onClick={() => nav("settings")}
           >
@@ -1223,7 +1356,8 @@ export default function App() {
       </aside>
       <div className="main">
         <header className="topbar">
-          <button data-insights="toggle-navigation"
+          <button
+            data-insights="toggle-navigation"
             className="icon-button mobile-menu"
             onClick={() => setMobile(!mobile)}
             aria-label="Toggle navigation"
@@ -1248,6 +1382,11 @@ export default function App() {
             </button>
           </div>
         </header>
+        {loadedCount !== null && (
+          <div className="demo-bar" role="status">
+            Loading workspace… {loadedCount} records received.
+          </div>
+        )}
         {snapshot.limited && (
           <div className="demo-bar">
             Limited collaboration{" "}
@@ -1259,7 +1398,8 @@ export default function App() {
         {!me.workspaces.length && (
           <div className="panel-pad">
             <p>You do not belong to a workspace yet.</p>
-            <button data-insights="create-your-workspace"
+            <button
+              data-insights="create-your-workspace"
               className="button primary"
               onClick={() => setCreatingWorkspace(true)}
             >
@@ -1270,7 +1410,8 @@ export default function App() {
         {error && (
           <div role="alert" className="error global-message">
             {error}
-            <button data-insights="dismiss-error"
+            <button
+              data-insights="dismiss-error"
               className="icon-button"
               aria-label="Dismiss error"
               onClick={() => setError("")}
@@ -1297,11 +1438,16 @@ export default function App() {
               !me.identities.some(
                 (i) => i.kind === "email" && i.value === inviteInfo.email,
               ) && (
-                <button data-insights="verify-invited-email" className="button" onClick={() => setLinking(true)}>
+                <button
+                  data-insights="verify-invited-email"
+                  className="button"
+                  onClick={() => setLinking(true)}
+                >
                   Verify invited email
                 </button>
               )}
-            <button data-insights="accept-invitation"
+            <button
+              data-insights="accept-invitation"
               className="button primary"
               disabled={
                 !inviteInfo ||
@@ -1326,7 +1472,11 @@ export default function App() {
             >
               Accept invitation
             </button>
-            <button data-insights="dismiss" className="text-button" onClick={() => setInviteToken("")}>
+            <button
+              data-insights="dismiss"
+              className="text-button"
+              onClick={() => setInviteToken("")}
+            >
               Dismiss
             </button>
           </div>
@@ -1349,7 +1499,8 @@ export default function App() {
                   <p>Tasks and opportunities requiring attention.</p>
                 </div>
                 {canEdit && (
-                  <button data-insights="new-opportunity"
+                  <button
+                    data-insights="new-opportunity"
                     className="button primary"
                     onClick={() => setEditing({ kind: "opportunities" })}
                   >
@@ -1388,10 +1539,10 @@ export default function App() {
                 <section className="panel">
                   <div className="section-heading">
                     <h2>
-                      Follow-ups due{" "}
-                      <span className="count">{due.length}</span>
+                      Follow-ups due <span className="count">{due.length}</span>
                     </h2>
-                    <button data-insights="all-tasks"
+                    <button
+                      data-insights="all-tasks"
                       className="text-button"
                       onClick={() => nav("tasks")}
                     >
@@ -1478,7 +1629,8 @@ export default function App() {
                         </div>
                       );
                     })}
-                  <button data-insights="open-opportunities"
+                  <button
+                    data-insights="open-opportunities"
                     className="text-button"
                     onClick={() => nav("opportunities")}
                   >
@@ -1520,7 +1672,11 @@ export default function App() {
                   <h1>Reports</h1>
                   <p>Pipeline, activity, and follow-up summary.</p>
                 </div>
-                <button data-insights="export-workspace" className="button" onClick={exportData}>
+                <button
+                  data-insights="export-workspace"
+                  className="button"
+                  onClick={exportData}
+                >
                   <ArrowDownToLine size={17} />
                   Export workspace
                 </button>
@@ -1672,7 +1828,11 @@ export default function App() {
                         maxLength={80}
                       />
                     </label>
-                    <button data-insights="save-name" className="button" disabled={busy}>
+                    <button
+                      data-insights="save-name"
+                      className="button"
+                      disabled={busy}
+                    >
                       Save name
                     </button>
                   </form>
@@ -1693,7 +1853,8 @@ export default function App() {
                     ))}
                   </div>
                   <div className="panel-pad">
-                    <button data-insights="link-email-or-wallet"
+                    <button
+                      data-insights="link-email-or-wallet"
                       className="button"
                       disabled={demo}
                       onClick={() => setLinking(true)}
@@ -1752,7 +1913,8 @@ export default function App() {
                         disabled={busy || snapshot.role !== "owner"}
                       />
                     </label>
-                    <button data-insights="save-workspace"
+                    <button
+                      data-insights="save-workspace"
                       className="button"
                       disabled={busy || snapshot.role !== "owner"}
                     >
@@ -1760,11 +1922,16 @@ export default function App() {
                     </button>
                   </form>
                   <div className="panel-pad button-stack">
-                    <button data-insights="export-all-workspace-data" className="button" onClick={exportData}>
+                    <button
+                      data-insights="export-all-workspace-data"
+                      className="button"
+                      onClick={exportData}
+                    >
                       <ArrowDownToLine size={17} />
                       Export all workspace data
                     </button>
-                    <button data-insights="create-another-workspace"
+                    <button
+                      data-insights="create-another-workspace"
                       className="button"
                       disabled={demo}
                       onClick={() => setCreatingWorkspace(true)}
@@ -1904,7 +2071,8 @@ export default function App() {
                         onChange={setInviteScope}
                         disabled={busy || demo}
                       />
-                      <button data-insights="create-invite-link"
+                      <button
+                        data-insights="create-invite-link"
                         className="button primary"
                         disabled={busy || demo || inviteScope?.length === 0}
                       >
@@ -2001,7 +2169,8 @@ export default function App() {
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
-                <select data-insights="filter-records"
+                <select
+                  data-insights="filter-records"
                   aria-label="Filter records"
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
@@ -2013,7 +2182,8 @@ export default function App() {
                   )}
                 </select>
                 {savedViews.some((v) => v.page === page) && (
-                  <select data-insights="saved-views"
+                  <select
+                    data-insights="saved-views"
                     aria-label="Saved views"
                     value=""
                     onChange={(e) => {
@@ -2037,7 +2207,11 @@ export default function App() {
                       ))}
                   </select>
                 )}
-                <button data-insights="save-view" className="button subtle" onClick={saveView}>
+                <button
+                  data-insights="save-view"
+                  className="button subtle"
+                  onClick={saveView}
+                >
                   Save view
                 </button>
                 <div className="toolbar-spacer" />
@@ -2062,7 +2236,8 @@ export default function App() {
                 {["people", "organizations"].includes(page) &&
                   canEdit &&
                   !snapshot.limited && (
-                    <button data-insights="import-csv"
+                    <button
+                      data-insights="import-csv"
                       className="button subtle"
                       onClick={() => setImporting(true)}
                     >
@@ -2159,7 +2334,8 @@ export default function App() {
                           <div className="column-empty">No opportunities</div>
                         )}
                         {canEdit && (
-                          <button data-insights="add-opportunity"
+                          <button
+                            data-insights="add-opportunity"
                             className="column-add"
                             aria-label={`Add opportunity in ${stage}`}
                             onClick={() =>
@@ -2337,7 +2513,8 @@ export default function App() {
         </main>
         <footer className="app-footer">
           <Sprout size={13} /> Bittrees CRM{" "}
-          <a data-insights="navigate-githubcom/bittrees-technology/crm"
+          <a
+            data-insights="navigate-githubcom/bittrees-technology/crm"
             href="https://github.com/Bittrees-Technology/crm"
             target="_blank"
             rel="noreferrer"
@@ -2366,7 +2543,9 @@ export default function App() {
             setError("");
           }}
           isOwner={snapshot.role === "owner"}
-          onSave={(d, fields) => save(editing.kind, d, editing.record, fields)}
+          onSave={(d, fields, operationId) =>
+            save(editing.kind, d, editing.record, fields, operationId)
+          }
           onDelete={editing.record ? () => remove(editing.record!) : undefined}
         />
       )}
@@ -2488,7 +2667,11 @@ export default function App() {
                 {error}
               </div>
             )}
-            <button data-insights="create-workspace" className="button primary" disabled={busy}>
+            <button
+              data-insights="create-workspace"
+              className="button primary"
+              disabled={busy}
+            >
               Create workspace
             </button>
           </form>
@@ -2578,9 +2761,14 @@ function RecordEditor({
   busy: boolean;
   error: string;
   onClose: () => void;
-  onSave: (data: RecordData, ownerFields?: OwnerRecordFields) => void;
+  onSave: (
+    data: RecordData,
+    ownerFields?: OwnerRecordFields,
+    operationId?: string,
+  ) => void;
   onDelete?: () => void;
 }) {
+  const [operationId] = useState(() => crypto.randomUUID());
   const [data, setData] = useState<RecordData>(
     record?.data || {
       ...recordSchema.parse({
@@ -2742,6 +2930,7 @@ function RecordEditor({
                     : {}),
                 }
               : undefined,
+            operationId,
           );
         }}
       >
@@ -2944,7 +3133,8 @@ function RecordEditor({
               ) : privateError ? (
                 <div className="error" role="alert">
                   {privateError}{" "}
-                  <button data-insights="retry-private-note"
+                  <button
+                    data-insights="retry-private-note"
                     type="button"
                     className="button"
                     onClick={() => setPrivateRetry((v) => v + 1)}
@@ -2998,7 +3188,8 @@ function RecordEditor({
         )}
         <div className="modal-actions">
           {onDelete && canEdit && (
-            <button data-insights="delete-record"
+            <button
+              data-insights="delete-record"
               type="button"
               className="text-button danger"
               onClick={onDelete}
@@ -3008,7 +3199,8 @@ function RecordEditor({
             </button>
           )}
           <div className="toolbar-spacer" />
-          <button data-insights="close"
+          <button
+            data-insights="close"
             type="button"
             className="button"
             onClick={closeEditor}
