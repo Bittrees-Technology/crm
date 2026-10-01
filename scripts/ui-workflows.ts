@@ -289,7 +289,7 @@ export async function checkWorkflows(
   await Promise.all([
     page.waitForResponse(
       (response) =>
-        response.url().endsWith("/api/" + base) &&
+        new URL(response.url()).pathname.endsWith("/api/" + base) &&
         response.request().method() === "GET" &&
         response.ok(),
     ),
@@ -341,6 +341,60 @@ export async function checkWorkflows(
   await expect(page.getByText("UX imported", { exact: true })).toHaveCount(0);
   await page.getByLabel("Filter records").selectOption("all");
   await expect(page.getByText("UX imported", { exact: true })).toBeVisible();
+  // A lost response after COMMIT must reuse its key and never create a duplicate.
+  await page.goto(origin + "/?view=notes");
+  await expect(
+    page.getByRole("button", { name: "Add note", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByTitle("Refresh workspace")).toBeEnabled();
+  let workspaceReloads = 0;
+  const workspacePattern = "**/api/" + base + "?*";
+  await page.route(workspacePattern, (route) => {
+    workspaceReloads++;
+    return route.abort();
+  });
+  const operationIds: string[] = [];
+  await page.route("**/api/" + base + "/records", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    operationIds.push(route.request().postDataJSON().operationId);
+    if (operationIds.length === 1) {
+      const committed = await route.fetch();
+      assert.ok(committed.ok());
+      return route.abort();
+    }
+    return route.continue();
+  });
+  await page.getByRole("button", { name: "Add note", exact: true }).click();
+  const retryDialog = page.getByRole("dialog");
+  await retryDialog
+    .getByLabel("Note title", { exact: true })
+    .fill("Committed retry note");
+  await retryDialog.getByRole("button", { name: "Save record" }).click();
+  await expect(retryDialog.getByRole("alert")).toContainText(
+    "Could not connect",
+  );
+  await retryDialog.getByRole("button", { name: "Save record" }).click();
+  await expect(retryDialog).not.toBeVisible();
+  await expect(
+    page.getByText("Committed retry note", { exact: true }),
+  ).toBeVisible();
+  assert.equal(operationIds.length, 2);
+  assert.ok(operationIds[0]);
+  assert.equal(operationIds[0], operationIds[1]);
+  assert.equal(
+    workspaceReloads,
+    0,
+    "Successful saves must not refetch workspace pages",
+  );
+  await page.unroute(workspacePattern);
+  await page.unroute("**/api/" + base + "/records");
+  assert.equal(
+    (await api(page, base)).records.filter(
+      (r: any) => r.data.name === "Committed retry note",
+    ).length,
+    1,
+  );
+
   // Delete each record through its UI, then leave a clean workspace for the remaining checks.
   for (const r of (await api(page, base)).records) {
     await page.goto(origin + "/?view=" + r.kind);

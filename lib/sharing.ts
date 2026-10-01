@@ -1,3 +1,4 @@
+import { accessProjection } from "./access";
 import { z } from "zod";
 import { transaction } from "./db";
 import { membership } from "./service";
@@ -32,7 +33,7 @@ export async function inspectAccess(userId: string, workspace: string) {
     await membership(workspace, userId, false, true, db);
     const records = (
       await db.query(
-        "SELECT id,kind,data,visibility_ids FROM records WHERE workspace_id=$1 ORDER BY lower(data->>'name'),id",
+        `SELECT ${accessProjection} FROM records WHERE workspace_id=$1 ORDER BY lower(data->>'name'),id`,
         [workspace],
       )
     ).rows;

@@ -46,6 +46,7 @@ const server = spawn(
   [
     "node_modules/next/dist/bin/next",
     "dev",
+    ...(process.env.CRM_TEST_WEBPACK === "true" ? ["--webpack"] : []),
     "--hostname",
     "127.0.0.1",
     "--port",

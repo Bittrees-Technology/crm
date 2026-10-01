@@ -2170,3 +2170,135 @@ test("AI writes require separate consent and exact source-user review, preserve 
     delete process.env.AI_CONNECTOR_ENABLED;
   }
 });
+
+test("save retries are atomic, scoped, payload-bound and never resurrect deleted records", async () => {
+  const operationId = randomUUID();
+  const body = {
+    operationId,
+    kind: "notes",
+    data: { name: "Retry-safe note", description: "Synthetic only" },
+    privateNote: { content: "Owner only", version: 0 },
+  };
+  const [a, b] = await Promise.all([
+    saveRecord(owner, workspace, body),
+    saveRecord(owner, workspace, body),
+  ]);
+  assert.equal(a.id, b.id);
+  assert.equal(a.version, 1);
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT count(*)::int n FROM audit WHERE record_id=$1",
+        [a.id],
+      )
+    ).rows[0].n,
+    1,
+  );
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT version FROM record_private_notes WHERE record_id=$1",
+        [a.id],
+      )
+    ).rows[0].version,
+    1,
+  );
+  await assert.rejects(
+    () =>
+      saveRecord(owner, workspace, {
+        ...body,
+        data: { name: "Different payload" },
+      }),
+    /previous save succeeded/,
+  );
+  const update = {
+    operationId: randomUUID(),
+    id: a.id,
+    version: 1,
+    kind: "notes",
+    data: { ...a.data, description: "Updated" },
+  };
+  const first = await saveRecord(owner, workspace, update);
+  const repeat = await saveRecord(owner, workspace, update);
+  assert.equal(first.version, 2);
+  assert.equal(repeat.version, 2);
+  await assert.rejects(
+    () => saveRecord(other, workspace, body),
+    /Workspace|role/,
+  );
+  await deleteRecord(owner, workspace, a.id, 2);
+  await assert.rejects(
+    () => saveRecord(owner, workspace, update),
+    /changed or been removed/,
+  );
+  assert.equal(
+    (
+      await pool().query("SELECT count(*)::int n FROM records WHERE id=$1", [
+        a.id,
+      ])
+    ).rows[0].n,
+    0,
+  );
+});
+
+test("paged workspace reads are bounded, complete, scoped and reject changed revisions", async () => {
+  const w = randomUUID();
+  await pool().query("INSERT INTO workspaces(id,name) VALUES($1,$2)", [
+    w,
+    "Pagination fixture",
+  ]);
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'owner')",
+    [w, owner],
+  );
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'viewer')",
+    [w, other],
+  );
+  for (let i = 0; i < 5; i++)
+    await saveRecord(owner, w, {
+      kind: "notes",
+      data: { name: `Page ${i}`, description: "x".repeat(4000) },
+      ...(i === 4 ? { visibilityIds: [] } : {}),
+    });
+  let page = await snapshot(other, w, { limit: 2 });
+  assert.equal(page.records.length, 2);
+  assert.ok(page.nextCursor);
+  const second = await snapshot(other, w, {
+    limit: 2,
+    cursor: page.nextCursor!,
+  });
+  assert.equal(second.records.length, 2);
+  assert.equal(second.nextCursor, null);
+  assert.equal(
+    new Set([...page.records, ...second.records].map((r) => r.id)).size,
+    4,
+  );
+  assert.equal(
+    JSON.stringify([...page.records, ...second.records]).includes("Page 4"),
+    false,
+  );
+  await assert.rejects(
+    () => snapshot(owner, w, { cursor: page.nextCursor! }),
+    /Invalid page cursor/,
+  );
+  await assert.rejects(() => snapshot(other, w, { limit: 201 }), /200/);
+  await saveRecord(owner, w, {
+    kind: "notes",
+    data: { name: "New during pagination" },
+  });
+  await assert.rejects(
+    () => snapshot(other, w, { cursor: page.nextCursor! }),
+    /changed while loading/,
+  );
+  page = await snapshot(other, w, { limit: 2 });
+  await pool().query(
+    "UPDATE members SET scope_ids=$1 WHERE workspace_id=$2 AND user_id=$3",
+    [[], w, other],
+  );
+  await assert.rejects(
+    () => snapshot(other, w, { cursor: page.nextCursor! }),
+    /changed while loading/,
+  );
+  assert.equal((await snapshot(other, w, { limit: 2 })).records.length, 0);
+});
