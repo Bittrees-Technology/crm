@@ -800,30 +800,37 @@ export default function App() {
     [inviteError, setInviteError] = useState("");
   const [inviteToken, setInviteToken] = useState(""),
     [inviteUrl, setInviteUrl] = useState("");
-  useEffect(() => {
+  function legacyViews(): SavedView[] {
     try {
       const stored = JSON.parse(
         localStorage.getItem(`crm-views:${me?.user.id}:${workspace}`) || "[]",
       );
-      setSavedViews(
-        Array.isArray(stored)
-          ? stored
-              .filter(
-                (v) =>
-                  v &&
-                  typeof v.name === "string" &&
-                  typeof v.page === "string" &&
-                  Object.hasOwn(labels, v.page) &&
-                  typeof v.search === "string" &&
-                  typeof v.filter === "string" &&
-                  typeof v.board === "boolean",
-              )
-              .slice(-20)
-          : [],
-      );
+      return Array.isArray(stored)
+        ? stored
+            .filter(
+              (v) =>
+                v &&
+                typeof v.name === "string" &&
+                typeof v.page === "string" &&
+                Object.hasOwn(labels, v.page) &&
+                typeof v.search === "string" &&
+                typeof v.filter === "string" &&
+                typeof v.board === "boolean",
+            )
+            .slice(-20)
+        : [];
     } catch {
-      setSavedViews([]);
+      return [];
     }
+  }
+  function combineViews(server: SavedView[], legacy = legacyViews()) {
+    return [
+      ...legacy.filter((v) => !server.some((s) => s.name === v.name)),
+      ...server,
+    ].slice(-20);
+  }
+  useEffect(() => {
+    setSavedViews(legacyViews());
   }, [me?.user.id, workspace]);
   async function saveView() {
     const name = window.prompt("Name this view");
@@ -839,11 +846,18 @@ export default function App() {
       const next = demo
         ? [...savedViews.filter((v) => v.name !== view.name), view].slice(-20)
         : await api("me/views", "POST", { workspaceId: workspace, view });
-      setSavedViews(next);
-      localStorage.setItem(
-        `crm-views:${me?.user.id}:${workspace}`,
-        JSON.stringify(next),
-      );
+      const legacy = demo
+        ? next
+        : legacyViews().filter((v) => v.name !== view.name);
+      setSavedViews(demo ? next : combineViews(next, legacy));
+      try {
+        localStorage.setItem(
+          `crm-views:${me?.user.id}:${workspace}`,
+          JSON.stringify(legacy),
+        );
+      } catch {
+        /* Server save is already confirmed. */
+      }
       notify(
         demo
           ? "Demo view saved in this browser."
@@ -856,7 +870,7 @@ export default function App() {
     let active = true;
     void api("me/views?workspace=" + workspace)
       .then((v) => {
-        if (active) setSavedViews(v);
+        if (active) setSavedViews(combineViews(v));
       })
       .catch(() => {
         if (active)
@@ -2288,8 +2302,20 @@ export default function App() {
                             workspaceId: workspace,
                             name,
                           });
+                          const legacy = legacyViews().filter(
+                            (v) => v.name !== name,
+                          );
+                          try {
+                            localStorage.setItem(
+                              `crm-views:${me?.user.id}:${workspace}`,
+                              JSON.stringify(legacy),
+                            );
+                          } catch {}
                           setSavedViews(
-                            await api("me/views?workspace=" + workspace),
+                            combineViews(
+                              await api("me/views?workspace=" + workspace),
+                              legacy,
+                            ),
                           );
                           notify("Saved view deleted.");
                         });
@@ -2615,7 +2641,7 @@ export default function App() {
           kind={editing.kind}
           initialStage={editing.stage}
           record={editing.record}
-          records={records}
+          records={snapshot.records}
           members={snapshot.members}
           userId={me.user.id}
           savedTypes={me.opportunityTypes || []}
@@ -2987,7 +3013,10 @@ function RecordEditor({
       label,
       records
         .filter((r) => r.kind === k && r.id !== record?.id)
-        .map((r) => ({ value: r.id, label: r.data.name })),
+        .map((r) => ({
+          value: r.id,
+          label: r.data.name + (r.archived_at ? " (archived)" : ""),
+        })),
     );
   return (
     <Modal
