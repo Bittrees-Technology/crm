@@ -2302,3 +2302,254 @@ test("paged workspace reads are bounded, complete, scoped and reject changed rev
   );
   assert.equal((await snapshot(other, w, { limit: 2 })).records.length, 0);
 });
+
+test("Lead searches keep research separate from exact owner-approved imports", async () => {
+  const leads = await import("../lib/leads");
+  process.env.CRM_LEADS_ENABLED = "true";
+  const brief = {
+    target: "Developer infrastructure",
+    sourceDomains: ["bittrees.org"],
+    maxResults: 2,
+    freshnessDays: 30,
+  };
+  const connection = await leads.createSearch(owner, {
+    workspaceId: workspace,
+    brief,
+  });
+  const candidate = {
+    name: "Synthetic lead " + randomUUID(),
+    website: "https://candidate-" + randomUUID() + ".org",
+    summary: "Research supplied by agent",
+    relevance: "Infrastructure",
+    uncertainties: "Team size unknown",
+    fit: "medium",
+    evidence: "primary",
+    sources: [
+      { url: "https://bittrees.org/", retrievedAt: new Date().toISOString() },
+    ],
+  };
+  const input = { operationId: randomUUID(), candidates: [candidate] };
+  assert.equal(
+    (await leads.agentBrief(connection.token)).brief.target,
+    brief.target,
+  );
+  const preview = await leads.prepare(connection.token, input);
+  assert.equal(
+    (await leads.prepare(connection.token, input)).reviewId,
+    preview.reviewId,
+  );
+  await assert.rejects(
+    () =>
+      leads.prepare(connection.token, {
+        ...input,
+        candidates: [{ ...candidate, name: "Changed" }],
+      }),
+    /already has a preview/,
+  );
+  await assert.rejects(
+    () => leads.review(other, preview.reviewId),
+    /unavailable/,
+  );
+  const review = await leads.review(owner, preview.reviewId);
+  assert.equal(review.matches[0].length, 0);
+  const result = await leads.approve(owner, {
+    reviewId: review.id,
+    digest: review.digest,
+    accept: [0],
+  });
+  assert.equal(result.accepted, 1);
+  assert.deepEqual(
+    (
+      await leads.approve(owner, {
+        reviewId: review.id,
+        digest: review.digest,
+        accept: [0],
+      })
+    ).recordIds,
+    result.recordIds,
+  );
+  const record = (
+    await pool().query("SELECT * FROM records WHERE id=$1", result.recordIds)
+  ).rows[0];
+  assert.deepEqual(record.visibility_ids, []);
+  assert.equal(record.data.communication, "Unknown");
+  assert.match(record.data.description, /AI research/);
+  await leads.revokeSearch(owner, connection.id);
+  await assert.rejects(() => leads.agentBrief(connection.token), /unavailable/);
+});
+test("Lead review detects new duplicates and revoked owner authority", async () => {
+  const leads = await import("../lib/leads");
+  process.env.CRM_LEADS_ENABLED = "true";
+  const w = randomUUID(),
+    editor = randomUUID();
+  await pool().query("INSERT INTO users(id,name) VALUES($1,'Lead editor')", [
+    editor,
+  ]);
+  await pool().query(
+    "INSERT INTO workspaces(id,name) VALUES($1,'Lead tests')",
+    [w],
+  );
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'owner'),($1,$3,'editor')",
+    [w, owner, editor],
+  );
+  await assert.rejects(
+    () =>
+      leads.createSearch(editor, {
+        workspaceId: w,
+        brief: { target: "Test", sourceDomains: ["bittrees.org"] },
+      }),
+    /role/,
+  );
+  const c = await leads.createSearch(owner, {
+    workspaceId: w,
+    brief: { target: "Test", sourceDomains: ["bittrees.org"] },
+  });
+  const candidate = {
+    name: "Example organization",
+    website: "https://bittrees.org",
+    summary: "Test",
+    relevance: "Test",
+    uncertainties: "Unverified",
+    fit: "low",
+    evidence: "unconfirmed",
+    sources: [
+      { url: "https://bittrees.org/", retrievedAt: new Date().toISOString() },
+    ],
+  };
+  const p = await leads.prepare(c.token, {
+    operationId: randomUUID(),
+    candidates: [candidate],
+  });
+  const r = await leads.review(owner, p.reviewId);
+  await saveRecord(owner, w, {
+    kind: "organizations",
+    data: {
+      name: candidate.name,
+      website: candidate.website,
+      communication: "Do not contact",
+    },
+  });
+  await assert.rejects(
+    () =>
+      leads.approve(owner, {
+        reviewId: p.reviewId,
+        digest: r.digest,
+        accept: [0],
+      }),
+    /duplicates changed/,
+  );
+  const fresh = await leads.review(owner, p.reviewId);
+  assert.equal(fresh.matches[0][0].doNotContact, true);
+  await assert.rejects(
+    () =>
+      leads.approve(owner, {
+        reviewId: p.reviewId,
+        digest: fresh.digest,
+        accept: [0],
+      }),
+    /potential matches/,
+  );
+  await pool().query(
+    "UPDATE members SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",
+    [w, owner],
+  );
+  await assert.rejects(() => leads.agentBrief(c.token), /role/);
+});
+
+test("Archive is reversible, preserves links and sharing, blocks stale edits and excludes digests", async () => {
+  const { archive } = await import("../lib/workflow");
+  const w = randomUUID();
+  await pool().query(
+    "INSERT INTO workspaces(id,name) VALUES($1,'Archive test')",
+    [w],
+  );
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'owner')",
+    [w, owner],
+  );
+  const org = await saveRecord(owner, w, {
+    kind: "organizations",
+    data: { name: "Archive organization" },
+    visibilityIds: [],
+    privateNote: { content: "Preserve private note", version: 0 },
+  });
+  const person = await saveRecord(owner, w, {
+    kind: "people",
+    data: { name: "Linked person", organizationId: org.id },
+  });
+  const archived = await archive(owner, w, {
+    id: org.id,
+    version: org.version,
+    archived: true,
+  });
+  assert.ok(archived.archived_at);
+  assert.deepEqual(archived.visibility_ids, []);
+  await assert.rejects(
+    () =>
+      saveRecord(owner, w, {
+        id: org.id,
+        version: archived.version,
+        kind: "organizations",
+        data: org.data,
+      }),
+    /Restore/,
+  );
+  await assert.rejects(
+    () =>
+      archive(other, w, {
+        id: org.id,
+        version: archived.version,
+        archived: false,
+      }),
+    /not found/,
+  );
+  const restored = await archive(owner, w, {
+    id: org.id,
+    version: archived.version,
+    archived: false,
+  });
+  assert.equal(restored.archived_at, null);
+  assert.equal(
+    (await snapshot(owner, w)).records.find((r) => r.id === person.id)?.data
+      .organizationId,
+    org.id,
+  );
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT content FROM record_private_notes WHERE record_id=$1",
+        [org.id],
+      )
+    ).rows[0].content,
+    "Preserve private note",
+  );
+});
+test("Saved views belong to a user and workspace, including read-only collaborators", async () => {
+  const { views, deleteView } = await import("../lib/workflow");
+  const w = randomUUID();
+  await pool().query(
+    "INSERT INTO workspaces(id,name) VALUES($1,'Views test')",
+    [w],
+  );
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'owner'),($1,$3,'viewer')",
+    [w, owner, other],
+  );
+  const v = {
+    name: "My view",
+    page: "people",
+    search: "Alice",
+    filter: "all",
+    board: false,
+  };
+  assert.equal((await views(other, w, v))[0].name, "My view");
+  assert.deepEqual(await views(owner, w), []);
+  await deleteView(other, w, v.name);
+  assert.deepEqual(await views(other, w), []);
+  await pool().query(
+    "DELETE FROM members WHERE workspace_id=$1 AND user_id=$2",
+    [w, other],
+  );
+  await assert.rejects(() => views(other, w), /not found/);
+});

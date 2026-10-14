@@ -152,7 +152,7 @@ export async function checkAdminWorkflows(
   ]);
   await page.getByLabel("Follow-up ownership").selectOption("all");
   await page.getByLabel("Look-ahead window").selectOption("3");
-  await page.getByLabel("Weekdays only (UTC)").check();
+  await page.getByLabel("Weekdays only (selected timezone)").check();
   await page.getByRole("button", { name: "Save email preference" }).click();
   await expect
     .poll(async () => (await api(page, "me/digest")).options.daysAhead)

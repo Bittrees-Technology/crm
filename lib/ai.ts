@@ -42,7 +42,7 @@ export async function selected(
     throw new HttpError(404, "Selected records are unavailable.");
   const rows = (
     await db.query(
-      "SELECT id,kind,data,version FROM records WHERE workspace_id=$1 AND id=ANY($2::uuid[]) ORDER BY id",
+      "SELECT id,kind,data,version FROM records WHERE workspace_id=$1 AND archived_at IS NULL AND id=ANY($2::uuid[]) ORDER BY id",
       [workspace, ids],
     )
   ).rows;

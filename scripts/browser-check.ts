@@ -1,3 +1,4 @@
+import { checkLeads } from "./lead-ui-check";
 import { checkAiConsent } from "./ai-consent-check";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -12,6 +13,7 @@ import { checkAdminWorkflows } from "./admin-workflows";
 import { checkWorkflows } from "./ui-workflows";
 const origin = "http://127.0.0.1:3040";
 process.env.AI_CONNECTOR_ENABLED = "true";
+process.env.CRM_LEADS_ENABLED = "true";
 if (
   process.env.APP_URL !== origin ||
   process.env.DEV_EMAIL_CONSOLE !== "true" ||
@@ -214,6 +216,7 @@ try {
   ).toBeVisible();
   await accessibility(page, "Settings");
   await checkAiConsent(page, api, first, origin);
+  await checkLeads(page, api, first, origin, accessibility);
   await checkWorkflows(page, api, first, origin, accessibility);
   await checkAdminWorkflows(page, api, first, origin, accessibility);
   await page.goto(origin + "/?view=settings");

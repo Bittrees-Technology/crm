@@ -224,7 +224,8 @@ export function RelationshipTimeline({
       ) : error ? (
         <div className="error">
           {error}
-          <button data-insights="retry"
+          <button
+            data-insights="retry"
             type="button"
             className="text-button"
             onClick={() => setRetry((v) => v + 1)}
@@ -372,7 +373,8 @@ export function DigestSettings({
             </select>
           </label>
         ) : (
-          <button data-insights="link-a-verified-email-to-enable-reminders"
+          <button
+            data-insights="link-a-verified-email-to-enable-reminders"
             type="button"
             className="text-button"
             disabled={demo}
@@ -382,6 +384,22 @@ export function DigestSettings({
           </button>
         )}
         <fieldset disabled={busy || demo} className="digest-controls">
+          <label>
+            Calendar timezone
+            <input
+              required
+              list="digest-timezones"
+              value={options.timeZone}
+              onChange={(e) =>
+                setOptions({ ...options, timeZone: e.target.value })
+              }
+            />
+          </label>
+          <datalist id="digest-timezones">
+            {["UTC", ...Intl.supportedValuesOf("timeZone")].map((zone) => (
+              <option key={zone} value={zone} />
+            ))}
+          </datalist>
           <label>
             Follow-up ownership
             <select
@@ -430,7 +448,7 @@ export function DigestSettings({
                 setOptions({ ...options, weekdaysOnly: e.target.checked })
               }
             />
-            Weekdays only (UTC)
+            Weekdays only (selected timezone)
           </label>
           <label>
             Follow-up records
@@ -491,10 +509,15 @@ export function DigestSettings({
           )}
         </fieldset>
         <div className="button-stack">
-          <button data-insights="save-email-preference" className="button" disabled={busy || demo || !emails.length}>
+          <button
+            data-insights="save-email-preference"
+            className="button"
+            disabled={busy || demo || !emails.length}
+          >
             Save email preference
           </button>
-          <button data-insights="preview-follow-up-email"
+          <button
+            data-insights="preview-follow-up-email"
             type="button"
             className="button"
             disabled={busy || demo}
@@ -652,7 +675,8 @@ export function InviteManager({
                   <td>{new Date(i.expires_at).toLocaleDateString()}</td>
                   <td className="invite-actions">
                     {i.status === "Pending" && (
-                      <button data-insights="revoke"
+                      <button
+                        data-insights="revoke"
                         type="button"
                         className="text-button danger"
                         disabled={busy}
@@ -672,7 +696,8 @@ export function InviteManager({
                       </button>
                     )}
                     {i.status !== "Accepted" && (
-                      <button data-insights="recreate-link"
+                      <button
+                        data-insights="recreate-link"
                         type="button"
                         className="text-button"
                         disabled={busy}

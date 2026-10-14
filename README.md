@@ -9,7 +9,7 @@ Contact, organization, opportunity, project, task, and note management.
 ## MVP
 
 - People, organizations, opportunities, projects, tasks, and notes.
-- Search, ownership filters, browser-saved views, pipeline board/table views, follow-ups, stage aging, and reports with separate currency totals.
+- Search, ownership filters, account-synced saved views, pipeline board/table views, follow-ups, stage aging, and reports with separate currency totals.
 - Validated CSV imports with duplicate preview; CSV view exports and a JSON export of accessible shared records.
 - Ethereum EOA sign-in and email codes through Resend.
 - Explicit verification to link an email and wallet to one account. Never merges separate accounts automatically. If both methods already have accounts, a recovery review requires fresh verification of both accounts and explicit confirmation.
@@ -248,3 +248,7 @@ Delete proposal copy removes staged content and cancels any unpublished approval
 ## Loading and save reliability
 
 Workspace loading uses revision-checked record pages. Routine saves update the returned record without reloading the full workspace, and stable per-editor operation IDs prevent duplicate writes after lost responses. Apply `scripts/migrate-performance.ts` with a restricted environment file before deploying this release. See [the implementation report and scoped MCP lead-generation plan](docs/performance-and-lead-generation.md) for verification, measured transfer sizes, rollout notes and remaining limitations.
+
+## Lead research and workflow improvements
+
+See [the lead-generation and workflows guide](docs/lead-generation-and-workflows.md) for the separate organization-research MCP adapter, review/import permissions, archive/restore, synced views, CSV mapping and timezone-aware follow-ups. Apply the additive `scripts/migrate-workflows.ts` migration before deploying this release. Lead research requires its own `CRM_LEADS_ENABLED=true` flag.
