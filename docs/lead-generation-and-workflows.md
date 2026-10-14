@@ -1,25 +1,29 @@
 # Lead research and CRM workflows
 
-## Organization research through a local MCP client
+## Investor research through a local MCP client
 
-Enable `CRM_LEADS_ENABLED=true` after applying `scripts/migrate-workflows.ts`. This flag is separate from the existing `AI_CONNECTOR_ENABLED` selected-record connector. Enabling lead research does not enable the older connector or expand its note/task permissions.
+Enable `CRM_LEADS_ENABLED=true` after applying `scripts/migrate-workflows.ts`. This is separate from `AI_CONNECTOR_ENABLED`; no broader AI access is enabled by this workflow.
 
-A workspace owner opens **Find organizations**, selects a workspace and supplies a target, optional geography/exclusions, permitted source domains, result limit (1–20) and retrieval freshness window. The resulting credential is shown once, stored hashed by CRM, expires after 24 hours and can be revoked. One connection accepts one immutable research batch.
+1. Create a research project. In Settings, invite the researcher as a **viewer**, limited to that project. Wait for them to accept. An existing editor can also research, but retains their existing editing rights; assigning research never changes membership or sharing.
+2. Open **Lead research**. Select a workspace, project and researcher, then specify investor criteria, geography, exclusions, allowed source domains, maximum results (1–20 total people and organizations), and source freshness.
+3. The researcher opens **Lead research** under their own account and selects **Connect / replace agent credential**. The credential is shown once, stored hashed, expires with the seven-day assignment, and can be revoked by either participant. Replacing it invalidates the old credential. Only the assigned researcher can obtain it; the owner does not share their personal credential.
+4. Their MCP agent researches public sources and submits one immutable batch. The researcher can inspect their submitted draft; existing CRM matches, record IDs, private notes and other assignments are withheld.
+5. The assigning owner reviews the people, firms, categories, evidence, uncertainty and possible matches, then explicitly publishes selected leads or rejects the batch. Other owners cannot approve this assignment. Selecting a person linked to a firm requires also selecting that firm.
 
-Configure an MCP-capable local agent to launch `node /absolute/path/to/crm/integrations/lead-mcp.mjs`. Supply `CRM_LEAD_TOKEN` through that client's protected process environment. Do not put credentials in prompts, source control or shared files. The default server origin is `https://crm.bittrees.org`; the adapter permits `http://127.0.0.1:3040` for isolated local testing only. It rejects redirects and arbitrary origins. The adapter implements the MCP 2025-11-25 initialization and stdio tools interface.
+New records start **visible to workspace owners only**, linked to the research project, with communication permission **Unknown**. Publishing means saving to CRM, not posting publicly or sending outreach. Use existing record-sharing controls afterward if the researcher should see published leads. The review displays the owner audience. Reused organizations retain their existing sharing and data.
 
-Available tools:
+Configure an MCP-capable local agent to launch `node /absolute/path/to/crm/integrations/lead-mcp.mjs`. Supply `CRM_LEAD_TOKEN` through the client's protected process environment, never prompts or shared files. Default origin: `https://crm.bittrees.org`; isolated testing permits `http://127.0.0.1:3040`. Redirects and arbitrary origins are rejected. The adapter implements MCP 2025-11-25 stdio.
 
-- `leads.brief`: returns only the approved research brief and expiry. It does not read CRM contacts, private notes or member lists.
-- `leads.preview`: accepts a stable operation UUID and sourced organization candidates, then returns a review path. It does not import records or authorize outreach. Retries must reuse the same operation UUID and exact payload.
+- `leads.brief`: approved research criteria, project identifier and expiry. No CRM records or member lists.
+- `leads.preview`: submit sourced people and organizations with a stable operation UUID. Retries must keep the same operation UUID and candidates. No publication or messaging tool exists.
 
-The local agent uses its own search tools and model to gather public information. CRM does not purchase a search service, fetch submitted URLs, run scheduled research or silently send CRM content to a provider. The brief and researched pages may be sent to the agent's configured search/model providers; local inference does not make a remote search provider local. Returned source claims and retrieval times are agent assertions, not proof that a page was fetched or independently verified.
+Candidates have `kind` (`organizations`, the backward-compatible default, or `people`), `category`, name, public HTTPS website/profile, optional professional `email` and `title`, summary, relevance, uncertainties, fit/evidence labels, and 1–3 source URLs with retrieval timestamps. People can set `organizationIndex` to the zero-based index of a firm in the same batch, or omit it for an independent investor. Categories support Angel, Venture capital, Family office, Corporate investor, Accelerator, Fund of funds, and custom labels. Labels persist on CRM records and are offered again in the record editor; normal search/saved views can find them.
 
-Each candidate contains name, website, summary, relevance, uncertainties, separate fit/evidence labels, and up to three HTTPS source URLs with retrieval timestamps. Validation checks the source-domain allowlist, freshness, exclusions, one candidate per website and the configured result limit. It cannot mechanically verify semantic geography or relevance; the human review remains essential.
+Validation checks allowed source domains, freshness, exclusions, result limits, valid person-to-organization links and batch duplicates. Multiple people can share a firm's website. Person matches use name or professional email; firm matches use name/domain. The owner may reuse an active matching organization without overwriting it. Archived and do-not-contact matches are not eligible for reuse; duplicate people are blocked. Existing match versions and the owner audience are bound to the approval digest. Changed matches require another review.
 
-Only the initiating owner can review or import. The CRM checks potential organization matches by name/domain and shows do-not-contact flags; no record or duplicate details go back to the agent. Candidates with possible matches cannot be imported through this workflow. The import review is bound to the immutable batch, current matches and current owner audience. Ownership, expiry and revocation are checked again during import. Selected records are created atomically with owner-only visibility and Unknown communication permission. Audit entries contain action/record/review identifiers rather than research text. Repeating a confirmed decision returns the receipt instead of creating another organization. Different decisions after completion are rejected.
+Each request checks current owner authority, researcher membership, active project access, expiry and revocation. Removing access or archiving the project prevents further draft submission and publication. Import is atomic and idempotent, including simultaneous retries; linked records are created together. Content-free audit entries retain the review identifier. Research permission does not grant editing, exporting, outreach, identity management or broader MCP access. A viewer can still read records already authorized by their membership; choose project-limited membership when inviting them.
 
-The initial version intentionally supports organization research by workspace owners. It has no agent-controlled approval/publish tool, outreach, person enrichment, automatic merging, recurring search or autonomous preference learning. Existing selected-record AI access remains a separate opt-in path.
+The agent uses its own model/search tools. CRM adds no paid service, fetches no submitted URLs and runs no background research. The brief and public research can reach the agent's configured providers. Source claims and timestamps are assertions, not independent verification. Use the review to assess suitability and evidence. Never infer private email addresses or permission to contact someone.
 
 ## CRM workflow improvements
 
@@ -31,10 +35,10 @@ The initial version intentionally supports organization research by workspace ow
 
 ## Deliberately deferred
 
-Server-side search, lazy lists and aggregate reports were recommended only when observed workspace sizes justify them. A read-only production aggregate on 14 October 2026 found eight records across two nonempty workspaces, with seven in the largest. The existing complete, permission-checked paginated loader remains; partial client totals have not been introduced. Rich per-candidate rejection analytics, person enrichment and recurring research should follow evidence from the initial manually launched organization workflow.
+Server-side search, lazy lists and aggregate reports were recommended only when observed workspace sizes justify them. A read-only production aggregate on 14 October 2026 found eight records across two nonempty workspaces, with seven in the largest. The existing complete, permission-checked paginated loader remains; partial client totals have not been introduced. Rich analytics, automated enrichment and recurring research remain deferred until the manually reviewed investor workflow demonstrates a need.
 
 ## Rollout
 
-Apply the additive migration using an existing restricted database environment, then deploy the code. The migration adds an archive timestamp and separate tables for user views, lead briefs and immutable previews; it does not delete or rewrite customer records. Retain additive schema during rollback. A rollback to the older application will display archived records as ordinary active records because the older UI does not understand the new archive timestamp.
+Apply the additive migration using an existing restricted database environment, then deploy the code. The migration adds workflow tables plus nullable researcher/project references to existing lead searches; it does not delete or rewrite customer records. Retain additive schema during rollback. A rollback to the older application will display archived records as ordinary active records because the older UI does not understand the new archive timestamp.
 
 Validation and deployment results are recorded in the release report after completion.

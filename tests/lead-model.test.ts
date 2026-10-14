@@ -61,3 +61,37 @@ test("Lead validation rejects stale, excluded, duplicate and non-permitted sourc
   ])
     assert.equal(publicUrl.safeParse(url).success, false);
 });
+
+test("Investor people can share a firm domain and links must point to organizations", () => {
+  const brief = briefSchema.parse({
+    target: "Investors",
+    sourceDomains: ["bittrees.org"],
+  });
+  const org = candidateSchema.parse({
+    name: "Firm",
+    website: "https://bittrees.org",
+    summary: "Research",
+    relevance: "Seed",
+    uncertainties: "",
+    fit: "high",
+    evidence: "primary",
+    sources: [
+      { url: "https://bittrees.org", retrievedAt: new Date().toISOString() },
+    ],
+  });
+  const person = candidateSchema.parse({
+    ...org,
+    kind: "people",
+    name: "Person one",
+    organizationIndex: 0,
+  });
+  validateCandidates(brief, [org, person, { ...person, name: "Person two" }]);
+  assert.throws(
+    () => validateCandidates(brief, [org, { ...person, organizationIndex: 1 }]),
+    /Link people/,
+  );
+  assert.throws(
+    () => validateCandidates(brief, [{ ...org, organizationIndex: 0 }]),
+    /Link people/,
+  );
+});

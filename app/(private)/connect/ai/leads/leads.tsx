@@ -18,11 +18,17 @@ async function api(
 }
 type Review = {
   id: string;
+  canApprove: boolean;
   workspace: string;
   audience: string;
   digest: string;
   candidates: Candidate[];
-  matches: { id: string; name: string; doNotContact: boolean }[][];
+  matches: {
+    id: string;
+    name: string;
+    doNotContact: boolean;
+    archived: boolean;
+  }[][];
   decision: unknown;
   expiresAt: string;
 };
@@ -31,6 +37,12 @@ export default function Leads() {
       { id: string; name: string; role: string }[]
     >([]),
     [workspace, setWorkspace] = useState("");
+  const [project, setProject] = useState(""),
+    [researcher, setResearcher] = useState("");
+  const [options, setOptions] = useState<{
+    projects: { id: string; name: string }[];
+    members: { id: string; name: string; role: string }[];
+  }>({ projects: [], members: [] });
   const [target, setTarget] = useState(""),
     [geography, setGeography] = useState(""),
     [domains, setDomains] = useState(""),
@@ -41,6 +53,7 @@ export default function Leads() {
     [review, setReview] = useState<Review | null>(null),
     [accept, setAccept] = useState<number[]>([]),
     [reason, setReason] = useState("other");
+  const [reuse, setReuse] = useState<Record<string, string>>({});
   const [credential, setCredential] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -63,8 +76,10 @@ export default function Leads() {
     setSearches(items);
   }
   async function open(id: string) {
+    setCredential("");
     setReview(null);
     setAccept([]);
+    setReuse({});
     setReview(await api("leads/review?id=" + encodeURIComponent(id)));
   }
   useEffect(() => {
@@ -78,10 +93,10 @@ export default function Leads() {
     <main className="integration-page">
       <header>
         <a href="/">← CRM</a>
-        <h1>Find organizations</h1>
+        <h1>Lead research</h1>
         <p>
-          Define a focused search, research with your connected agent, then
-          review candidates here.
+          Assign investor research, connect an agent, then review candidates
+          here.
         </p>
       </header>
       {error && (
@@ -94,113 +109,178 @@ export default function Leads() {
         <section className="integration-card">
           <h2>Search brief</h2>
           <p>
-            Owner access is required. The connection shares this brief only. It
-            can submit one candidate batch within 24 hours; it cannot read CRM
-            records, approve imports or send messages. Your agent’s search and
-            model providers receive the brief and public research.
+            Owners create assignments. Invite a collaborator as a viewer with
+            access to the research project in Settings, then assign them below.
+            The connection shares this brief only. It can submit one candidate
+            batch within 7 days; it cannot read CRM records, approve imports or
+            send messages. Your agent’s search and model providers receive the
+            brief and public research.
           </p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void act(async () => {
-                const s = await api("leads/searches", {
-                  workspaceId: workspace,
-                  brief: {
-                    target,
-                    geography,
-                    sourceDomains: domains
-                      .split(",")
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                    exclusions: exclusions
-                      .split(",")
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                    maxResults: limit,
-                    freshnessDays: freshness,
-                  },
+          {workspaces.length > 0 ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void act(async () => {
+                  const s = await api("leads/searches", {
+                    workspaceId: workspace,
+                    projectId: project || undefined,
+                    researcherId: researcher || undefined,
+                    brief: {
+                      target,
+                      geography,
+                      sourceDomains: domains
+                        .split(",")
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                      exclusions: exclusions
+                        .split(",")
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                      maxResults: limit,
+                      freshnessDays: freshness,
+                    },
+                  });
+                  setCredential(s.token);
+                  await load();
+                  setMessage(
+                    s.token
+                      ? "Search created. Connect your agent below."
+                      : "Research assigned. The researcher can open Lead research and connect their own agent.",
+                  );
                 });
-                setCredential(s.token);
-                await load();
-              });
-            }}
-          >
-            <fieldset disabled={busy}>
-              <legend>Target organizations</legend>
-              <label>
-                Workspace
-                <select
-                  aria-label="Workspace"
-                  required
-                  value={workspace}
-                  onChange={(e) => setWorkspace(e.target.value)}
-                >
-                  <option value="">Choose workspace</option>
-                  {workspaces.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.name}
+              }}
+            >
+              <fieldset disabled={busy}>
+                <legend>Research assignment</legend>
+                <label>
+                  Workspace
+                  <select
+                    aria-label="Workspace"
+                    required
+                    value={workspace}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setWorkspace(value);
+                      setProject("");
+                      setResearcher("");
+                      setOptions({ projects: [], members: [] });
+                      if (value)
+                        void act(async () =>
+                          setOptions(
+                            await api(
+                              "leads/options?workspaceId=" +
+                                encodeURIComponent(value),
+                            ),
+                          ),
+                        );
+                    }}
+                  >
+                    <option value="">Choose workspace</option>
+                    {workspaces.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Research project
+                  <select
+                    aria-label="Research project"
+                    value={project}
+                    onChange={(e) => setProject(e.target.value)}
+                    required={!!researcher}
+                  >
+                    <option value="">
+                      Choose project (required for delegation)
                     </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                What makes an organization relevant?
-                <textarea
-                  required
-                  maxLength={500}
-                  value={target}
-                  onChange={(e) => setTarget(e.target.value)}
-                />
-              </label>
-              <label>
-                Geography (optional)
-                <input
-                  maxLength={200}
-                  value={geography}
-                  onChange={(e) => setGeography(e.target.value)}
-                />
-              </label>
-              <label>
-                Permitted source domains, separated by commas
-                <input
-                  required
-                  placeholder="company.org, industry.org"
-                  value={domains}
-                  onChange={(e) => setDomains(e.target.value)}
-                />
-              </label>
-              <label>
-                Exclude names or topics, separated by commas
-                <input
-                  value={exclusions}
-                  onChange={(e) => setExclusions(e.target.value)}
-                />
-              </label>
-              <label>
-                Maximum organizations
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={limit}
-                  onChange={(e) => setLimit(Number(e.target.value))}
-                />
-              </label>
-              <label>
-                Sources retrieved within this many days
-                <input
-                  type="number"
-                  min={1}
-                  max={365}
-                  value={freshness}
-                  onChange={(e) => setFreshness(Number(e.target.value))}
-                />
-              </label>
-              <button className="button primary" type="submit">
-                Create search connection
-              </button>
-            </fieldset>
-          </form>
+                    {options.projects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Assigned researcher
+                  <select
+                    aria-label="Assigned researcher"
+                    value={researcher}
+                    onChange={(e) => setResearcher(e.target.value)}
+                  >
+                    <option value="">Me</option>
+                    {options.members.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} · {m.role}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  What makes an investor relevant?
+                  <textarea
+                    required
+                    maxLength={500}
+                    value={target}
+                    onChange={(e) => setTarget(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Geography (optional)
+                  <input
+                    maxLength={200}
+                    value={geography}
+                    onChange={(e) => setGeography(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Permitted source domains, separated by commas
+                  <input
+                    required
+                    placeholder="company.org, industry.org"
+                    value={domains}
+                    onChange={(e) => setDomains(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Exclude names or topics, separated by commas
+                  <input
+                    value={exclusions}
+                    onChange={(e) => setExclusions(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Maximum people and organizations
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={limit}
+                    onChange={(e) => setLimit(Number(e.target.value))}
+                  />
+                </label>
+                <label>
+                  Sources retrieved within this many days
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={freshness}
+                    onChange={(e) => setFreshness(Number(e.target.value))}
+                  />
+                </label>
+                <button className="button primary" type="submit">
+                  Create search connection
+                </button>
+              </fieldset>
+            </form>
+          ) : (
+            <p>
+              Your owner-created research assignments appear below. You can
+              connect your agent and submit drafts; the assigning owner approves
+              publication.
+            </p>
+          )}
           {credential && (
             <section>
               <h3>Connection credential</h3>
@@ -225,25 +305,30 @@ export default function Leads() {
       )}
       {review && (
         <section className="integration-card">
-          <h2>Review organizations</h2>
+          <h2>
+            {review.canApprove
+              ? "Review investor leads"
+              : "Submitted investor leads"}
+          </h2>
           <p>
             Destination: {review.workspace}. Visibility: {review.audience}.
             Communication permission: Unknown. Research claims are supplied by
             your agent and have not been independently verified.
           </p>
           <p>
-            Expires {new Date(review.expiresAt).toLocaleString()}. Matching
-            candidates are blocked from import; review the existing records
-            first.
+            Expires {new Date(review.expiresAt).toLocaleString()}. Existing
+            organizations can be reused without changing their data or sharing.
+            Duplicate people, archived records, and do-not-contact matches
+            cannot be published here.
           </p>
-          <fieldset disabled={busy || !!review.decision}>
-            <legend>Select organizations to import</legend>
+          <fieldset disabled={busy || !!review.decision || !review.canApprove}>
+            <legend>Select people and organizations to publish</legend>
             {review.candidates.map((c, i) => (
               <article key={i} className="integration-card">
                 <label className="checkbox-label">
                   <input
                     type="checkbox"
-                    disabled={review.matches[i].length > 0}
+                    disabled={review.matches[i].length > 0 && !reuse[String(i)]}
                     checked={accept.includes(i)}
                     onChange={(e) =>
                       setAccept((a) =>
@@ -258,6 +343,18 @@ export default function Leads() {
                     {c.website}
                   </a>
                 </p>
+                <p>
+                  {c.kind === "people" ? "Person" : "Organization"} ·{" "}
+                  {c.category}
+                </p>
+                {c.title && <p>{c.title}</p>}
+                {c.email && <p>{c.email}</p>}
+                {c.organizationIndex !== undefined && (
+                  <p>
+                    Organization: {review.candidates[c.organizationIndex]?.name}
+                    . Select this organization too.
+                  </p>
+                )}
                 <p>{c.summary}</p>
                 <p>{c.relevance}</p>
                 <p>
@@ -277,10 +374,41 @@ export default function Leads() {
                     </li>
                   ))}
                 </ul>
+                {review.canApprove &&
+                  c.kind === "organizations" &&
+                  review.matches[i].length > 0 && (
+                    <label>
+                      Use an existing organization (leave its data and sharing
+                      unchanged)
+                      <select
+                        value={reuse[String(i)] || ""}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setReuse((r) => {
+                            const next = { ...r };
+                            if (value) next[String(i)] = value;
+                            else delete next[String(i)];
+                            return next;
+                          });
+                          setAccept((a) => a.filter((n) => n !== i));
+                        }}
+                      >
+                        <option value="">Do not publish this candidate</option>
+                        {review.matches[i]
+                          .filter((m) => !m.doNotContact && !m.archived)
+                          .map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                  )}
                 {review.matches[i].map((m) => (
                   <p key={m.id}>
                     Possible duplicate: {m.name}
                     {m.doNotContact ? " · Do not contact" : ""}
+                    {m.archived ? " · Archived" : ""}
                   </p>
                 ))}
               </article>
@@ -307,21 +435,39 @@ export default function Leads() {
                     reviewId: review.id,
                     digest: review.digest,
                     accept,
+                    reuse: Object.fromEntries(
+                      Object.entries(reuse).filter(([index]) =>
+                        accept.includes(Number(index)),
+                      ),
+                    ),
                     reason,
                   });
                   setReview(null);
                   await load();
                   setMessage(
-                    `${result.accepted} organizations imported. Unselected candidates were rejected.`,
+                    `${result.accepted} leads accepted. New records are visible to workspace owners only; reused organizations retain their existing sharing. Unselected candidates were rejected.`,
                   );
                 })
               }
             >
               {accept.length
-                ? `Import ${accept.length} selected organizations`
+                ? `Publish ${accept.length} selected leads`
                 : "Reject all candidates"}
             </button>
           </fieldset>
+          {!review.canApprove && (
+            <p>
+              Awaiting the assigning owner’s decision. You cannot publish or see
+              existing CRM match details here.
+            </p>
+          )}
+          <button
+            className="button"
+            disabled={busy}
+            onClick={() => setReview(null)}
+          >
+            Back to assignments
+          </button>
           {!!review.decision && <p>This preview has already been decided.</p>}
           <button
             className="button"
@@ -345,17 +491,47 @@ export default function Leads() {
           <article key={s.id}>
             <h3>{s.brief.target}</h3>
             <p>
-              {s.revoked_at
-                ? "Revoked"
-                : new Date(s.expires_at) < new Date()
-                  ? "Expired"
-                  : s.decision
-                    ? `${s.record_ids?.length || 0} accepted · ${s.decision.rejected} rejected`
-                    : s.preview_id
-                      ? "Ready for review"
-                      : "Waiting for agent research"}
+              {s.canApprove
+                ? "You approve publication"
+                : "Assigned to you · owner approval required"}
             </p>
+            <p>
+              {s.blocked
+                ? "Paused: researcher no longer has access to the active project"
+                : s.revoked_at
+                  ? "Revoked"
+                  : new Date(s.expires_at) < new Date()
+                    ? "Expired"
+                    : s.decision
+                      ? `${s.record_ids?.length || s.decision.accepted || 0} accepted · ${s.decision.rejected} rejected`
+                      : s.preview_id
+                        ? "Ready for review"
+                        : "Waiting for agent research"}
+            </p>
+            {s.canConnect &&
+              !s.revoked_at &&
+              !s.preview_id &&
+              new Date(s.expires_at) > new Date() && (
+                <button
+                  className="button"
+                  disabled={busy}
+                  onClick={() =>
+                    void act(async () => {
+                      setReview(null);
+                      setCredential(
+                        (await api("leads/connect", { id: s.id })).token,
+                      );
+                      setMessage(
+                        "Connection credential shown above. Any previous credential is now revoked.",
+                      );
+                    })
+                  }
+                >
+                  Connect / replace agent credential
+                </button>
+              )}
             {s.preview_id &&
+              !s.blocked &&
               !s.revoked_at &&
               new Date(s.expires_at) > new Date() && (
                 <button
@@ -363,7 +539,7 @@ export default function Leads() {
                   disabled={busy}
                   onClick={() => void act(() => open(s.preview_id))}
                 >
-                  Review candidates
+                  {s.canApprove ? "Review candidates" : "View submitted drafts"}
                 </button>
               )}
             {!s.revoked_at && (

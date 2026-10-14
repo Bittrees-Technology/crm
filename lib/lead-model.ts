@@ -34,6 +34,11 @@ export const briefSchema = z.strictObject({
   freshnessDays: z.number().int().min(1).max(365).default(30),
 });
 export const candidateSchema = z.strictObject({
+  kind: z.enum(["organizations", "people"]).default("organizations"),
+  category: z.string().trim().max(200).default("Investor"),
+  title: z.string().trim().max(200).default(""),
+  email: z.union([z.email(), z.literal("")]).default(""),
+  organizationIndex: z.number().int().min(0).max(19).optional(),
   name: z.string().trim().min(1).max(200),
   website: publicUrl,
   summary: line,
@@ -61,9 +66,19 @@ export function validateCandidates(
   const domains = new Set<string>();
   for (const c of candidates) {
     const host = domain(c.website);
-    if (domains.has(host))
+    if (
+      c.organizationIndex !== undefined &&
+      (c.kind !== "people" ||
+        candidates[c.organizationIndex]?.kind !== "organizations")
+    )
+      throw Error("Link people to an organization in this batch.");
+    const key =
+      c.kind === "organizations"
+        ? host
+        : `person:${c.email.toLowerCase() || c.name.toLowerCase()}`;
+    if (domains.has(key))
       throw Error("Review one candidate per organization website.");
-    domains.add(host);
+    domains.add(key);
     if (
       brief.exclusions.some((term) =>
         `${c.name} ${host} ${c.summary}`

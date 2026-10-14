@@ -1,4 +1,4 @@
-import { checkLeads } from "./lead-ui-check";
+import { checkLeads, checkInvestorAssignment } from "./lead-ui-check";
 import { checkAiConsent } from "./ai-consent-check";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -385,6 +385,15 @@ try {
       ),
     )
     .toBe(true);
+  await checkInvestorAssignment(
+    page,
+    second,
+    api,
+    first.workspaces[0].id,
+    secondMe.user.id,
+    origin,
+    accessibility,
+  );
   // Verify member permissions in the interface, then restore the invited editor.
   await api(
     page,

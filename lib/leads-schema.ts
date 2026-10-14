@@ -9,5 +9,8 @@ CREATE TABLE IF NOT EXISTS lead_previews(
  operation_id uuid NOT NULL, payload_hash text NOT NULL, candidates jsonb NOT NULL,
  decision jsonb, record_ids uuid[], created_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE(search_id,operation_id));
+ALTER TABLE lead_searches ADD COLUMN IF NOT EXISTS researcher_id uuid REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE lead_searches ADD COLUMN IF NOT EXISTS project_id uuid REFERENCES records(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS lead_searches_researcher ON lead_searches(researcher_id,created_at);
 CREATE INDEX IF NOT EXISTS lead_searches_user ON lead_searches(user_id,created_at);
 `;

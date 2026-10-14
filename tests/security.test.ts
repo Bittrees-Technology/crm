@@ -2553,3 +2553,192 @@ test("Saved views belong to a user and workspace, including read-only collaborat
   );
   await assert.rejects(() => views(other, w), /not found/);
 });
+
+test("Project researcher can draft investors but only assigning owner can publish linked records", async () => {
+  const leads = await import("../lib/leads");
+  process.env.CRM_LEADS_ENABLED = "true";
+  const w = randomUUID(),
+    researcher = randomUUID(),
+    coowner = randomUUID();
+  await pool().query(
+    "INSERT INTO users(id,name) VALUES($1,'Researcher'),($2,'Other owner')",
+    [researcher, coowner],
+  );
+  await pool().query(
+    "INSERT INTO workspaces(id,name) VALUES($1,'Investor research test')",
+    [w],
+  );
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'owner'),($1,$3,'viewer'),($1,$4,'owner')",
+    [w, owner, researcher, coowner],
+  );
+  const project = await saveRecord(owner, w, {
+    kind: "projects",
+    data: { name: "Investor campaign" },
+  });
+  await pool().query(
+    "UPDATE members SET scope_ids=$3 WHERE workspace_id=$1 AND user_id=$2",
+    [w, researcher, [project.id]],
+  );
+  const brief = { target: "Seed investors", sourceDomains: ["bittrees.org"] };
+  await assert.rejects(
+    () =>
+      leads.createSearch(owner, {
+        workspaceId: w,
+        researcherId: researcher,
+        brief,
+      }),
+    /require a project/,
+  );
+  const connection = await leads.createSearch(owner, {
+    workspaceId: w,
+    researcherId: researcher,
+    projectId: project.id,
+    brief,
+  });
+  assert.equal(connection.token, "");
+  await assert.rejects(
+    () => leads.connectSearch(owner, connection.id),
+    /assigned researcher/,
+  );
+  const credential = await leads.connectSearch(researcher, connection.id);
+  const rotated = await leads.connectSearch(researcher, connection.id);
+  await assert.rejects(() => leads.agentBrief(credential.token), /unavailable/);
+  const candidate = {
+    name: "Investor firm",
+    website: "https://investor-firm.org",
+    summary: "Public thesis",
+    relevance: "Seed",
+    uncertainties: "Check size unknown",
+    fit: "medium",
+    evidence: "primary",
+    category: "Venture capital",
+    sources: [
+      { url: "https://bittrees.org/", retrievedAt: new Date().toISOString() },
+    ],
+  };
+  const existing = await saveRecord(owner, w, {
+    kind: "organizations",
+    data: { name: candidate.name, website: candidate.website },
+  });
+  const person = {
+    ...candidate,
+    kind: "people",
+    name: "Investor person",
+    title: "Partner",
+    email: "partner@investor-firm.org",
+    organizationIndex: 0,
+  };
+  const input = {
+    operationId: randomUUID(),
+    candidates: [
+      candidate,
+      person,
+      {
+        ...person,
+        name: "Independent investor",
+        email: "angel@investor-firm.org",
+        organizationIndex: undefined,
+        category: "Angel",
+      },
+    ],
+  };
+  const preview = await leads.prepare(rotated.token, input);
+  const researcherReview = await leads.review(researcher, preview.reviewId);
+  assert.equal(researcherReview.canApprove, false);
+  assert.equal(researcherReview.digest, "");
+  assert.deepEqual(researcherReview.matches, [[], [], []]);
+  const review = await leads.review(owner, preview.reviewId);
+  assert.equal(review.matches[0][0].id, existing.id);
+  await assert.rejects(
+    () =>
+      leads.approve(researcher, {
+        reviewId: preview.reviewId,
+        digest: review.digest,
+        accept: [1],
+      }),
+    /Only the owner/,
+  );
+  await assert.rejects(
+    () => leads.review(coowner, preview.reviewId),
+    /unavailable/,
+  );
+  await assert.rejects(
+    () =>
+      leads.approve(owner, {
+        reviewId: preview.reviewId,
+        digest: review.digest,
+        accept: [1],
+      }),
+    /linked organization/,
+  );
+  // Removing project access disables both session and agent paths, including approval.
+  await pool().query(
+    "UPDATE members SET scope_ids='{}' WHERE workspace_id=$1 AND user_id=$2",
+    [w, researcher],
+  );
+  await assert.rejects(() => leads.agentBrief(rotated.token), /active project/);
+  await assert.rejects(
+    () =>
+      leads.approve(owner, {
+        reviewId: preview.reviewId,
+        digest: review.digest,
+        accept: [0, 1],
+      }),
+    /active project/,
+  );
+  assert.deepEqual(await leads.listSearches(researcher), []);
+  await pool().query(
+    "UPDATE members SET scope_ids=$3 WHERE workspace_id=$1 AND user_id=$2",
+    [w, researcher, [project.id]],
+  );
+  const decision = {
+    reviewId: preview.reviewId,
+    digest: review.digest,
+    accept: [0, 1, 2],
+    reuse: { 0: existing.id },
+  };
+  const [a, b] = await Promise.all([
+    leads.approve(owner, decision),
+    leads.approve(owner, decision),
+  ]);
+  assert.deepEqual(a.recordIds, b.recordIds);
+  assert.equal(a.recordIds[0], existing.id);
+  const rows = (
+    await pool().query("SELECT * FROM records WHERE id=ANY($1::uuid[])", [
+      a.recordIds.slice(1),
+    ])
+  ).rows;
+  assert.equal(rows.length, 2);
+  const linked = rows.find((r) => r.data.name === person.name);
+  assert.equal(linked.kind, "people");
+  assert.equal(linked.data.organizationId, existing.id);
+  assert.equal(linked.data.projectId, project.id);
+  assert.equal(linked.data.category, "Venture capital");
+  assert.equal(linked.data.communication, "Unknown");
+  assert.deepEqual(linked.visibility_ids, []);
+  assert.equal(
+    rows.find((r) => r.data.category === "Angel").data.organizationId,
+    "",
+  );
+  assert.equal(
+    (await snapshot(researcher, w)).records.some((r) =>
+      a.recordIds.slice(1).includes(r.id),
+    ),
+    false,
+  );
+  assert.equal(
+    (
+      await pool().query("SELECT version FROM records WHERE id=$1", [
+        existing.id,
+      ])
+    ).rows[0].version,
+    existing.version,
+  );
+  await assert.rejects(
+    () => leads.approve(owner, { ...decision, reuse: {} }),
+    /already been decided/,
+  );
+  await leads.revokeSearch(researcher, connection.id);
+  await assert.rejects(() => leads.agentBrief(rotated.token), /unavailable/);
+});

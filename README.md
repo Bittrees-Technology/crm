@@ -251,4 +251,4 @@ Workspace loading uses revision-checked record pages. Routine saves update the r
 
 ## Lead research and workflow improvements
 
-See [the lead-generation and workflows guide](docs/lead-generation-and-workflows.md) for the separate organization-research MCP adapter, review/import permissions, archive/restore, synced views, CSV mapping and timezone-aware follow-ups. Apply the additive `scripts/migrate-workflows.ts` migration before deploying this release. Lead research requires its own `CRM_LEADS_ENABLED=true` flag.
+See [the lead-generation and workflows guide](docs/lead-generation-and-workflows.md) for the investor-research MCP adapter, project-scoped researcher assignments, person/organization links, categories and owner-only publication approval, archive/restore, synced views, CSV mapping and timezone-aware follow-ups. Apply the additive `scripts/migrate-workflows.ts` migration before deploying this release. Lead research requires its own `CRM_LEADS_ENABLED=true` flag.

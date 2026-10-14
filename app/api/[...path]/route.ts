@@ -269,6 +269,20 @@ async function handle(req: NextRequest) {
           body.record,
         ),
       );
+    if (path === "leads/options" && req.method === "GET")
+      return json(
+        await leads.assignmentOptions(
+          user.id,
+          req.nextUrl.searchParams.get("workspaceId") || "",
+        ),
+      );
+    if (path === "leads/connect" && req.method === "POST")
+      return json(
+        await leads.connectSearch(
+          user.id,
+          z.strictObject({ id: z.uuid() }).parse(body).id,
+        ),
+      );
     if (path === "leads/searches" && req.method === "GET")
       return json(await leads.listSearches(user.id));
     if (path === "leads/searches" && req.method === "POST")
