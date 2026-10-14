@@ -1,3 +1,4 @@
+import { calendarDay, matchesFollowup } from "./followups";
 import { accessIds, type Db } from "./access";
 import { digestOptionsSchema, type DigestOptions } from "./digest-options";
 import { z } from "zod";
@@ -121,17 +122,24 @@ export async function sendDigest(
       ).rowCount
     )
       return "skipped";
+    const skipDay = async () => {
+      await db.query(
+        "INSERT INTO digest_receipts(user_id,day,status,payload,record_ids) VALUES($1,$2,'skipped','{}','{}') ON CONFLICT DO NOTHING",
+        [userId, day],
+      );
+      return "skipped" as const;
+    };
     const options = digestOptionsSchema.parse(user.digest_options);
     if (
       options.weekdaysOnly &&
       [0, 6].includes(new Date(day + "T12:00:00Z").getUTCDay())
     )
-      return "skipped";
+      return skipDay();
     const rows = await digestRows(db, userId, day, options);
-    if (!rows.length) return "skipped";
+    if (!rows.length) return skipDay();
     const message = digestMessage(user, day, rows, options);
     await db.query(
-      "INSERT INTO digest_receipts(user_id,day,payload,record_ids) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+      "INSERT INTO digest_receipts(user_id,day,payload,record_ids) VALUES($1,$2,$3,$4) ON CONFLICT(user_id,day) DO UPDATE SET status='pending',payload=EXCLUDED.payload,record_ids=EXCLUDED.record_ids WHERE digest_receipts.status='skipped'",
       [userId, day, message, rows.slice(0, 50).map((r) => r.id)],
     );
     const receipt = (
@@ -140,7 +148,8 @@ export async function sendDigest(
         [userId, day],
       )
     ).rows[0];
-    if (["sent", "cancelled"].includes(receipt.status)) return "skipped";
+    if (["sent", "cancelled", "skipped"].includes(receipt.status))
+      return "skipped";
     // Keep retries byte-for-byte identical, but never resend work after access/ownership or the recipient changed.
     if (
       receipt.payload.to[0] !== user.digest_email ||
@@ -170,11 +179,11 @@ export async function sendDigest(
   });
 }
 export async function runDigests() {
-  const day = new Date().toISOString().slice(0, 10),
-    started = Date.now();
+  const started = Date.now(),
+    now = new Date();
   const users = (
     await pool().query(
-      "SELECT id FROM users WHERE digest_enabled=true ORDER BY id",
+      `SELECT u.id,u.digest_options FROM users u WHERE u.digest_enabled=true AND NOT EXISTS (SELECT 1 FROM digest_receipts r WHERE r.user_id=u.id AND r.day=(now() AT TIME ZONE COALESCE(u.digest_options->>'timeZone','UTC'))::date AND r.status IN ('sent','cancelled','skipped')) ORDER BY u.id`,
     )
   ).rows;
   const result = { sent: 0, skipped: 0, failed: 0, remaining: 0 };
@@ -183,6 +192,10 @@ export async function runDigests() {
       result.remaining = users.length - i;
       break;
     }
+    const day = calendarDay(
+      now,
+      digestOptionsSchema.parse(users[i].digest_options).timeZone,
+    );
     const status = await sendDigest(users[i].id, day);
     result[status]++;
     if (status !== "skipped") await new Promise((r) => setTimeout(r, 600));
@@ -223,7 +236,7 @@ async function digestRows(
     const ids = await accessIds(db, user, workspace.id);
     const visible = (
       await db.query(
-        "SELECT id,kind,data FROM records WHERE workspace_id=$1 AND ($2::uuid[] IS NULL OR id=ANY($2))",
+        "SELECT id,kind,data FROM records WHERE workspace_id=$1 AND archived_at IS NULL AND ($2::uuid[] IS NULL OR id=ANY($2))",
         [workspace.id, ids],
       )
     ).rows;
@@ -234,19 +247,7 @@ async function digestRows(
       )
     ).rows;
     for (const r of visible) {
-      if (
-        !options.kinds.includes(r.kind) ||
-        !r.data.dueDate ||
-        r.data.dueDate > end.toISOString().slice(0, 10) ||
-        (!options.includeOverdue && r.data.dueDate < day) ||
-        (options.assignment === "mine" && r.data.ownerId !== user)
-      )
-        continue;
-      if (
-        (r.kind === "tasks" && r.data.status !== "Open") ||
-        (r.kind === "opportunities" && ["Won", "Lost"].includes(r.data.stage))
-      )
-        continue;
+      if (!matchesFollowup(r, user, day, options)) continue;
       const context = [
         ...new Set(
           [r.data.projectId, r.data.organizationId]
@@ -322,7 +323,7 @@ function digestMessage(
       "",
     );
   lines.push(
-    `Look-ahead: ${options.daysAhead} days. Dates and the 08:00 delivery schedule use UTC.`,
+    `Look-ahead: ${options.daysAhead} days. Dates use ${options.timeZone}. Delivery remains around 08:00 UTC.`,
     `Manage your preferences: ${process.env.APP_URL}/?view=settings`,
   );
   return {
@@ -339,7 +340,7 @@ export async function previewDigest(userId: string, input: unknown) {
     const user = (
       await db.query("SELECT * FROM users WHERE id=$1 FOR SHARE", [userId])
     ).rows[0];
-    const day = new Date().toISOString().slice(0, 10);
+    const day = calendarDay(new Date(), options.timeZone);
     const rows = await digestRows(db, userId, day, options);
     return {
       text: rows.length

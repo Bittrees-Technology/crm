@@ -1,3 +1,5 @@
+import * as workflow from "@/lib/workflow";
+import * as leads from "@/lib/leads";
 import * as aiWrites from "@/lib/ai-writes";
 import * as ai from "@/lib/ai";
 import * as autonote from "@/lib/autonote";
@@ -140,6 +142,26 @@ async function handle(req: NextRequest) {
           : await ai.read(bearer, input),
       );
     }
+    if (
+      ["integrations/leads/brief", "integrations/leads/prepare"].includes(
+        path,
+      ) &&
+      req.method === "POST"
+    ) {
+      const bearer = req.headers
+        .get("authorization")
+        ?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+      if (!bearer) throw new HttpError(401, "Lead connection required.");
+      await rateLimit("leads:" + hash(bearer), 40);
+      const raw = await req.text();
+      if (raw.length > 120000) throw new HttpError(413, "Preview too large.");
+      const input = JSON.parse(raw || "{}");
+      if (path.endsWith("/brief")) {
+        z.strictObject({}).parse(input);
+        return json(await leads.agentBrief(bearer));
+      }
+      return json(await leads.prepare(bearer, input));
+    }
     let body: Record<string, unknown> = {};
     if (req.method !== "GET") {
       checkOrigin(req);
@@ -215,6 +237,55 @@ async function handle(req: NextRequest) {
     }
     const user = (await currentUser(req))!;
     if (req.method !== "GET") await rateLimit("user:" + user.id, 300);
+
+    if (path === "me/views" && req.method === "GET")
+      return json(
+        await workflow.views(
+          user.id,
+          req.nextUrl.searchParams.get("workspace") || "",
+        ),
+      );
+    if (path === "me/views" && req.method === "POST")
+      return json(
+        await workflow.views(
+          user.id,
+          z.uuid().parse(body.workspaceId),
+          body.view,
+        ),
+      );
+    if (path === "me/views" && req.method === "DELETE")
+      return json(
+        await workflow.deleteView(
+          user.id,
+          z.uuid().parse(body.workspaceId),
+          String(body.name),
+        ),
+      );
+    if (path === "records/archive" && req.method === "POST")
+      return json(
+        await workflow.archive(
+          user.id,
+          z.uuid().parse(body.workspaceId),
+          body.record,
+        ),
+      );
+    if (path === "leads/searches" && req.method === "GET")
+      return json(await leads.listSearches(user.id));
+    if (path === "leads/searches" && req.method === "POST")
+      return json(await leads.createSearch(user.id, body));
+    if (path === "leads/searches" && req.method === "DELETE")
+      return json(
+        await leads.revokeSearch(
+          user.id,
+          z.strictObject({ id: z.uuid() }).parse(body).id,
+        ),
+      );
+    if (path === "leads/review" && req.method === "GET")
+      return json(
+        await leads.review(user.id, req.nextUrl.searchParams.get("id") || ""),
+      );
+    if (path === "leads/approve" && req.method === "POST")
+      return json(await leads.approve(user.id, body));
 
     if (path === "integrations/ai/writes/options" && req.method === "GET")
       return json(
@@ -311,6 +382,7 @@ async function handle(req: NextRequest) {
       ]);
       return json({
         user,
+        features: { leads: process.env.CRM_LEADS_ENABLED === "true" },
         opportunityTypes: opportunityTypes.rows.map((r) => r.label),
         workspaces: workspaces.rows,
         identities: identities.rows,

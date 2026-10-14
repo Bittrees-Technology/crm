@@ -181,6 +181,16 @@ export async function saveRecord(userId: string, w: string, input: unknown) {
         };
       }
     }
+    if (
+      body.id &&
+      (
+        await db.query(
+          "SELECT archived_at FROM records WHERE id=$1 AND workspace_id=$2",
+          [body.id, w],
+        )
+      ).rows[0]?.archived_at
+    )
+      throw new HttpError(409, "Restore this archived record before editing.");
     await checkRecordAccess(db, userId, w, body.id, body.data);
     await validateReferences(db, w, body.data);
     if (
@@ -369,8 +379,19 @@ export async function importRecords(userId: string, w: string, input: unknown) {
       await validateReferences(db, w, data);
       const duplicate = (
         await db.query(
-          `SELECT id FROM records WHERE workspace_id=$1 AND kind=$2 AND ($5::uuid[] IS NULL OR id=ANY($5)) AND (lower(data->>'name')=lower($3) OR ($4<>'' AND lower(data->>'email')=lower($4))) LIMIT 1`,
-          [w, body.kind, data.name, data.email, importIds],
+          `SELECT id FROM records WHERE workspace_id=$1 AND kind=$2 AND ($5::uuid[] IS NULL OR id=ANY($5)) AND (($4<>'' AND lower(data->>'email')=lower($4)) OR ($2='organizations' AND $6<>'' AND regexp_replace(substring(lower(data->>'website') from '^https?://([^/:?#]+)'), '^www\\.', '')=$6) OR ($4='' AND $6='' AND COALESCE(data->>'email','')='' AND COALESCE(data->>'website','')='' AND lower(data->>'name')=lower($3))) LIMIT 1`,
+          [
+            w,
+            body.kind,
+            data.name,
+            data.email,
+            importIds,
+            data.website
+              ? new URL(data.website).hostname
+                  .toLowerCase()
+                  .replace(/^www\./, "")
+              : "",
+          ],
         )
       ).rowCount;
       if (duplicate) {

@@ -123,6 +123,8 @@ export async function checkWorkflows(
   await expect(
     page.getByRole("heading", { name: "No matching records" }),
   ).toBeVisible();
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
   await page.getByLabel("Saved views").selectOption("UX saved view");
   await expect(page.getByText("UX person", { exact: true })).toBeVisible();
   await page
@@ -322,8 +324,14 @@ export async function checkWorkflows(
   await importer.locator("input[type=file]").setInputFiles({
     name: "contacts.csv",
     mimeType: "text/csv",
-    buffer: Buffer.from("name,email\nUX imported,ux-import@example.com\n"),
+    buffer: Buffer.from("Contact,Address\nUX imported,ux-import@example.com\n"),
   });
+  await importer
+    .getByLabel("Map name", { exact: true })
+    .selectOption("Contact");
+  await importer
+    .getByLabel("Map email", { exact: true })
+    .selectOption("Address");
   await importer.getByRole("button", { name: "Import 1 records" }).click();
   await expect(importer).not.toBeVisible();
   await page.getByRole("button", { name: "Import CSV" }).click();
@@ -395,15 +403,38 @@ export async function checkWorkflows(
     1,
   );
 
-  // Delete each record through its UI, then leave a clean workspace for the remaining checks.
+  // Archive each record through its UI; then restore one and clean up this isolated fixture.
   for (const r of (await api(page, base)).records) {
     await page.goto(origin + "/?view=" + r.kind);
     await page.getByText(r.data.name, { exact: true }).click();
     const edit = page.getByRole("dialog");
     page.once("dialog", (d) => d.accept());
-    await edit.getByRole("button", { name: "Delete record" }).click();
+    await edit.getByRole("button", { name: "Archive record" }).click();
     await expect(edit).not.toBeVisible();
   }
+  const archivedRows = (await api(page, base)).records;
+  assert(archivedRows.every((r: any) => r.archived_at));
+  const restore = archivedRows[0];
+  await page.goto(origin + "/?view=" + restore.kind);
+  await page.getByLabel("Filter records").selectOption("archived");
+  await page.getByText(restore.data.name, { exact: true }).click();
+  page.once("dialog", (d) => d.accept());
+  await page
+    .getByRole("button", { name: "Restore record", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  assert.equal(
+    (await api(page, base)).records.find((r: any) => r.id === restore.id)
+      .archived_at,
+    null,
+  );
+  for (const r of (await api(page, base)).records)
+    await api(
+      page,
+      base + "/records",
+      { id: r.id, version: r.version },
+      "DELETE",
+    );
   assert.equal((await api(page, base)).records.length, 0);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(origin + "/?view=settings");
@@ -427,6 +458,6 @@ export async function checkWorkflows(
   await page.setViewportSize({ width: 1280, height: 900 });
   assert.deepEqual(errors, [], "Browser should not report application errors");
   console.log(
-    "Full UI workflows passed: all six record forms, validation, decimal amounts, search/views, history navigation, reports, exports, CSV/duplicates, unsaved edits, failed requests, edit conflicts, expired sessions, deletion, and mobile navigation.",
+    "Full UI workflows passed: all six record forms, validation, decimal amounts, search/views, history navigation, reports, exports, CSV/duplicates, unsaved edits, failed requests, edit conflicts, expired sessions, archive/restore, and mobile navigation.",
   );
 }

@@ -99,6 +99,9 @@ export default function Consent() {
   return (
     <main className="integration-page">
       <a href="/">Bittrees CRM</a>
+      <p>
+        <a href="/connect/ai/leads">Find organizations with your AI agent</a>
+      </p>
       <h1>Connect your local AI</h1>
       <p>
         Choose exactly which shared CRM records the companion may read. Private

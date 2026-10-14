@@ -108,6 +108,10 @@ export async function workspaceOperation(
         [body.targetId, sourceId],
       );
       await db.query(
+        "INSERT INTO saved_views(user_id,workspace_id,name,data) SELECT user_id,$1,name,data FROM saved_views WHERE workspace_id=$2 ON CONFLICT DO NOTHING",
+        [body.targetId, sourceId],
+      );
+      await db.query(
         "UPDATE records SET workspace_id=$1,version=version+1,updated_at=now() WHERE workspace_id=$2",
         [body.targetId, sourceId],
       );

@@ -1,4 +1,7 @@
 "use client";
+import { sameImportIdentity } from "@/lib/import-matches";
+import { calendarDay, matchesFollowup } from "@/lib/followups";
+import { defaultDigestOptions, type DigestOptions } from "@/lib/digest-options";
 import { ApiError, loadWorkspacePages } from "@/lib/workspace-loader";
 import {
   useEffect,
@@ -95,6 +98,7 @@ type Member = {
   scope_ids?: string[] | null;
 };
 type Me = {
+  features?: { leads: boolean };
   opportunityTypes?: string[];
   user: { id: string; name: string };
   workspaces: { id: string; name: string; role: string }[];
@@ -737,6 +741,9 @@ export default function App() {
   const [loadedCount, setLoadedCount] = useState<number | null>(null);
   const quickOperations = useRef(new Map<string, string>());
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [followupOptions, setFollowupOptions] =
+    useState<DigestOptions>(defaultDigestOptions);
+  const today = () => calendarDay(new Date(), followupOptions.timeZone);
   const [page, setPage] = useState<Page>("today"),
     [search, setSearch] = useState(""),
     [filter, setFilter] = useState("all"),
@@ -745,6 +752,18 @@ export default function App() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [notice, setNotice] = useState("");
+  useEffect(() => {
+    let active = true;
+    if (!demo && me?.user.id)
+      void api("me/digest")
+        .then((d) => {
+          if (active) setFollowupOptions(d.options);
+        })
+        .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [demo, me?.user.id, page]);
   const [editing, setEditing] = useState<{
       kind: Kind;
       record?: CrmRecord;
@@ -781,49 +800,86 @@ export default function App() {
     [inviteError, setInviteError] = useState("");
   const [inviteToken, setInviteToken] = useState(""),
     [inviteUrl, setInviteUrl] = useState("");
-  useEffect(() => {
+  function legacyViews(): SavedView[] {
     try {
       const stored = JSON.parse(
         localStorage.getItem(`crm-views:${me?.user.id}:${workspace}`) || "[]",
       );
-      setSavedViews(
-        Array.isArray(stored)
-          ? stored
-              .filter(
-                (v) =>
-                  v &&
-                  typeof v.name === "string" &&
-                  typeof v.page === "string" &&
-                  Object.hasOwn(labels, v.page) &&
-                  typeof v.search === "string" &&
-                  typeof v.filter === "string" &&
-                  typeof v.board === "boolean",
-              )
-              .slice(-20)
-          : [],
-      );
+      return Array.isArray(stored)
+        ? stored
+            .filter(
+              (v) =>
+                v &&
+                typeof v.name === "string" &&
+                typeof v.page === "string" &&
+                Object.hasOwn(labels, v.page) &&
+                typeof v.search === "string" &&
+                typeof v.filter === "string" &&
+                typeof v.board === "boolean",
+            )
+            .slice(-20)
+        : [];
     } catch {
-      setSavedViews([]);
-    }
-  }, [me?.user.id, workspace]);
-  function saveView() {
-    const name = window.prompt("Name this view (saved in this browser)");
-    if (!name?.trim()) return;
-    const next = [
-      ...savedViews.filter((v) => v.name !== name.trim()),
-      { name: name.trim().slice(0, 80), page, search, filter, board },
-    ].slice(-20);
-    setSavedViews(next);
-    try {
-      localStorage.setItem(
-        `crm-views:${me?.user.id}:${workspace}`,
-        JSON.stringify(next),
-      );
-      notify("View saved in this browser.");
-    } catch {
-      setError("This browser could not save view preferences.");
+      return [];
     }
   }
+  function combineViews(server: SavedView[], legacy = legacyViews()) {
+    return [
+      ...legacy.filter((v) => !server.some((s) => s.name === v.name)),
+      ...server,
+    ].slice(-20);
+  }
+  useEffect(() => {
+    setSavedViews(legacyViews());
+  }, [me?.user.id, workspace]);
+  async function saveView() {
+    const name = window.prompt("Name this view");
+    if (!name?.trim()) return;
+    const view = {
+      name: name.trim().slice(0, 80),
+      page,
+      search,
+      filter,
+      board,
+    };
+    await action(async () => {
+      const next = demo
+        ? [...savedViews.filter((v) => v.name !== view.name), view].slice(-20)
+        : await api("me/views", "POST", { workspaceId: workspace, view });
+      const legacy = demo
+        ? next
+        : legacyViews().filter((v) => v.name !== view.name);
+      setSavedViews(demo ? next : combineViews(next, legacy));
+      try {
+        localStorage.setItem(
+          `crm-views:${me?.user.id}:${workspace}`,
+          JSON.stringify(legacy),
+        );
+      } catch {
+        /* Server save is already confirmed. */
+      }
+      notify(
+        demo
+          ? "Demo view saved in this browser."
+          : "View saved to your account.",
+      );
+    });
+  }
+  useEffect(() => {
+    if (!workspace || !me?.user.id || demo) return;
+    let active = true;
+    void api("me/views?workspace=" + workspace)
+      .then((v) => {
+        if (active) setSavedViews(combineViews(v));
+      })
+      .catch(() => {
+        if (active)
+          setError("Saved views could not sync. Refresh to try again.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [workspace, me?.user.id, demo]);
   async function loadMe() {
     const m = await api("me");
     setMe(m);
@@ -1052,28 +1108,32 @@ export default function App() {
       setBusy(false);
     }
   }
-  const records = snapshot.records,
+  const records = snapshot.records.filter((r) => !r.archived_at),
     canEdit = snapshot.role !== "viewer";
   const nameOf = (id: string) =>
-    records.find((r) => r.id === id)?.data.name || "—";
+    snapshot.records.find((r) => r.id === id)?.data.name || "—";
   const ownerOf = (id: string) =>
     snapshot.members.find((m) => m.id === id)?.name || "Unassigned";
   const reportCurrencies = currencyCodes.filter((c) =>
     records.some((r) => r.kind === "opportunities" && r.data.currency === c),
   );
-  const due = records.filter(
-    (r) =>
-      ((r.kind === "tasks" && r.data.status !== "Done") ||
-        (r.kind === "opportunities" &&
-          !["Won", "Lost"].includes(r.data.stage))) &&
-      r.data.dueDate &&
-      r.data.dueDate <= today(),
-  );
+  const due = records
+    .filter(
+      (r) =>
+        (followupOptions.workspaceIds === null ||
+          followupOptions.workspaceIds.includes(workspace)) &&
+        matchesFollowup(r, me?.user.id || "", today(), followupOptions),
+    )
+    .sort((a, b) => a.data.dueDate.localeCompare(b.data.dueDate));
   const activeOpps = records.filter(
     (r) =>
       r.kind === "opportunities" && !["Won", "Lost"].includes(r.data.stage),
   );
-  let visible = records.filter(
+  let visible = (
+    filter === "archived"
+      ? snapshot.records.filter((r) => !!r.archived_at)
+      : records
+  ).filter(
     (r) =>
       r.kind === page &&
       JSON.stringify(r.data).toLowerCase().includes(search.toLowerCase()),
@@ -1168,34 +1228,31 @@ export default function App() {
     });
   }
   async function remove(record: CrmRecord) {
-    if (!window.confirm(`Delete “${record.data.name}”? This cannot be undone.`))
+    const archived = !record.archived_at;
+    if (
+      !window.confirm(
+        `${archived ? "Archive" : "Restore"} “${record.data.name}”? ${archived ? "Links and notes are preserved. You can restore it from the Archived filter." : "It will return to active lists."}`,
+      )
+    )
       return;
     await action(async () => {
-      if (demo)
-        setSnapshot((s) => ({
-          ...s,
-          records: s.records.filter((r) => r.id !== record.id),
-        }));
-      else {
-        const result = await api(
-          "workspaces/" + workspace + "/records",
-          "DELETE",
-          {
-            id: record.id,
-            version: record.version,
-          },
-        );
-        loadingRequest.current?.abort();
-        setSnapshot((s) => ({
-          ...s,
-          records: s.records.filter((r) => r.id !== record.id),
-          audit: result.activity
-            ? [result.activity, ...s.audit].slice(0, 100)
-            : s.audit,
-        }));
-      }
+      const result = demo
+        ? {
+            ...record,
+            archived_at: archived ? new Date().toISOString() : null,
+            version: record.version + 1,
+          }
+        : await api("records/archive", "POST", {
+            workspaceId: workspace,
+            record: { id: record.id, version: record.version, archived },
+          });
+      applySaved(result);
       setEditing(null);
-      notify("Record deleted.");
+      notify(
+        archived
+          ? "Record archived. Use the Archived filter to restore it."
+          : "Record restored.",
+      );
     });
   }
   function download(content: string, name: string, type: string) {
@@ -1315,6 +1372,11 @@ export default function App() {
           })}
         </nav>
         <div className="sidebar-bottom">
+          {me.features?.leads && snapshot.role === "owner" && (
+            <a className="nav-item" href="/connect/ai/leads">
+              Find organizations
+            </a>
+          )}
           <button
             data-insights="settings"
             className={page === "settings" ? "nav-item active" : "nav-item"}
@@ -1496,7 +1558,14 @@ export default function App() {
                       .toUpperCase()}
                   </span>
                   <h1>Today</h1>
-                  <p>Tasks and opportunities requiring attention.</p>
+                  <p>
+                    {followupOptions.assignment === "mine"
+                      ? "Assigned to you"
+                      : "All accessible work"}{" "}
+                    · {followupOptions.daysAhead}-day look-ahead ·{" "}
+                    {followupOptions.timeZone}. Uses your daily follow-up
+                    settings for this workspace.
+                  </p>
                 </div>
                 {canEdit && (
                   <button
@@ -1517,7 +1586,7 @@ export default function App() {
                   icon={TrendingUp}
                 />
                 <Metric
-                  label="Follow-ups due"
+                  label="Follow-ups"
                   value={String(due.length)}
                   detail={
                     due.length
@@ -1539,7 +1608,7 @@ export default function App() {
                 <section className="panel">
                   <div className="section-heading">
                     <h2>
-                      Follow-ups due <span className="count">{due.length}</span>
+                      Follow-ups <span className="count">{due.length}</span>
                     </h2>
                     <button
                       data-insights="all-tasks"
@@ -2123,7 +2192,12 @@ export default function App() {
                   <h1>
                     {labels[page]}
                     <span className="heading-count">
-                      {records.filter((r) => r.kind === page).length}
+                      {
+                        (filter === "archived"
+                          ? snapshot.records.filter((r) => !!r.archived_at)
+                          : records
+                        ).filter((r) => r.kind === page).length
+                      }
                     </span>
                   </h1>
                   <p>
@@ -2175,7 +2249,8 @@ export default function App() {
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
                 >
-                  <option value="all">All records</option>
+                  <option value="all">Active records</option>
+                  <option value="archived">Archived</option>
                   <option value="mine">Assigned to me</option>
                   {["tasks", "opportunities"].includes(page) && (
                     <option value="due">Follow-ups due</option>
@@ -2214,6 +2289,41 @@ export default function App() {
                 >
                   Save view
                 </button>
+                {savedViews.length > 0 && !demo && (
+                  <button
+                    className="button subtle"
+                    onClick={() => {
+                      const name = window.prompt(
+                        "Name of saved view to delete",
+                      );
+                      if (name)
+                        void action(async () => {
+                          await api("me/views", "DELETE", {
+                            workspaceId: workspace,
+                            name,
+                          });
+                          const legacy = legacyViews().filter(
+                            (v) => v.name !== name,
+                          );
+                          try {
+                            localStorage.setItem(
+                              `crm-views:${me?.user.id}:${workspace}`,
+                              JSON.stringify(legacy),
+                            );
+                          } catch {}
+                          setSavedViews(
+                            combineViews(
+                              await api("me/views?workspace=" + workspace),
+                              legacy,
+                            ),
+                          );
+                          notify("Saved view deleted.");
+                        });
+                    }}
+                  >
+                    Delete saved view
+                  </button>
+                )}
                 <div className="toolbar-spacer" />
                 {page === "opportunities" && (
                   <div className="toggle">
@@ -2262,7 +2372,7 @@ export default function App() {
                   <span className="hide-mobile">Export</span>
                 </button>
               </div>
-              {page === "opportunities" && board ? (
+              {page === "opportunities" && board && filter !== "archived" ? (
                 <div className="board">
                   {stages.map((stage, i) => {
                     const rows = visible.filter((r) => r.data.stage === stage);
@@ -2467,7 +2577,7 @@ export default function App() {
                               ["tasks", "opportunities"].includes(r.kind) && (
                                 <QuickActions
                                   record={r}
-                                  disabled={busy}
+                                  disabled={busy || !!r.archived_at}
                                   onChange={(patch) => quickUpdate(r, patch)}
                                 />
                               )}
@@ -2531,7 +2641,7 @@ export default function App() {
           kind={editing.kind}
           initialStage={editing.stage}
           record={editing.record}
-          records={records}
+          records={snapshot.records}
           members={snapshot.members}
           userId={me.user.id}
           savedTypes={me.opportunityTypes || []}
@@ -2543,9 +2653,11 @@ export default function App() {
             setError("");
           }}
           isOwner={snapshot.role === "owner"}
-          onSave={(d, fields, operationId) =>
-            save(editing.kind, d, editing.record, fields, operationId)
-          }
+          onSave={(d, fields, operationId) => {
+            if (!editing.record?.archived_at)
+              return save(editing.kind, d, editing.record, fields, operationId);
+          }}
+          onOpen={(record) => setEditing({ kind: record.kind, record })}
           onDelete={editing.record ? () => remove(editing.record!) : undefined}
         />
       )}
@@ -2571,7 +2683,7 @@ export default function App() {
       {importing && (
         <Importer
           kind={page === "organizations" ? "organizations" : "people"}
-          existing={records}
+          existing={snapshot.records}
           busy={busy}
           error={error}
           onClose={() => {
@@ -2746,6 +2858,7 @@ function RecordEditor({
   onClose,
   onSave,
   onDelete,
+  onOpen,
 }: {
   isOwner: boolean;
   savedTypes: string[];
@@ -2767,6 +2880,7 @@ function RecordEditor({
     operationId?: string,
   ) => void;
   onDelete?: () => void;
+  onOpen?: (record: CrmRecord) => void;
 }) {
   const [operationId] = useState(() => crypto.randomUUID());
   const [data, setData] = useState<RecordData>(
@@ -2899,7 +3013,10 @@ function RecordEditor({
       label,
       records
         .filter((r) => r.kind === k && r.id !== record?.id)
-        .map((r) => ({ value: r.id, label: r.data.name })),
+        .map((r) => ({
+          value: r.id,
+          label: r.data.name + (r.archived_at ? " (archived)" : ""),
+        })),
     );
   return (
     <Modal
@@ -2934,7 +3051,10 @@ function RecordEditor({
           );
         }}
       >
-        <fieldset disabled={!canEdit || busy} className="editor-fields">
+        <fieldset
+          disabled={!canEdit || busy || !!record?.archived_at}
+          className="editor-fields"
+        >
           <div className="form-grid">
             {input(
               "name",
@@ -3150,7 +3270,7 @@ function RecordEditor({
                     maxLength={20000}
                     aria-label="Private context"
                     value={privateDraft}
-                    disabled={busy}
+                    disabled={busy || !!record?.archived_at}
                     onChange={(e) => setPrivateDraft(e.target.value)}
                   />
                 </label>
@@ -3163,7 +3283,7 @@ function RecordEditor({
               data={data}
               value={visibility}
               onChange={setVisibility}
-              disabled={busy}
+              disabled={busy || !!record?.archived_at}
             />
           </>
         )}
@@ -3180,6 +3300,48 @@ function RecordEditor({
             demo={demo}
           />
         )}
+        {record && onOpen && (
+          <section>
+            <h3>Related records</h3>
+            <ul>
+              {records
+                .filter(
+                  (r) =>
+                    r.id !== record.id &&
+                    ([
+                      r.data.organizationId,
+                      r.data.personId,
+                      r.data.projectId,
+                      r.data.opportunityId,
+                    ].includes(record.id) ||
+                      [
+                        record.data.organizationId,
+                        record.data.personId,
+                        record.data.projectId,
+                        record.data.opportunityId,
+                      ].includes(r.id)),
+                )
+                .map((r) => (
+                  <li key={r.id}>
+                    <button
+                      type="button"
+                      className="text-button"
+                      disabled={busy}
+                      onClick={() => {
+                        if (
+                          !dirty ||
+                          window.confirm("Discard your unsaved changes?")
+                        )
+                          onOpen(r);
+                      }}
+                    >
+                      {r.data.name} · {r.kind}
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          </section>
+        )}
         {record && (
           <div className="record-meta">
             Version {record.version} · Updated{" "}
@@ -3195,7 +3357,7 @@ function RecordEditor({
               onClick={onDelete}
               disabled={busy}
             >
-              Delete record
+              {record?.archived_at ? "Restore record" : "Archive record"}
             </button>
           )}
           <div className="toolbar-spacer" />
@@ -3208,7 +3370,7 @@ function RecordEditor({
           >
             Close
           </button>
-          {canEdit && (
+          {canEdit && !record?.archived_at && (
             <button className="button primary" disabled={busy}>
               {busy ? (
                 <LoaderCircle size={16} className="spin" />
@@ -3238,12 +3400,28 @@ function Importer({
   onClose: () => void;
   onImport: (rows: RecordData[]) => void;
 }) {
+  const fields = [
+    "name",
+    "email",
+    "title",
+    "website",
+    "category",
+    "source",
+    "description",
+  ];
+  const [rawRows, setRawRows] = useState<Record<string, string>[]>([]),
+    [headers, setHeaders] = useState<string[]>([]),
+    [mapping, setMapping] = useState<Record<string, string>>({}),
+    [skippedNames, setSkippedNames] = useState<string[]>([]);
   const [rows, setRows] = useState<RecordData[]>([]),
     [skipped, setSkipped] = useState(0),
     [problem, setProblem] = useState("");
   async function read(file?: File) {
     if (!file) return;
     setRows([]);
+    setRawRows([]);
+    setHeaders([]);
+    setSkipped(0);
     setProblem("");
     if (file.size > 1_000_000) {
       setProblem("Choose a CSV smaller than 1 MB.");
@@ -3263,18 +3441,41 @@ function Importer({
       setProblem("Import up to 500 rows at a time.");
       return;
     }
+    setRawRows(csv.data);
+    setHeaders(csv.meta.fields || []);
+    setMapping(
+      Object.fromEntries(
+        fields.map((field) => [
+          field,
+          (csv.meta.fields || []).find((h) => h.toLowerCase() === field) || "",
+        ]),
+      ),
+    );
+  }
+  useEffect(() => {
+    if (!rawRows.length) return;
+    setRows([]);
+    setProblem("");
+    setSkippedNames([]);
     let skip = 0;
+    const skippedLabels: string[] = [];
     const found = existing.filter((r) => r.kind === kind).map((r) => r.data),
       valid: RecordData[] = [];
-    for (const [i, r] of csv.data.entries()) {
+    for (const [i, r] of rawRows.entries()) {
+      const mapped = Object.fromEntries(
+        Object.entries(mapping).map(([field, header]) => [
+          field,
+          r[header] || "",
+        ]),
+      );
       const item = recordSchema.safeParse({
-        name: r.name || r.Name,
-        email: r.email || r.Email || "",
-        title: r.title || "",
-        website: r.website || "",
-        category: r.category || "",
-        source: r.source || "CSV import",
-        description: r.description || "",
+        name: mapped.name,
+        email: mapped.email || "",
+        title: mapped.title || "",
+        website: mapped.website || "",
+        category: mapped.category || "",
+        source: mapped.source || "CSV import",
+        description: mapped.description || "",
       });
       if (!item.success) {
         setProblem(
@@ -3283,27 +3484,24 @@ function Importer({
         return;
       }
       if (
-        [...found, ...valid].some(
-          (d) =>
-            d.name.toLowerCase() === item.data.name.toLowerCase() ||
-            (d.email &&
-              d.email.toLowerCase() === item.data.email.toLowerCase()),
-        )
+        [...found, ...valid].some((d) => sameImportIdentity(d, item.data, kind))
       ) {
         skip++;
+        skippedLabels.push(item.data.name);
         continue;
       }
       valid.push(item.data);
     }
     setRows(valid);
     setSkipped(skip);
-  }
+    setSkippedNames(skippedLabels);
+  }, [rawRows, mapping, existing, kind]);
   return (
     <Modal title={`Import ${kind}`} onClose={onClose} wide>
       <div className="modal-body">
         <p>
-          Use a CSV with a <strong>name</strong> column. Optional columns:
-          email, title, website, category, source, description.
+          Choose a CSV, then map its columns. Name is required; other fields are
+          optional.
         </p>
         <label className="file-label">
           Choose CSV
@@ -3314,9 +3512,47 @@ function Importer({
           />
         </label>
         <p className="small">
-          Up to 500 rows. Matching names or emails are skipped, never
-          overwritten. Relationships and ownership can be added after import.
+          Up to 500 rows. Matching email addresses or websites are skipped.
+          Names match only when both records lack email and website. Records are
+          never merged or overwritten. Relationships and ownership can be added
+          after import.
         </p>
+        {headers.length > 0 && (
+          <fieldset disabled={busy}>
+            <legend>Column mapping</legend>
+            {fields.map((field) => (
+              <label key={field}>
+                {field}
+                <select
+                  aria-label={"Map " + field}
+                  value={mapping[field] || ""}
+                  onChange={(e) =>
+                    setMapping({ ...mapping, [field]: e.target.value })
+                  }
+                >
+                  <option value="">
+                    {field === "name" ? "Choose name column" : "Not imported"}
+                  </option>
+                  {headers.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </fieldset>
+        )}
+        {skippedNames.length > 0 && (
+          <details>
+            <summary>Review {skippedNames.length} skipped matches</summary>
+            <ul>
+              {skippedNames.map((name, i) => (
+                <li key={i}>{name}</li>
+              ))}
+            </ul>
+          </details>
+        )}
         {(problem || error) && (
           <div className="error" role="alert">
             {problem || error}

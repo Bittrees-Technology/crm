@@ -93,7 +93,7 @@ async function destination(db: PoolClient, g: any, id: string) {
   await checkRecordAccess(db, g.user_id, g.workspace_id, id);
   const t = (
     await db.query(
-      "SELECT * FROM records WHERE id=$1 AND workspace_id=$2 AND kind IN ('people','organizations','projects','opportunities')",
+      "SELECT * FROM records WHERE id=$1 AND workspace_id=$2 AND archived_at IS NULL AND kind IN ('people','organizations','projects','opportunities')",
       [id, g.workspace_id],
     )
   ).rows[0];

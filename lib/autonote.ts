@@ -34,7 +34,7 @@ export async function authorize(user: string, input: unknown) {
     await checkRecordAccess(db, user, d.workspaceId, d.targetId);
     const target = (
       await db.query(
-        "SELECT kind FROM records WHERE id=$1 AND workspace_id=$2 AND kind IN ('people','organizations','projects','opportunities')",
+        "SELECT kind FROM records WHERE id=$1 AND workspace_id=$2 AND archived_at IS NULL AND kind IN ('people','organizations','projects','opportunities')",
         [d.targetId, d.workspaceId],
       )
     ).rows[0];
@@ -145,10 +145,10 @@ export async function publish(bearer: string, input: unknown) {
   return transaction(async (db) => {
     const g = await grant(db, bearer);
     const target = (
-      await db.query("SELECT * FROM records WHERE id=$1 AND workspace_id=$2", [
-        g.target_id,
-        g.workspace_id,
-      ])
+      await db.query(
+        "SELECT * FROM records WHERE id=$1 AND workspace_id=$2 AND archived_at IS NULL",
+        [g.target_id, g.workspace_id],
+      )
     ).rows[0];
     if (!target) throw new HttpError(404, "Destination no longer exists.");
     const field = (

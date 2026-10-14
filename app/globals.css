@@ -624,7 +624,7 @@ small {
   white-space: nowrap;
 }
 .due.overdue {
-  color: #b36a37;
+  color: #8b4e26;
   background: #fff3e7;
   border-radius: 4px;
   padding: 3px 6px;
@@ -2075,4 +2075,49 @@ td,
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: inherit;
+}
+
+.integration-page fieldset {
+  border: 0;
+  padding: 0;
+  margin: 16px 0;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.integration-page label {
+  display: grid;
+  gap: 8px;
+}
+.integration-page input:not([type="checkbox"]),
+.integration-page textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: white;
+  color: var(--ink);
+  font: inherit;
+}
+.integration-page textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+.integration-page article {
+  margin-block: 20px;
+  overflow-wrap: anywhere;
+}
+.integration-page a {
+  overflow-wrap: anywhere;
+}
+.integration-page .checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.integration-page input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
 }

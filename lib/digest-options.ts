@@ -1,5 +1,17 @@
 import { z } from "zod";
 export const digestOptionsSchema = z.object({
+  timeZone: z
+    .string()
+    .max(100)
+    .refine((value) => {
+      try {
+        new Intl.DateTimeFormat("en", { timeZone: value });
+        return true;
+      } catch {
+        return false;
+      }
+    }, "Choose a valid IANA timezone.")
+    .default("UTC"),
   assignment: z.enum(["mine", "all"]).default("mine"),
   daysAhead: z.number().int().min(0).max(30).default(7),
   includeOverdue: z.boolean().default(true),

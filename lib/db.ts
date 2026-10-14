@@ -1,3 +1,5 @@
+import { workflowSchema } from "./workflow-schema";
+import { leadsSchema } from "./leads-schema";
 import { performanceSchema } from "./performance-schema";
 import { aiSchema } from "./ai-schema";
 import { integrationSchema } from "./autonote-schema";
@@ -60,4 +62,6 @@ CREATE TABLE IF NOT EXISTS record_private_notes(record_id uuid NOT NULL REFERENC
 ` +
   integrationSchema +
   aiSchema +
-  performanceSchema;
+  performanceSchema +
+  leadsSchema +
+  workflowSchema;

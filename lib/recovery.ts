@@ -166,6 +166,15 @@ export async function completeRecovery(req: Request, raw: string) {
     await db.query("DELETE FROM user_opportunity_types WHERE user_id=$1", [
       r.source_id,
     ]);
+    await db.query(
+      "INSERT INTO saved_views(user_id,workspace_id,name,data) SELECT $1,workspace_id,name,data FROM saved_views WHERE user_id=$2 ON CONFLICT DO NOTHING",
+      [r.target_id, r.source_id],
+    );
+    await db.query("DELETE FROM saved_views WHERE user_id=$1", [r.source_id]);
+    await db.query(
+      "UPDATE lead_searches SET revoked_at=COALESCE(revoked_at,now()),token_hash=NULL WHERE user_id=ANY($1::uuid[])",
+      [[r.target_id, r.source_id]],
+    );
     await db.query("DELETE FROM members WHERE user_id=$1", [r.source_id]);
     await db.query(
       "UPDATE users SET digest_enabled=false WHERE id=ANY($1::uuid[])",

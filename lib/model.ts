@@ -65,6 +65,7 @@ export type CrmRecord = {
   version: number;
   created_at: string;
   updated_at: string;
+  archived_at?: string | null;
   stage_changed_at?: string;
   visibility_ids?: string[] | null;
 };
