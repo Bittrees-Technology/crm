@@ -1372,9 +1372,9 @@ export default function App() {
           })}
         </nav>
         <div className="sidebar-bottom">
-          {me.features?.leads && snapshot.role === "owner" && (
+          {me.features?.leads && (
             <a className="nav-item" href="/connect/ai/leads">
-              Find organizations
+              Lead research
             </a>
           )}
           <button
@@ -3076,6 +3076,7 @@ function RecordEditor({
               <>
                 {input("email", "Email address", "email")}
                 {input("title", "Role / title")}
+                {input("website", "Public profile", "url")}
                 {ref("organizationId", "Organization", "organizations")}
                 {select(
                   "communication",
@@ -3088,10 +3089,39 @@ function RecordEditor({
               </>
             )}
             {kind === "organizations" && (
-              <>
-                {input("website", "Website", "url")}
-                {input("category", "Organization type")}
-              </>
+              <>{input("website", "Website", "url")}</>
+            )}
+            {(kind === "people" || kind === "organizations") && (
+              <label>
+                {kind === "people"
+                  ? "Investor / contact category"
+                  : "Organization type"}
+                <input
+                  list="investor-categories"
+                  maxLength={200}
+                  value={data.category}
+                  onChange={(e) => update("category", e.target.value)}
+                />
+                <datalist id="investor-categories">
+                  {[
+                    ...new Set([
+                      "Angel",
+                      "Venture capital",
+                      "Family office",
+                      "Corporate investor",
+                      "Accelerator",
+                      "Fund of funds",
+                      "Investor",
+                      ...records
+                        .filter((r) => r.kind === kind)
+                        .map((r) => r.data.category)
+                        .filter(Boolean),
+                    ]),
+                  ].map((category) => (
+                    <option key={category} value={category} />
+                  ))}
+                </datalist>
+              </label>
             )}
             {kind === "projects" && input("category", "Project type")}
             {kind === "opportunities" && (

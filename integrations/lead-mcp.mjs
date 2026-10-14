@@ -5,7 +5,7 @@ export const tools = [
   {
     name: "leads.brief",
     description:
-      "Read the user-approved organization research brief. Public research must use permitted sources. Do not send private CRM information to search/model providers.",
+      "Read the user-approved investor research brief. Public research must use permitted sources. Do not send private CRM information to search/model providers.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -16,7 +16,7 @@ export const tools = [
   {
     name: "leads.preview",
     description:
-      "Submit one immutable batch of up to 20 sourced organizations for review in CRM. Does not import, contact, or merge records. Retry with the same operationId and identical candidates after an uncertain response.",
+      "Submit one immutable batch of up to 20 sourced people and organizations for review in CRM. Does not import, contact, or merge records. Retry with the same operationId and identical candidates after an uncertain response.",
     inputSchema: {
       type: "object",
       required: ["operationId", "candidates"],
@@ -41,6 +41,29 @@ export const tools = [
               "sources",
             ],
             properties: {
+              kind: {
+                enum: ["organizations", "people"],
+                default: "organizations",
+              },
+              category: {
+                type: "string",
+                maxLength: 200,
+                description:
+                  "Investor category, for example Angel, Venture capital, Family office, Corporate investor; custom labels allowed.",
+              },
+              title: { type: "string", maxLength: 200 },
+              email: {
+                type: "string",
+                description:
+                  "Publicly sourced professional email only, or empty.",
+              },
+              organizationIndex: {
+                type: "integer",
+                minimum: 0,
+                maximum: 19,
+                description:
+                  "For people: zero-based index of an organization in this same batch. Omit for independent investors.",
+              },
               name: { type: "string", maxLength: 200 },
               website: { type: "string", format: "uri", maxLength: 800 },
               summary: { type: "string", maxLength: 500 },
