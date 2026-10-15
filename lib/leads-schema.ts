@@ -1,4 +1,6 @@
-export const leadsSchema = `
+import { datasetSchema } from "./dataset-schema";
+export const leadsSchema =
+  `
 CREATE TABLE IF NOT EXISTS lead_searches(
  id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -21,4 +23,4 @@ CREATE TABLE IF NOT EXISTS lead_drafts(
  shared_search_id uuid, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS lead_drafts_user ON lead_drafts(user_id,updated_at);
 CREATE INDEX IF NOT EXISTS lead_searches_user ON lead_searches(user_id,created_at);
-`;
+` + datasetSchema;

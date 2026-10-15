@@ -3402,3 +3402,330 @@ test("MCP tasks flow through exact owner approval, linked records, status reconc
     /unavailable/,
   );
 });
+
+test("Dataset MCP scopes reads and writes, exports training, and shares immutable copies for owner approval", async () => {
+  const ds = await import("../lib/datasets");
+  const drafts = await import("../lib/lead-drafts");
+  const leads = await import("../lib/leads");
+  const mcp = await import("../lib/dataset-mcp");
+  const login = await walletLogin();
+  const user = (await currentUser(request(cookiePair(login.result.cookie))))!
+    .id;
+  const w = (
+    await pool().query("SELECT workspace_id FROM members WHERE user_id=$1", [
+      user,
+    ])
+  ).rows[0].workspace_id;
+  const org = await saveRecord(user, w, {
+    kind: "organizations",
+    data: { name: "Dataset firm" },
+  });
+  const person = await saveRecord(user, w, {
+    kind: "people",
+    data: {
+      name: "Dataset partner",
+      organizationId: org.id,
+      email: "public@bittrees.org",
+    },
+  });
+  await pool().query(
+    "INSERT INTO record_private_notes(record_id,author_id,content) VALUES($1,$2,$3)",
+    [person.id, user, "NEVER_EXPORT_PRIVATE_NOTE"],
+  );
+  const id = randomUUID();
+  await drafts.saveDraft(user, {
+    id,
+    version: 0,
+    name: "Dataset pilot",
+    entries: [],
+  });
+  await assert.rejects(
+    () =>
+      ds.datasetImport(user, {
+        id,
+        version: 1,
+        workspaceId: w,
+        recordIds: [person.id],
+      }),
+    /linked organization/,
+  );
+  await ds.datasetImport(user, {
+    id,
+    version: 1,
+    workspaceId: w,
+    recordIds: [org.id, person.id],
+  });
+  const c = await ds.datasetConnect(user, { id });
+  const bearer = c.token!;
+  await assert.rejects(() => ds.datasetConnect(other, { id }), /not found/);
+  let read: any = await ds.datasetAgent(bearer, "dataset.read", {});
+  assert.equal(read.entries.length, 2);
+  assert.equal(read.crm.length, 2);
+  assert(!JSON.stringify(read).includes("NEVER_EXPORT_PRIVATE_NOTE"));
+  assert.equal(
+    read.entries.find((e: any) => e.kind === "people").organizationId,
+    read.entries.find((e: any) => e.kind === "organizations").id,
+  );
+  assert.deepEqual(
+    await ds.datasetAgent(bearer, "dataset.read", { revision: read.revision }),
+    { unchanged: true, revision: read.revision },
+  );
+  const entry = read.entries[0];
+  entry.research = {
+    sources: [
+      {
+        url: "https://bittrees.org/",
+        retrievedAt: new Date().toISOString(),
+        claim: "Public source",
+        usage: "Unknown",
+      },
+    ],
+    relevance: "Potential investor",
+    uncertainties: "Mandate needs confirmation",
+    verification: "unverified",
+    training: "pending",
+  };
+  const input = {
+    version: read.version,
+    name: read.name,
+    entries: read.entries,
+  };
+  const saved: any = await ds.datasetAgent(bearer, "dataset.save", input);
+  assert.deepEqual(await ds.datasetAgent(bearer, "dataset.save", input), saved);
+  await assert.rejects(
+    () => ds.datasetAgent(bearer, "dataset.save", { ...input, name: "Stale" }),
+    /another tab/,
+  );
+  await assert.rejects(
+    () =>
+      ds.datasetAgent(bearer, "dataset.save", {
+        ...input,
+        version: saved.version,
+        entries: [
+          { ...entry, research: { ...entry.research, training: "eligible" } },
+        ],
+      }),
+    /human training/,
+  );
+  assert.deepEqual(await ds.datasetRead(user, id, true), []);
+  read = await ds.datasetAgent(bearer, "dataset.read", {});
+  await drafts.saveDraft(user, {
+    id,
+    version: read.version,
+    name: read.name,
+    entries: read.entries.map((e: any) => ({
+      ...e,
+      research: { ...e.research, training: "eligible" },
+    })),
+  });
+  read = await ds.datasetAgent(bearer, "dataset.read", {});
+  await ds.datasetAgent(bearer, "dataset.save", {
+    version: read.version,
+    name: read.name,
+    entries: read.entries,
+  });
+  const training: any = await ds.datasetRead(user, id, true);
+  assert.equal(training.length, 2);
+  assert(!training.some((e: any) => "email" in e));
+  const destination = { id: randomUUID() };
+  await pool().query(
+    "INSERT INTO workspaces(id,name) VALUES($1,'Dataset target')",
+    [destination.id],
+  );
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'owner')",
+    [destination.id, owner],
+  );
+  const project = await saveRecord(owner, destination.id, {
+    kind: "projects",
+    data: { name: "BBRF dataset test" },
+  });
+  read = await ds.datasetAgent(bearer, "dataset.read", {});
+  const share = {
+    id,
+    version: read.version,
+    entryIds: read.entries.map((e: any) => e.id),
+    workspaceId: destination.id,
+    projectId: project.id,
+    ownerId: owner,
+    operationId: randomUUID(),
+  };
+  await assert.rejects(() => ds.datasetShare(user, share));
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role,scope_ids) VALUES($1,$2,'viewer',$3)",
+    [destination.id, user, [project.id]],
+  );
+  const result = await ds.datasetShare(user, share);
+  assert.deepEqual(await ds.datasetShare(user, share), result);
+  await assert.rejects(() => ds.datasetShare(user, { ...share, entryIds: [] }));
+  assert.equal((await drafts.getDraft(user, id)).shared_search_id, null);
+  const review = await leads.review(owner, result.reviewId);
+  await assert.rejects(() =>
+    leads.approve(user, {
+      reviewId: result.reviewId,
+      digest: review.digest,
+      accept: [0, 1],
+    }),
+  );
+  await leads.approve(owner, {
+    reviewId: result.reviewId,
+    digest: review.digest,
+    accept: [0, 1],
+  });
+  const published = (await snapshot(owner, destination.id)).records;
+  assert.equal(
+    published.filter((r: any) => ["people", "organizations"].includes(r.kind))
+      .length,
+    2,
+  );
+  assert.equal(
+    published.find((r: any) => r.kind === "people")!.data.organizationId,
+    published.find((r: any) => r.kind === "organizations")!.id,
+  );
+  read = await ds.datasetAgent(bearer, "dataset.read", {});
+  assert.equal(read.submissions[0].status, "reviewed");
+  assert.equal(read.submissions[0].accepted, 2);
+  assert.deepEqual(read.submissions[0].mappings, []);
+  const rpc: any = await mcp.datasetMcp(
+    bearer,
+    { jsonrpc: "2.0", id: 1, method: "tools/list" },
+    null,
+  );
+  assert.equal(rpc.result.tools.length, 3);
+  await assert.rejects(() =>
+    mcp.datasetMcp(
+      "a".repeat(64),
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      null,
+    ),
+  );
+  await ds.datasetConnect(user, { id, revoke: true });
+  await assert.rejects(
+    () => ds.datasetAgent(bearer, "dataset.read", {}),
+    /expired or revoked/,
+  );
+});
+
+test("Dataset updates require exact human review and preserve CRM sharing and private notes", async () => {
+  const ds = await import("../lib/datasets");
+  const drafts = await import("../lib/lead-drafts");
+  const login = await walletLogin();
+  const user = (await currentUser(request(cookiePair(login.result.cookie))))!
+    .id;
+  const w = (
+    await pool().query("SELECT workspace_id FROM members WHERE user_id=$1", [
+      user,
+    ])
+  ).rows[0].workspace_id;
+  const record = await saveRecord(user, w, {
+    kind: "organizations",
+    data: { name: "Versioned firm", description: "Original" },
+    visibilityIds: [],
+    privateNote: { version: 0, content: "Keep private" },
+  });
+  const id = randomUUID();
+  await drafts.saveDraft(user, {
+    id,
+    version: 0,
+    name: "Updates",
+    entries: [],
+  });
+  await ds.datasetImport(user, {
+    id,
+    version: 1,
+    workspaceId: w,
+    recordIds: [record.id],
+  });
+  const c = await ds.datasetConnect(user, { id });
+  let d: any = await ds.datasetAgent(c.token!, "dataset.read", {});
+  d.entries[0].description = "Researched revision";
+  await ds.datasetAgent(c.token!, "dataset.save", {
+    version: d.version,
+    name: d.name,
+    entries: d.entries,
+  });
+  let proposals = await ds.datasetUpdates(user, id);
+  assert.equal(proposals.length, 1);
+  await saveRecord(user, w, {
+    id: record.id,
+    kind: "organizations",
+    version: record.version,
+    data: { ...record.data, title: "Concurrent edit" },
+  });
+  await assert.rejects(
+    () =>
+      ds.datasetApply(user, {
+        id,
+        entryId: proposals[0].entryId,
+        digest: proposals[0].digest,
+      }),
+    /changed/,
+  );
+  proposals = await ds.datasetUpdates(user, id);
+  const result = await ds.datasetApply(user, {
+    id,
+    entryId: proposals[0].entryId,
+    digest: proposals[0].digest,
+  });
+  assert.equal(result.version, 3);
+  const updated = (
+    await pool().query("SELECT * FROM records WHERE id=$1", [record.id])
+  ).rows[0];
+  assert.equal(updated.data.description, "Researched revision");
+  assert.deepEqual(updated.visibility_ids, []);
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT content FROM record_private_notes WHERE record_id=$1",
+        [record.id],
+      )
+    ).rows[0].content,
+    "Keep private",
+  );
+  await assert.rejects(
+    () =>
+      ds.datasetApply(other, {
+        id,
+        entryId: proposals[0].entryId,
+        digest: proposals[0].digest,
+      }),
+    /not found/,
+  );
+  await assert.rejects(
+    () => ds.datasetAgent(c.token!, "dataset.apply", {}),
+    /Unknown/,
+  );
+  await pool().query(
+    "UPDATE members SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",
+    [w, user],
+  );
+  await pool().query("UPDATE records SET visibility_ids='{}' WHERE id=$1", [
+    record.id,
+  ]);
+  d = await ds.datasetAgent(c.token!, "dataset.read", {});
+  assert.deepEqual(d.crm, []);
+  assert.equal(d.links[0].status, "unavailable");
+  assert.deepEqual(await ds.datasetUpdates(user, id), []);
+  await ds.datasetAgent(c.token!, "dataset.save", {
+    version: d.version,
+    name: d.name,
+    entries: [],
+  });
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT * FROM dataset_record_links WHERE draft_id=$1",
+        [id],
+      )
+    ).rowCount,
+    0,
+  );
+  await pool().query(
+    "UPDATE dataset_connections SET expires_at=now()-interval '1 second' WHERE draft_id=$1",
+    [id],
+  );
+  await assert.rejects(
+    () => ds.datasetAgent(c.token!, "dataset.read", {}),
+    /expired or revoked/,
+  );
+});

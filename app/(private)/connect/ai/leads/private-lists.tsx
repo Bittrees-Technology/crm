@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import type { DraftEntry } from "@/lib/lead-drafts";
+import DatasetPanel from "./dataset-panel";
 import { api } from "./lead-api";
 type Draft = {
   id: string;
@@ -159,6 +160,16 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
         ))}
       {draft && (
         <div>
+          <DatasetPanel
+            key={draft.id}
+            draft={draft}
+            targets={targets}
+            reload={async () => {
+              await open(draft.id);
+              await load();
+              onShared();
+            }}
+          />
           <h3>
             {draft.shared_search_id ? "Submitted list" : "Edit private list"}
           </h3>

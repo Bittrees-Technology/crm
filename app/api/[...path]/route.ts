@@ -1,4 +1,6 @@
-import {cookie as sharedCookie} from '../../../shared/sso/client.mjs';
+import * as datasets from "@/lib/datasets";
+import { datasetMcp } from "@/lib/dataset-mcp";
+import { cookie as sharedCookie } from "../../../shared/sso/client.mjs";
 import * as leadDrafts from "@/lib/lead-drafts";
 import { leadMcp } from "@/lib/lead-mcp-http";
 import * as workflow from "@/lib/workflow";
@@ -184,9 +186,37 @@ async function handle(req: NextRequest) {
         z.strictObject({}).parse(input);
         return json(await leads.agentBrief(bearer));
       }
-      if (path.endsWith("/execute")) return json(await leads.executeQualifiedLeads(bearer, input));
-      if (path.endsWith("/status")) return json(await leads.agentStatus(bearer, input));
+      if (path.endsWith("/execute"))
+        return json(await leads.executeQualifiedLeads(bearer, input));
+      if (path.endsWith("/status"))
+        return json(await leads.agentStatus(bearer, input));
       return json(await leads.prepare(bearer, input));
+    }
+    if (path === "integrations/datasets/mcp") {
+      if (req.headers.get("origin")) checkOrigin(req);
+      if (req.method !== "POST")
+        return new Response(null, {
+          status: 405,
+          headers: { Allow: "POST", "Cache-Control": "no-store" },
+        });
+      const bearer = req.headers
+        .get("authorization")
+        ?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+      if (!bearer) throw new HttpError(401, "Dataset connection required.");
+      await rateLimit("dataset:" + hash(bearer), 40);
+      const raw = await req.text();
+      if (raw.length > 120000) throw new HttpError(413, "Dataset too large.");
+      const result = await datasetMcp(
+        bearer,
+        JSON.parse(raw || "{}"),
+        req.headers.get("mcp-protocol-version"),
+      );
+      return result === null
+        ? new Response(null, {
+            status: 202,
+            headers: { "Cache-Control": "no-store" },
+          })
+        : json(result);
     }
     let body: Record<string, unknown> = {};
     if (req.method !== "GET") {
@@ -256,11 +286,19 @@ async function handle(req: NextRequest) {
         await pool().query("DELETE FROM sessions WHERE hash=$1", [
           hash(cookie(req, cookieName)),
         ]);
-      const response=json({ok:true},200,{"Set-Cookie":setCookie(cookieName,"",0)});
-      const sharedOrigin=process.env.APP_URL||new URL(req.url).origin;
-      response.headers.append('Set-Cookie',sharedCookie('bt-sso-skip','1',604800,sharedOrigin));
-      response.headers.append('Set-Cookie',sharedCookie('bt-sso-published','',0,sharedOrigin));
-      return response;
+        const response = json({ ok: true }, 200, {
+          "Set-Cookie": setCookie(cookieName, "", 0),
+        });
+        const sharedOrigin = process.env.APP_URL || new URL(req.url).origin;
+        response.headers.append(
+          "Set-Cookie",
+          sharedCookie("bt-sso-skip", "1", 604800, sharedOrigin),
+        );
+        response.headers.append(
+          "Set-Cookie",
+          sharedCookie("bt-sso-published", "", 0, sharedOrigin),
+        );
+        return response;
       }
     }
     const user = (await currentUser(req))!;
@@ -297,6 +335,50 @@ async function handle(req: NextRequest) {
           body.record,
         ),
       );
+    if (path === "datasets/updates" && req.method === "GET")
+      return json(
+        await datasets.datasetUpdates(
+          user.id,
+          req.nextUrl.searchParams.get("id") || "",
+        ),
+      );
+    if (path === "datasets/apply" && req.method === "POST")
+      return json(await datasets.datasetApply(user.id, body));
+    if (path === "datasets/export" && req.method === "GET") {
+      const training = req.nextUrl.searchParams.get("training") === "true";
+      const data = await datasets.datasetRead(
+        user.id,
+        req.nextUrl.searchParams.get("id") || "",
+        training,
+      );
+      return new Response(
+        training
+          ? (data as unknown[]).map((r) => JSON.stringify(r)).join("\n")
+          : JSON.stringify(data, null, 2),
+        {
+          headers: {
+            "Content-Type": training
+              ? "application/x-ndjson"
+              : "application/json",
+            "Content-Disposition": `attachment; filename="dataset.${training ? "jsonl" : "json"}"`,
+            "Cache-Control": "no-store",
+          },
+        },
+      );
+    }
+    if (path === "datasets/choices" && req.method === "GET")
+      return json(
+        await datasets.datasetChoices(
+          user.id,
+          req.nextUrl.searchParams.get("workspace") || "",
+        ),
+      );
+    if (path === "datasets/connect" && req.method === "POST")
+      return json(await datasets.datasetConnect(user.id, body));
+    if (path === "datasets/import" && req.method === "POST")
+      return json(await datasets.datasetImport(user.id, body));
+    if (path === "datasets/share" && req.method === "POST")
+      return json(await datasets.datasetShare(user.id, body));
     if (path === "leads/drafts" && req.method === "GET")
       return json(await leadDrafts.listDrafts(user.id));
     if (path === "leads/draft" && req.method === "GET")

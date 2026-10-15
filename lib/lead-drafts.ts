@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+import type { PoolClient } from "pg";
+import { researchSchema } from "./dataset-model";
 import { transaction } from "./db";
 import { membership, lockActiveAccount } from "./service";
 import { accessIds } from "./access";
@@ -22,6 +24,7 @@ export const draftEntrySchema = z.strictObject({
   website: z.union([publicUrl, z.literal("")]).default(""),
   organizationId: z.union([z.uuid(), z.literal("")]).default(""),
   description: z.string().trim().max(500).default(""),
+  research: researchSchema.optional(),
 });
 export type DraftEntry = z.infer<typeof draftEntrySchema>;
 function enabled() {
@@ -56,6 +59,13 @@ export async function getDraft(user: string, id: string) {
   });
 }
 export async function saveDraft(user: string, raw: unknown) {
+  return transaction((db) => saveDraftInTransaction(db, user, raw));
+}
+export async function saveDraftInTransaction(
+  db: PoolClient,
+  user: string,
+  raw: unknown,
+) {
   enabled();
   const input = z
     .strictObject({
@@ -79,7 +89,7 @@ export async function saveDraft(user: string, raw: unknown) {
         400,
         "Choose an organization in this list, or leave the link empty.",
       );
-  return transaction(async (db) => {
+  {
     // Serialize creation/retries per account, including a duplicate first save.
     await db.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [user]);
     await lockActiveAccount(db, user);
@@ -121,14 +131,30 @@ export async function saveDraft(user: string, raw: unknown) {
         409,
         "You have reached 100 lists. Remove an unused private list first.",
       );
+    // Editing content invalidates a prior human training decision.
+    for (const e of input.entries) {
+      const old = prior?.entries.find((x: any) => x.id === e.id);
+      if (
+        old?.research?.training === "eligible" &&
+        e.research?.training === "eligible"
+      ) {
+        const normalized = draftEntrySchema.parse(old);
+        if (JSON.stringify(normalized) !== JSON.stringify(e))
+          e.research.training = "pending";
+      }
+    }
     const row = (
       await db.query(
         "INSERT INTO lead_drafts(id,user_id,name,entries) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,entries=EXCLUDED.entries,version=lead_drafts.version+1,updated_at=now() RETURNING id,version",
         [input.id, user, input.name, JSON.stringify(input.entries)],
       )
     ).rows[0];
+    await db.query(
+      "DELETE FROM dataset_record_links WHERE draft_id=$1 AND NOT(entry_id=ANY($2::uuid[]))",
+      [input.id, input.entries.map((e) => e.id)],
+    );
     return row;
-  });
+  }
 }
 export async function deleteDraft(user: string, raw: unknown) {
   enabled();
@@ -185,6 +211,13 @@ export async function shareTargets(user: string) {
   });
 }
 export async function shareDraft(user: string, raw: unknown) {
+  return transaction((db) => shareDraftInTransaction(db, user, raw));
+}
+export async function shareDraftInTransaction(
+  db: PoolClient,
+  user: string,
+  raw: unknown,
+) {
   enabled();
   const input = z
     .strictObject({
@@ -195,7 +228,7 @@ export async function shareDraft(user: string, raw: unknown) {
       ownerId: z.uuid(),
     })
     .parse(raw);
-  return transaction(async (db) => {
+  {
     await membership(input.workspaceId, input.ownerId, true, true, db);
     await membership(input.workspaceId, user, false, false, db);
     const ids = await accessIds(db, user, input.workspaceId);
@@ -250,11 +283,16 @@ export async function shareDraft(user: string, raw: unknown) {
         email: e.email,
         website: e.website,
         summary: e.description || "Added by the researcher.",
-        relevance: "Submitted for owner review.",
-        uncertainties: "Not independently verified.",
+        relevance: e.research?.relevance || "Submitted for owner review.",
+        uncertainties:
+          e.research?.uncertainties || "Not independently verified.",
         fit: "medium",
         evidence: "unconfirmed",
-        sources: [],
+        sources:
+          e.research?.sources.map(({ url, retrievedAt }) => ({
+            url,
+            retrievedAt,
+          })) || [],
         ...(e.organizationId
           ? {
               organizationIndex: entries.findIndex(
@@ -266,10 +304,21 @@ export async function shareDraft(user: string, raw: unknown) {
     );
     try {
       validateCandidates(
-        briefSchema.parse({
-          target: draft.name,
-          sourceDomains: ["bittrees.org"],
-        }),
+        {
+          ...briefSchema.parse({
+            target: draft.name,
+            sourceDomains: ["bittrees.org"],
+            freshnessDays: 365,
+          }),
+          sourceDomains: [
+            ...new Set(
+              entries.flatMap(
+                (e) =>
+                  e.research?.sources.map((s) => new URL(s.url).hostname) || [],
+              ),
+            ),
+          ],
+        },
         candidates,
       );
     } catch (e) {
@@ -306,5 +355,5 @@ export async function shareDraft(user: string, raw: unknown) {
       [draft.id, searchId],
     );
     return { reviewId };
-  });
+  }
 }

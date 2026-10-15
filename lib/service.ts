@@ -107,6 +107,14 @@ async function validateReferences(db: PoolClient, w: string, data: RecordData) {
     throw new HttpError(400, "The owner must be a workspace member.");
 }
 export async function saveRecord(userId: string, w: string, input: unknown) {
+  return transaction((db) => saveRecordInTransaction(db, userId, w, input));
+}
+export async function saveRecordInTransaction(
+  db: PoolClient,
+  userId: string,
+  w: string,
+  input: unknown,
+) {
   const body = z
     .object({
       operationId: z.uuid().optional(),
@@ -128,7 +136,7 @@ export async function saveRecord(userId: string, w: string, input: unknown) {
         .update(JSON.stringify(body))
         .digest("hex")
     : null;
-  return transaction(async (db) => {
+  {
     const role = await membership(w, userId, true, false, db);
     if (
       (body.visibilityIds !== undefined || body.privateNote !== undefined) &&
@@ -311,7 +319,7 @@ export async function saveRecord(userId: string, w: string, input: unknown) {
       ...redactRecord(record, await accessIds(db, userId, w)),
       ...(role === "owner" ? { activity } : {}),
     };
-  });
+  }
 }
 export async function deleteRecord(
   userId: string,
