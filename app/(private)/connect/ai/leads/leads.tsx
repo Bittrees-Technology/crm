@@ -31,6 +31,7 @@ export default function Leads() {
     projects: { id: string; name: string }[];
     members: { id: string; name: string; role: string }[];
   }>({ projects: [], members: [] });
+  const [allowTasks, setAllowTasks] = useState(false);
   const [target, setTarget] = useState(""),
     [geography, setGeography] = useState(""),
     [domains, setDomains] = useState(""),
@@ -83,7 +84,7 @@ export default function Leads() {
         <a href="/">← CRM</a>
         <h1>Lead research</h1>
         <p>
-          Assign investor research, connect an agent, then review candidates
+          Assign business research, connect an agent, then review candidates
           here.
         </p>
       </header>
@@ -116,6 +117,7 @@ export default function Leads() {
                     researcherId: researcher || undefined,
                     brief: {
                       target,
+                      allowTasks,
                       geography,
                       sourceDomains: domains
                         .split(",")
@@ -141,6 +143,14 @@ export default function Leads() {
             >
               <fieldset disabled={busy}>
                 <legend>Research assignment</legend>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={allowTasks}
+                    onChange={(e) => setAllowTasks(e.target.checked)}
+                  />{" "}
+                  Allow proposed follow-up tasks (review required; no outreach)
+                </label>
                 <label>
                   Workspace
                   <select
@@ -206,7 +216,7 @@ export default function Leads() {
                   </select>
                 </label>
                 <label>
-                  What makes an investor relevant?
+                  What makes a candidate relevant?
                   <textarea
                     required
                     maxLength={500}
@@ -325,11 +335,20 @@ export default function Leads() {
                   </p>
                 )}
                 <p>
-                  {c.kind === "people" ? "Person" : "Organization"} ·{" "}
-                  {c.category}
+                  {c.kind === "tasks"
+                    ? "Follow-up task"
+                    : c.kind === "people"
+                      ? "Person"
+                      : "Organization"}{" "}
+                  · {c.category}
                 </p>
                 {c.title && <p>{c.title}</p>}
                 {c.email && <p>{c.email}</p>}
+                {c.contactIndex !== undefined && (
+                  <p>
+                    Linked contact: {review.candidates[c.contactIndex]?.name}
+                  </p>
+                )}
                 {c.organizationIndex !== undefined && (
                   <p>
                     Organization: {review.candidates[c.organizationIndex]?.name}

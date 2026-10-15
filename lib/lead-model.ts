@@ -19,6 +19,7 @@ export const publicUrl = z
   }, "Use a public HTTPS URL without credentials, ports or fragments.");
 export const briefSchema = z.strictObject({
   target: line,
+  allowTasks: z.boolean().default(false),
   geography: z.string().trim().max(200).default(""),
   exclusions: z.array(line).max(20).default([]),
   sourceDomains: z
@@ -36,10 +37,11 @@ export const briefSchema = z.strictObject({
 });
 export const candidateSchema = z.strictObject({
   researchMethod: z.enum(["agent", "manual"]).default("agent"),
-  kind: z.enum(["organizations", "people"]).default("organizations"),
+  kind: z.enum(["organizations", "people", "tasks"]).default("organizations"),
   category: z.string().trim().max(200).default("Investor"),
   title: z.string().trim().max(200).default(""),
   email: z.union([z.email(), z.literal("")]).default(""),
+  contactIndex: z.number().int().min(0).max(19).optional(),
   organizationIndex: z.number().int().min(0).max(19).optional(),
   name: z.string().trim().min(1).max(200),
   website: z.union([publicUrl, z.literal("")]),
@@ -69,17 +71,24 @@ export function validateCandidates(
   for (const c of candidates) {
     if (c.researchMethod === "agent" && (!c.website || !c.sources.length))
       throw Error("Agent research requires a website and at least one source.");
+    if (c.kind === "tasks" && !brief.allowTasks)
+      throw Error("Task proposals require explicit brief permission.");
+    if (
+      c.contactIndex !== undefined &&
+      (c.kind !== "tasks" || candidates[c.contactIndex]?.kind !== "people")
+    )
+      throw Error("Tasks must link to a contact in this batch.");
     const host = domain(c.website);
     if (
       c.organizationIndex !== undefined &&
-      (c.kind !== "people" ||
+      (!["people", "tasks"].includes(c.kind) ||
         candidates[c.organizationIndex]?.kind !== "organizations")
     )
       throw Error("Link people to an organization in this batch.");
     const key =
       c.kind === "organizations"
         ? host || `organization:${c.name.toLowerCase()}`
-        : `person:${c.email.toLowerCase() || c.name.toLowerCase()}`;
+        : `${c.kind}:${c.email.toLowerCase() || c.name.toLowerCase()}`;
     if (domains.has(key))
       throw Error("Review one candidate per organization website.");
     domains.add(key);

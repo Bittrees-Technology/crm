@@ -15,7 +15,7 @@ export async function checkLeads(
   ).toBeVisible();
   await page.getByLabel("Workspace", { exact: true }).selectOption(workspace);
   await page
-    .getByLabel("What makes an investor relevant?")
+    .getByLabel("What makes a candidate relevant?")
     .fill("Infrastructure for developer teams");
   await page
     .getByLabel("Permitted source domains, separated by commas")
@@ -147,7 +147,7 @@ export async function checkInvestorAssignment(
     .getByLabel("Assigned researcher", { exact: true })
     .selectOption(researcherId);
   await owner
-    .getByLabel("What makes an investor relevant?")
+    .getByLabel("What makes a candidate relevant?")
     .fill("Investor assignment browser test");
   await owner
     .getByLabel("Permitted source domains, separated by commas")

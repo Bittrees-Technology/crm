@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { handler } from "../integrations/lead-mcp.mjs";
-test("MCP adapter exposes only brief/preview tools and keeps credential out of results", async () => {
+test("MCP adapter exposes brief, preview and status tools and keeps credential out of results", async () => {
   const token = "a".repeat(64);
   const calls: any[] = [];
   const run = handler({
@@ -17,7 +17,7 @@ test("MCP adapter exposes only brief/preview tools and keeps credential out of r
   const list: any = await run({ jsonrpc: "2.0", id: 2, method: "tools/list" });
   assert.deepEqual(
     list.result.tools.map((t: any) => t.name),
-    ["leads.brief", "leads.preview"],
+    ["leads.status", "leads.brief", "leads.preview"],
   );
   const result = await run({
     jsonrpc: "2.0",

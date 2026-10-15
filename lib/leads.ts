@@ -235,7 +235,7 @@ async function duplicates(
   // Owner-only scope: bounded organization projection, never descriptions or private notes.
   const rows = (
     await db.query(
-      "SELECT id,kind,version,archived_at,data->>'email' AS email,data->>'name' AS name,data->>'website' AS website,data->>'communication' AS communication FROM records WHERE workspace_id=$1 AND kind IN ('organizations','people') AND (lower(trim(data->>'name'))=ANY($2::text[]) OR (kind='organizations' AND regexp_replace(substring(lower(data->>'website') from '^https?://([^/:?#]+)'), '^www\\.', '')=ANY($3::text[])) OR lower(data->>'email')=ANY($4::text[])) ORDER BY id LIMIT 201",
+      "SELECT id,kind,version,archived_at,data->>'email' AS email,data->>'name' AS name,data->>'website' AS website,data->>'communication' AS communication FROM records WHERE workspace_id=$1 AND kind IN ('organizations','people','tasks') AND (lower(trim(data->>'name'))=ANY($2::text[]) OR (kind='organizations' AND regexp_replace(substring(lower(data->>'website') from '^https?://([^/:?#]+)'), '^www\\.', '')=ANY($3::text[])) OR lower(data->>'email')=ANY($4::text[])) ORDER BY id LIMIT 201",
       [
         workspace,
         candidates.map((c) => c.name.toLowerCase()),
@@ -283,7 +283,7 @@ export async function agentBrief(bearer: string) {
       projectId: s.project_id,
       expiresAt: s.expires_at,
       instructions:
-        "Research public investor organizations and people. Categorize investors (for example Angel, Venture capital, Family office, Corporate investor). Link people using organizationIndex, the zero-based index of an organization in the same batch. Include only sourced professional email addresses; never infer them. Use the permitted domains and source retrieval times. Do not send private CRM information to research providers. Source claims remain unverified. Submit one batch; the user reviews and imports in CRM. No outreach is authorized.",
+        "Research public organizations and business contacts matching the approved brief. Tasks are permitted only when brief.allowTasks is true. Link tasks with contactIndex and/or organizationIndex; never invent deadlines. Link people using organizationIndex, the zero-based index of an organization in the same batch. Include only sourced professional email addresses; never infer them. Use the permitted domains and source retrieval times. Do not send private CRM information to research providers. Source claims remain unverified. Submit one batch; the user reviews and imports in CRM. No outreach is authorized.",
     };
   });
 }
@@ -301,7 +301,7 @@ export async function prepare(bearer: string, raw: unknown) {
     const s = await search(db, null, bearer);
     const prior = (
       await db.query(
-        "SELECT id,operation_id,payload_hash,candidates FROM lead_previews WHERE search_id=$1",
+        "SELECT id,operation_id,payload_hash,candidates,decision FROM lead_previews WHERE search_id=$1",
         [s.id],
       )
     ).rows[0];
@@ -317,6 +317,7 @@ export async function prepare(bearer: string, raw: unknown) {
           "This search already has a preview. Start a new search to change the batch.",
         );
       return {
+        state: prior.decision ? "decided" : "awaiting_review",
         reviewId: prior.id,
         reviewPath: "/connect/ai/leads?review=" + prior.id,
       };
@@ -347,7 +348,11 @@ export async function prepare(bearer: string, raw: unknown) {
         JSON.stringify(input.candidates),
       ],
     );
-    return { reviewId: id, reviewPath: "/connect/ai/leads?review=" + id };
+    return {
+      state: "awaiting_review",
+      reviewId: id,
+      reviewPath: "/connect/ai/leads?review=" + id,
+    };
   });
 }
 async function inspect(db: PoolClient, user: string, id: string) {
@@ -480,6 +485,12 @@ export async function approve(user: string, raw: unknown) {
         "Resolve potential matches before importing. Matching candidates cannot be imported here.",
       );
     for (const i of input.accept) {
+      const contact = candidates[i].contactIndex;
+      if (contact !== undefined && !input.accept.includes(contact))
+        throw new HttpError(
+          400,
+          "Select the linked contact before publishing this task.",
+        );
       const linked = candidates[i].organizationIndex;
       if (linked !== undefined && !input.accept.includes(linked))
         throw new HttpError(
@@ -509,6 +520,8 @@ export async function approve(user: string, raw: unknown) {
         communication: "Unknown",
         ownerId: user,
         projectId: s.project_id || "",
+        personId:
+          c.contactIndex === undefined ? "" : newIds.get(c.contactIndex),
         organizationId:
           c.organizationIndex === undefined
             ? ""
@@ -538,5 +551,27 @@ export async function approve(user: string, raw: unknown) {
       ],
     );
     return { ok: true, recordIds: ids, accepted: ids.length };
+  });
+}
+
+// Metadata only: an agent may reconcile its own proposal, never approve it.
+export async function agentStatus(bearer: string, raw: unknown) {
+  requireLeadsEnabled();
+  const input = z.strictObject({ operationId: z.uuid() }).parse(raw);
+  return transaction(async (db) => {
+    const s = await search(db, null, bearer);
+    const p = (
+      await db.query(
+        "SELECT id,decision,record_ids FROM lead_previews WHERE search_id=$1 AND operation_id=$2",
+        [s.id, input.operationId],
+      )
+    ).rows[0];
+    if (!p) return { state: "not_found" };
+    return {
+      state: p.decision ? "decided" : "awaiting_review",
+      reviewId: p.id,
+      reviewPath: "/connect/ai/leads?review=" + p.id,
+      accepted: p.decision ? p.record_ids?.length || 0 : 0,
+    };
   });
 }

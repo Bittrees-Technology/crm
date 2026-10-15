@@ -95,3 +95,32 @@ test("Investor people can share a firm domain and links must point to organizati
     /Link people/,
   );
 });
+
+test("Task proposals require explicit assignment scope and valid linked contacts", () => {
+  const brief = briefSchema.parse({
+    target: "Vendors",
+    sourceDomains: ["bittrees.org"],
+  });
+  const task = candidateSchema.parse({
+    kind: "tasks",
+    name: "Verify vendor",
+    website: "https://bittrees.org",
+    summary: "Verify shipping",
+    relevance: "Follow-up",
+    uncertainties: "",
+    fit: "high",
+    evidence: "primary",
+    sources: [
+      { url: "https://bittrees.org", retrievedAt: new Date().toISOString() },
+    ],
+  });
+  assert.throws(() => validateCandidates(brief, [task]), /explicit/);
+  validateCandidates({ ...brief, allowTasks: true }, [task]);
+  assert.throws(
+    () =>
+      validateCandidates({ ...brief, allowTasks: true }, [
+        { ...task, contactIndex: 0 },
+      ]),
+    /contact/,
+  );
+});
