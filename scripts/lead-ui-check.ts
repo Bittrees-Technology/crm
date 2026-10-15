@@ -25,6 +25,35 @@ export async function checkLeads(
   await expect(credential).toBeVisible();
   const token = await credential.inputValue();
   assert.match(token, /^[a-f0-9]{64}$/);
+  await page
+    .getByRole("button", { name: "Test connection", exact: true })
+    .click();
+  await expect(page.locator("#agent-setup").getByRole("status")).toContainText(
+    "CRM connection verified",
+  );
+  await page.getByLabel("Show configuration and credential").check();
+  const config = JSON.parse(
+    await page.getByLabel("MCP configuration", { exact: true }).inputValue(),
+  );
+  assert.equal(
+    config.mcpServers["bittrees-leads"].headers.Authorization,
+    "Bearer " + token,
+  );
+  assert.equal(
+    config.mcpServers["bittrees-leads"].url,
+    origin + "/api/integrations/leads/mcp",
+  );
+  await page.getByLabel("AI app", { exact: true }).selectOption("vscode");
+  const vscode = JSON.parse(
+    await page.getByLabel("MCP configuration", { exact: true }).inputValue(),
+  );
+  assert.equal(vscode.servers["bittrees-leads"].type, "http");
+  await page
+    .getByRole("button", { name: "Copy MCP configuration", exact: true })
+    .click();
+  await expect(page.locator("#agent-setup").getByRole("status")).toContainText(
+    /copied|Clipboard unavailable/,
+  );
   await accessibility(page, "Lead search brief");
   const response = await page.request.post(
     origin + "/api/integrations/leads/prepare",
@@ -206,6 +235,131 @@ export async function checkInvestorAssignment(
   assert.equal(
     (await api(researcher, base)).records.some((r: any) => r.id === person.id),
     false,
+  );
+  await researcher.goto(origin + "/connect/ai/leads");
+  await researcher
+    .getByRole("button", { name: "New private list", exact: true })
+    .click();
+  await researcher
+    .getByLabel("List name", { exact: true })
+    .fill("Manual investor shortlist");
+  await researcher
+    .getByRole("button", { name: "Save list name", exact: true })
+    .click();
+  await expect(researcher.getByRole("status")).toContainText(
+    "Private list saved",
+  );
+  await researcher
+    .getByRole("button", { name: "Add organization to list", exact: true })
+    .click();
+  await researcher
+    .getByLabel("Name", { exact: true })
+    .fill("Manual browser firm");
+  await researcher
+    .getByRole("button", { name: "Save entry privately", exact: true })
+    .click();
+  await expect(
+    researcher.getByRole("heading", {
+      name: "Manual browser firm",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await researcher
+    .getByRole("button", { name: "Add person to list", exact: true })
+    .click();
+  await researcher
+    .getByLabel("Name", { exact: true })
+    .fill("Manual browser partner");
+  await researcher
+    .getByLabel("Related organization", { exact: true })
+    .selectOption({ label: "Manual browser firm" });
+  await accessibility(researcher, "Private research entry on mobile");
+  await researcher
+    .getByRole("button", { name: "Save entry privately", exact: true })
+    .click();
+  await expect(
+    researcher.getByRole("heading", {
+      name: "Manual browser partner",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await researcher.reload();
+  await researcher
+    .getByRole("button", { name: "Manual investor shortlist", exact: true })
+    .click();
+  await expect(
+    researcher.getByRole("heading", {
+      name: "Manual browser partner",
+      exact: true,
+    }),
+  ).toBeVisible();
+  const privateLists = await api(researcher, "leads/drafts");
+  const privateList = privateLists.find(
+    (l: any) => l.name === "Manual investor shortlist",
+  );
+  assert(
+    !(await api(owner, "leads/drafts")).some(
+      (l: any) => l.id === privateList.id,
+    ),
+  );
+  await researcher
+    .getByLabel("Share with workspace", { exact: true })
+    .selectOption(workspace);
+  await researcher
+    .getByLabel("Destination project", { exact: true })
+    .selectOption(project.id);
+  const targets = await api(researcher, "leads/share-targets");
+  await researcher
+    .getByLabel("Approving owner", { exact: true })
+    .selectOption(targets.find((t: any) => t.id === workspace).owners[0].id);
+  researcher.once("dialog", (d) => d.accept());
+  await researcher
+    .getByRole("button", { name: "Share list for approval", exact: true })
+    .click();
+  await expect(researcher.getByRole("status")).toContainText("List submitted");
+  await accessibility(researcher, "Submitted private list");
+  await researcher.screenshot({
+    path: "/tmp/crm-private-research.png",
+    fullPage: true,
+  });
+  const searches = await api(owner, "leads/searches");
+  const manual = searches.find(
+    (s: any) => s.brief.target === "Manual investor shortlist",
+  );
+  await owner.goto(origin + "/connect/ai/leads?review=" + manual.preview_id);
+  await owner
+    .getByRole("checkbox", { name: "Manual browser firm", exact: true })
+    .check();
+  await owner
+    .getByRole("checkbox", { name: "Manual browser partner", exact: true })
+    .check();
+  await owner
+    .getByRole("button", { name: "Publish 2 selected leads", exact: true })
+    .click();
+  await expect(owner.getByRole("status")).toContainText("2 leads accepted");
+  const manualRecords = (await api(owner, base)).records.filter((r: any) =>
+    r.data.name.startsWith("Manual browser"),
+  );
+  assert.equal(manualRecords.length, 2);
+  assert.equal(
+    manualRecords.find((r: any) => r.kind === "people").data.organizationId,
+    manualRecords.find((r: any) => r.kind === "organizations").id,
+  );
+  for (const r of manualRecords.sort((a: any) =>
+    a.kind === "people" ? -1 : 1,
+  ))
+    await api(
+      owner,
+      base + "/records",
+      { id: r.id, version: r.version },
+      "DELETE",
+    );
+  const savedDraft = await api(researcher, "leads/draft?id=" + privateList.id);
+  await api(
+    researcher,
+    "leads/draft",
+    { id: privateList.id, version: savedDraft.version },
+    "DELETE",
   );
   for (const record of [person, firm, project])
     await api(

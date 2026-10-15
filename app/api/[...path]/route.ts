@@ -1,3 +1,5 @@
+import * as leadDrafts from "@/lib/lead-drafts";
+import { leadMcp } from "@/lib/lead-mcp-http";
 import * as workflow from "@/lib/workflow";
 import * as leads from "@/lib/leads";
 import * as aiWrites from "@/lib/ai-writes";
@@ -142,10 +144,20 @@ async function handle(req: NextRequest) {
           : await ai.read(bearer, input),
       );
     }
+    if (path === "integrations/leads/mcp" && req.method !== "POST") {
+      const origin = req.headers.get("origin");
+      if (origin) checkOrigin(req);
+      return new Response(null, {
+        status: 405,
+        headers: { Allow: "POST", "Cache-Control": "no-store" },
+      });
+    }
     if (
-      ["integrations/leads/brief", "integrations/leads/prepare"].includes(
-        path,
-      ) &&
+      [
+        "integrations/leads/mcp",
+        "integrations/leads/brief",
+        "integrations/leads/prepare",
+      ].includes(path) &&
       req.method === "POST"
     ) {
       const bearer = req.headers
@@ -156,6 +168,15 @@ async function handle(req: NextRequest) {
       const raw = await req.text();
       if (raw.length > 120000) throw new HttpError(413, "Preview too large.");
       const input = JSON.parse(raw || "{}");
+      if (path.endsWith("/mcp")) {
+        const result = await leadMcp(req, bearer, input);
+        return result === null
+          ? new Response(null, {
+              status: 202,
+              headers: { "Cache-Control": "no-store" },
+            })
+          : json(result);
+      }
       if (path.endsWith("/brief")) {
         z.strictObject({}).parse(input);
         return json(await leads.agentBrief(bearer));
@@ -269,6 +290,23 @@ async function handle(req: NextRequest) {
           body.record,
         ),
       );
+    if (path === "leads/drafts" && req.method === "GET")
+      return json(await leadDrafts.listDrafts(user.id));
+    if (path === "leads/draft" && req.method === "GET")
+      return json(
+        await leadDrafts.getDraft(
+          user.id,
+          req.nextUrl.searchParams.get("id") || "",
+        ),
+      );
+    if (path === "leads/draft" && req.method === "POST")
+      return json(await leadDrafts.saveDraft(user.id, body));
+    if (path === "leads/draft" && req.method === "DELETE")
+      return json(await leadDrafts.deleteDraft(user.id, body));
+    if (path === "leads/share-targets" && req.method === "GET")
+      return json(await leadDrafts.shareTargets(user.id));
+    if (path === "leads/share-list" && req.method === "POST")
+      return json(await leadDrafts.shareDraft(user.id, body));
     if (path === "leads/options" && req.method === "GET")
       return json(
         await leads.assignmentOptions(

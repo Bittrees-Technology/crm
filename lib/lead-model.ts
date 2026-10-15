@@ -4,6 +4,7 @@ export const publicUrl = z
   .url({ protocol: /^https$/ })
   .max(800)
   .refine((value) => {
+    if (!URL.canParse(value)) return false;
     const u = new URL(value);
     return (
       !u.username &&
@@ -34,13 +35,14 @@ export const briefSchema = z.strictObject({
   freshnessDays: z.number().int().min(1).max(365).default(30),
 });
 export const candidateSchema = z.strictObject({
+  researchMethod: z.enum(["agent", "manual"]).default("agent"),
   kind: z.enum(["organizations", "people"]).default("organizations"),
   category: z.string().trim().max(200).default("Investor"),
   title: z.string().trim().max(200).default(""),
   email: z.union([z.email(), z.literal("")]).default(""),
   organizationIndex: z.number().int().min(0).max(19).optional(),
   name: z.string().trim().min(1).max(200),
-  website: publicUrl,
+  website: z.union([publicUrl, z.literal("")]),
   summary: line,
   relevance: line,
   uncertainties: z.string().trim().max(500),
@@ -48,12 +50,12 @@ export const candidateSchema = z.strictObject({
   evidence: z.enum(["primary", "secondary", "unconfirmed"]),
   sources: z
     .array(z.strictObject({ url: publicUrl, retrievedAt: z.iso.datetime() }))
-    .min(1)
     .max(3),
 });
 export type Candidate = z.infer<typeof candidateSchema>;
 export type Brief = z.infer<typeof briefSchema>;
 export function domain(url: string) {
+  if (!url) return "";
   return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
 }
 export function validateCandidates(
@@ -65,6 +67,8 @@ export function validateCandidates(
     throw Error("Too many candidates for this brief.");
   const domains = new Set<string>();
   for (const c of candidates) {
+    if (c.researchMethod === "agent" && (!c.website || !c.sources.length))
+      throw Error("Agent research requires a website and at least one source.");
     const host = domain(c.website);
     if (
       c.organizationIndex !== undefined &&
@@ -74,7 +78,7 @@ export function validateCandidates(
       throw Error("Link people to an organization in this batch.");
     const key =
       c.kind === "organizations"
-        ? host
+        ? host || `organization:${c.name.toLowerCase()}`
         : `person:${c.email.toLowerCase() || c.name.toLowerCase()}`;
     if (domains.has(key))
       throw Error("Review one candidate per organization website.");
@@ -107,7 +111,7 @@ export function validateCandidates(
 }
 export function leadDescription(c: Candidate) {
   return (
-    `AI research — review before use\n${c.summary}\nRelevance: ${c.relevance}\nFit: ${c.fit}; evidence: ${c.evidence}\nUnresolved: ${c.uncertainties || "None reported (not independently verified)"}\n` +
+    `${c.researchMethod === "manual" ? "Researcher submission" : "AI research"} — review before use\n${c.summary}\nRelevance: ${c.relevance}\nFit: ${c.fit}; evidence: ${c.evidence}\nUnresolved: ${c.uncertainties || "None reported (not independently verified)"}\n` +
     c.sources.map((s) => `${s.url} (retrieved ${s.retrievedAt})`).join("\n")
   );
 }

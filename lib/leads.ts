@@ -112,6 +112,11 @@ export async function connectSearch(user: string, id: string) {
         403,
         "Only the assigned researcher can connect an agent.",
       );
+    if (s.brief.method === "manual")
+      throw new HttpError(
+        400,
+        "This is a manually submitted list, not an agent assignment.",
+      );
     const bearer = token();
     await db.query("UPDATE lead_searches SET token_hash=$2 WHERE id=$1", [
       id,
@@ -193,7 +198,9 @@ export async function listSearches(user: string) {
                   }
                 : null,
           canApprove: row.user_id === user,
-          canConnect: (row.researcher_id || row.user_id) === user,
+          canConnect:
+            row.brief.method !== "manual" &&
+            (row.researcher_id || row.user_id) === user,
         });
       } catch (e) {
         if (!(e instanceof HttpError)) throw e;
@@ -248,7 +255,9 @@ async function duplicates(
             (() => {
               try {
                 return c.kind === "organizations"
-                  ? domain(r.website) === domain(c.website)
+                  ? !!c.website &&
+                      !!r.website &&
+                      domain(r.website) === domain(c.website)
                   : !!c.email &&
                       c.email.toLowerCase() === r.email?.toLowerCase();
               } catch {
@@ -286,6 +295,8 @@ export async function prepare(bearer: string, raw: unknown) {
       candidates: z.array(candidateSchema).min(1).max(20),
     })
     .parse(raw);
+  if (input.candidates.some((c) => c.researchMethod !== "agent"))
+    throw new HttpError(400, "Agent submissions must use sourced research.");
   return transaction(async (db) => {
     const s = await search(db, null, bearer);
     const prior = (
@@ -494,7 +505,7 @@ export async function approve(user: string, raw: unknown) {
         email: c.email,
         title: c.title,
         description: leadDescription(c),
-        source: "AI research",
+        source: c.researchMethod === "manual" ? "Research list" : "AI research",
         communication: "Unknown",
         ownerId: user,
         projectId: s.project_id || "",

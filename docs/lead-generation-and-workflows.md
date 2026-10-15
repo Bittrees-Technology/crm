@@ -12,7 +12,7 @@ Enable `CRM_LEADS_ENABLED=true` after applying `scripts/migrate-workflows.ts`. T
 
 New records start **visible to workspace owners only**, linked to the research project, with communication permission **Unknown**. Publishing means saving to CRM, not posting publicly or sending outreach. Use existing record-sharing controls afterward if the researcher should see published leads. The review displays the owner audience. Reused organizations retain their existing sharing and data.
 
-Configure an MCP-capable local agent to launch `node /absolute/path/to/crm/integrations/lead-mcp.mjs`. Supply `CRM_LEAD_TOKEN` through the client's protected process environment, never prompts or shared files. Default origin: `https://crm.bittrees.org`; isolated testing permits `http://127.0.0.1:3040`. Redirects and arbitrary origins are rejected. The adapter implements MCP 2025-11-25 stdio.
+Prefer the copyable remote configuration in CRM (see Guided connection below). For clients that only support local commands, configure the optional adapter to launch `node /absolute/path/to/crm/integrations/lead-mcp.mjs`. Supply `CRM_LEAD_TOKEN` through the client's protected process environment, never prompts or shared files. Default origin: `https://crm.bittrees.org`; isolated testing permits `http://127.0.0.1:3040`. Redirects and arbitrary origins are rejected. The adapter implements MCP 2025-11-25 stdio.
 
 - `leads.brief`: approved research criteria, project identifier and expiry. No CRM records or member lists.
 - `leads.preview`: submit sourced people and organizations with a stable operation UUID. Retries must keep the same operation UUID and candidates. No publication or messaging tool exists.
@@ -39,7 +39,7 @@ Server-side search, lazy lists and aggregate reports were recommended only when 
 
 ## Rollout
 
-Apply the additive migration using an existing restricted database environment, then deploy the code. The migration adds workflow tables plus nullable researcher/project references to existing lead searches; it does not delete or rewrite customer records. Retain additive schema during rollback. A rollback to the older application will display archived records as ordinary active records because the older UI does not understand the new archive timestamp.
+Apply the additive migration using an existing restricted database environment, then deploy the code. The migration adds workflow/private-list tables plus nullable researcher/project references to existing lead searches; it does not delete or rewrite customer records. Retain additive schema during rollback. A rollback to the older application will display archived records as ordinary active records because the older UI does not understand the new archive timestamp.
 
 Validation and deployment results are recorded in the release report after completion.
 
@@ -50,3 +50,17 @@ In Settings, choose **Invitation method → Ethereum wallet**, enter the recipie
 Wallet invitations retain the same seven-day expiry, revocation, single-use acceptance, and scope as email invitations. Recreating a link invalidates older pending links for the same address, regardless of casing. Accepting an invitation does not upgrade an existing member's permissions. Research assignment and publication approval remain separate: a viewer may submit assigned research, but only the assigning owner can publish it.
 
 Before deployment, run `scripts/migrate-invites.ts` using the existing restricted production database environment. It adds a wallet recipient column and allows email to be empty only for wallet invitations; existing email invitations remain intact.
+
+## Guided connection and private research lists
+
+In **Lead research**, the assigned researcher selects **Connect / replace agent credential**. The setup card provides Cursor and VS Code configuration, server URL, copy controls, a credential visibility toggle, a CRM connection check, and starter research instructions. The credential belongs to the researcher and their assignment. Store it in personal client settings, not a prompt or shared repository. Existing client server entries should be preserved.
+
+Compatible clients can use `https://crm.bittrees.org/api/integrations/leads/mcp` with Streamable HTTP and an `Authorization: Bearer …` header. The stateless endpoint supports initialize, ping, tools/list, and tools/call; notifications receive 202, GET receives 405, and cross-origin browser requests are rejected. Every request rechecks current assignment authority. The only tools remain `leads.brief` and `leads.preview`; there is no publication tool. The older stdio adapter remains available for clients without remote HTTP/header support. OAuth-only clients are not supported by this connection. The CRM connection check confirms the credential and server, not the configuration inside another application.
+
+Anyone with a CRM account can also use **My private research lists → New private list**, with no assignment or AI required. Each account can save up to 100 lists of up to 20 entries. Add organizations, then add people and choose their related organization; standalone people are supported. Names are required; categories, professional email, public website/profile, title and research notes are optional. Save each entry explicitly. Lists are stored under the user's account and excluded from workspace browsing, other users' lists and MCP tools.
+
+When ready, select an accessible workspace/project and an approving owner, then choose **Share list for approval**. This freezes the submitted version and creates a separate review copy. Only that owner can decide it. The review expires after seven days, and current project access is checked again at approval. New published records are visible to workspace owners only. Sharing is a CRM review action; it does not send an email or contact any lead. A researcher can withdraw an undecided submission, make an editable copy, or remove their personal list without deleting the owner's review copy.
+
+Manual entries are marked as researcher submissions with unconfirmed evidence, rather than pretending to have agent-supplied sources. Agent submissions still require public websites and evidence URLs. The independent list editor is manual in this release; MCP research still uses an owner-created assignment and submits directly to its approval queue.
+
+The additive workflow migration now also creates `lead_drafts`. No background polling, enrichment, paid service or new scheduled job is added. Validation includes private-list isolation, optimistic concurrency/retries, scoped sharing, manual person-to-firm publication, MCP discovery authentication, origin/protocol rejection, and prevention of manual-mode bypass by an agent. Browser coverage exercises both generated configurations, the connection check, private entry persistence, sharing and owner publication.
