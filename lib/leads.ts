@@ -1,3 +1,4 @@
+import { verifiedVendorContact } from "./marketplace-contact";
 import { checkWorkflowAuthority } from "./workflow-authority";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -22,13 +23,14 @@ import {
 const digest = (data: unknown) =>
   createHash("sha256").update(JSON.stringify(data)).digest("hex");
 async function search(db: PoolClient, user: string | null, credential: string) {
-  const column = user ? "id" : "token_hash";
+  const delegated = !user ? z.array(z.strictObject({tokenHash:z.string().regex(/^[a-f0-9]{64}$/),assignmentId:z.uuid()})).parse(JSON.parse(process.env.CRM_MARKETPLACE_EXECUTION_GRANTS || "[]")).find(g=>g.tokenHash===hash(credential)) : undefined;
+  const column = user || delegated ? "id" : "token_hash";
   if (user) z.uuid().parse(credential);
   else if (!/^[a-f0-9]{64}$/.test(credential))
     throw new HttpError(401, "Lead connection required.");
   const found = (
     await db.query(`SELECT * FROM lead_searches WHERE ${column}=$1`, [
-      user ? credential : hash(credential),
+      user ? credential : delegated ? delegated.assignmentId : hash(credential),
     ])
   ).rows[0];
   if (
@@ -45,8 +47,9 @@ async function search(db: PoolClient, user: string | null, credential: string) {
   ).rows[0];
   if (
     !current ||
+    (delegated && !current.authority_managed) ||
     current.revoked_at ||
-    (!user && current.token_hash !== hash(credential)) ||
+    (!user && !delegated && current.token_hash !== hash(credential)) ||
     (!(
       current.standing &&
       current.authority_managed &&
@@ -443,6 +446,9 @@ export async function review(user: string, id: string) {
   });
 }
 export async function approve(user: string, raw: unknown) {
+  return transaction(db => approveInTransaction(db, user, raw));
+}
+async function approveInTransaction(db: PoolClient, user: string, raw: unknown) {
   requireLeadsEnabled();
   const input = z
     .strictObject({
@@ -463,7 +469,7 @@ export async function approve(user: string, raw: unknown) {
   input.reuse = Object.fromEntries(
     Object.entries(input.reuse).sort(([a], [b]) => Number(a) - Number(b)),
   );
-  return transaction(async (db) => {
+  {
     const { p, s, candidates, matches, reviewDigest, owners, canApprove } =
       await inspect(db, user, input.reviewId);
     if (!canApprove)
@@ -579,10 +585,54 @@ export async function approve(user: string, raw: unknown) {
       ],
     );
     return { ok: true, recordIds: ids, accepted: ids.length };
+  }
+}
+
+// Separate, explicitly provisioned capability; proposal-only assignments cannot execute.
+export async function executeQualifiedLeads(bearer: string, raw: unknown) {
+  requireLeadsEnabled();
+  const input = z.strictObject({ operationId: z.uuid() }).parse(raw);
+  return transaction(async db => {
+    const s = await search(db, null, bearer);
+    const allowed = z.array(z.uuid()).parse(JSON.parse(process.env.CRM_MARKETPLACE_EXECUTION_ASSIGNMENTS || '[]'));
+    if (!s.authority_managed || !allowed.includes(s.id)) throw new HttpError(403, 'Automatic CRM import not granted.');
+    await checkWorkflowAuthority(bearer, 'crm', 'import:qualified');
+    // Serialize the whole workspace import so two assignments cannot create the same vendor.
+    await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', ['marketplace-import:' + s.workspace_id]);
+    const p = (await db.query('SELECT * FROM lead_previews WHERE search_id=$1 AND operation_id=$2', [s.id, input.operationId])).rows[0];
+    if (!p) return {state:'not_found'};
+    if (p.decision) return {state:'decided', reviewId:p.id, accepted:p.record_ids?.length || 0};
+    const inspected = await inspect(db, s.user_id, p.id);
+    const reuse: Record<string,string> = {};
+    const accept: number[] = [];
+    for (const [i,c] of inspected.candidates.entries()) {
+      if (!['organizations','tasks'].includes(c.kind) || c.contactIndex !== undefined || c.evidence !== 'primary')
+        return {state:'awaiting_review', held:true, reason:'Only sourced vendor organizations and linked tasks qualify', reviewId:p.id};
+      const matches = inspected.matches[i];
+      if (c.kind === 'organizations') {
+        if (!await verifiedVendorContact(c.website, c.email)) return {state:'awaiting_review', held:true, reason:'Vendor domain or business contact evidence requires review', reviewId:p.id};
+        if (!c.website || c.organizationIndex !== undefined) return {state:'awaiting_review', held:true, reason:'Vendor identity needs review', reviewId:p.id};
+        if (matches.length) {
+          if (matches.length !== 1 || matches[0].archived || matches[0].doNotContact) return {state:'awaiting_review', held:true, reason:'Ambiguous or restricted vendor match', reviewId:p.id};
+          const record = (await db.query("SELECT data->>'website' AS website FROM records WHERE id=$1 AND workspace_id=$2", [matches[0].id,s.workspace_id])).rows[0];
+          if (!record?.website || domain(record.website) !== domain(c.website)) return {state:'awaiting_review', held:true, reason:'Vendor name matches but domain differs', reviewId:p.id};
+          reuse[String(i)] = matches[0].id;
+        }
+      } else {
+        if (c.organizationIndex === undefined || inspected.candidates[c.organizationIndex]?.kind !== 'organizations') return {state:'awaiting_review', held:true, reason:'Task must link to a vendor', reviewId:p.id};
+        // Existing tasks are retained, never copied, overwritten or reopened.
+        if (matches.length) continue;
+      }
+      accept.push(i);
+    }
+    await checkWorkflowAuthority(bearer, 'crm', 'import:qualified');
+    const result = await approveInTransaction(db,s.user_id,{reviewId:p.id,digest:inspected.reviewDigest,reuse,accept,reason:'duplicate'});
+    await db.query("INSERT INTO audit(workspace_id,actor_id,action,detail) VALUES($1,$2,'Marketplace automatic import',$3)",[s.workspace_id,s.user_id,JSON.stringify({reviewId:p.id,policy:'mercado-qualified-v1',assignmentId:s.id,reused:Object.keys(reuse).length})]);
+    return {state:'decided',reviewId:p.id,accepted:result.accepted,reused:Object.keys(reuse).length};
   });
 }
 
-// Metadata only: an agent may reconcile its own proposal, never approve it.
+// Metadata only; import is a separate source-authorized action.
 export async function agentStatus(bearer: string, raw: unknown) {
   requireLeadsEnabled();
   const input = z.strictObject({ operationId: z.uuid() }).parse(raw);

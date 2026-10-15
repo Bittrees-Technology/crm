@@ -158,6 +158,7 @@ async function handle(req: NextRequest) {
         "integrations/leads/brief",
         "integrations/leads/prepare",
         "integrations/leads/status",
+        "integrations/leads/execute",
       ].includes(path) &&
       req.method === "POST"
     ) {
@@ -182,6 +183,7 @@ async function handle(req: NextRequest) {
         z.strictObject({}).parse(input);
         return json(await leads.agentBrief(bearer));
       }
+      if (path.endsWith("/execute")) return json(await leads.executeQualifiedLeads(bearer, input));
       if (path.endsWith("/status")) return json(await leads.agentStatus(bearer, input));
       return json(await leads.prepare(bearer, input));
     }
