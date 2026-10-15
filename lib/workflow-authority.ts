@@ -1,3 +1,4 @@
+import { HttpError } from "./model";
 export async function checkWorkflowAuthority(
   token: string,
   audience: string,
@@ -18,17 +19,10 @@ export async function checkWorkflowAuthority(
       cache: "no-store",
     },
   );
-  if (!response.ok)
-    throw Object.assign(new Error("Workflow authority unavailable"), {
-      status: 403,
-      statusCode: 403,
-    });
+  if (!response.ok) throw new HttpError(403, "Workflow authority unavailable");
   const result = await response.json();
   if (result.active !== true)
-    throw Object.assign(new Error("Workflow authority revoked"), {
-      status: 403,
-      statusCode: 403,
-    });
+    throw new HttpError(403, "Workflow authority revoked");
   return result;
 }
 export function activeExpiry(
