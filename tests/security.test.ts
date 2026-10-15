@@ -2742,3 +2742,151 @@ test("Project researcher can draft investors but only assigning owner can publis
   await leads.revokeSearch(researcher, connection.id);
   await assert.rejects(() => leads.agentBrief(rotated.token), /unavailable/);
 });
+
+test("Wallet invitations require the verified recipient and retain research scope and owner approval", async () => {
+  const { previewInvite, listInvites, revokeInvite } =
+    await import("../lib/service");
+  const leads = await import("../lib/leads");
+  const login = await walletLogin();
+  const user = (await currentUser(request(cookiePair(login.result.cookie))))!
+    .id;
+  const w = randomUUID();
+  await pool().query(
+    "INSERT INTO workspaces(id,name) VALUES($1,'Wallet invite test')",
+    [w],
+  );
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'owner')",
+    [w, owner],
+  );
+  const project = await saveRecord(owner, w, {
+    kind: "projects",
+    data: { name: "Scoped research" },
+  });
+  const hidden = await saveRecord(owner, w, {
+    kind: "organizations",
+    data: { name: "Unrelated" },
+  });
+  const input = {
+    wallet: login.wallet.address,
+    role: "viewer",
+    scopeIds: [project.id],
+  };
+  for (const invalid of [
+    { ...input, wallet: "0x123" },
+    { ...input, wallet: "0x" + "0".repeat(40) },
+    { ...input, email: "x@example.com" },
+    { role: "viewer" },
+  ])
+    await assert.rejects(() => createInvite(owner, w, invalid));
+  await assert.rejects(
+    () => createInvite(owner, w, { ...input, scopeIds: [randomUUID()] }),
+    /Select at least/,
+  );
+  const old = await createInvite(owner, w, input);
+  const invite = await createInvite(owner, w, {
+    ...input,
+    wallet: input.wallet.toLowerCase(),
+  });
+  await assert.rejects(
+    () => acceptInvite(user, old.token),
+    /invalid or expired/,
+  );
+  await assert.rejects(
+    () => acceptInvite(other, invite.token),
+    /invited Ethereum wallet/,
+  );
+  const preview = await previewInvite(invite.token);
+  assert.equal(preview.wallet, input.wallet.toLowerCase());
+  assert.equal(preview.email, null);
+  await acceptInvite(user, invite.token);
+  await assert.rejects(
+    () => acceptInvite(user, invite.token),
+    /invalid or expired/,
+  );
+  const view = await snapshot(user, w);
+  assert.equal(view.role, "viewer");
+  assert.equal(view.limited, true);
+  assert(view.records.some((r) => r.id === project.id));
+  assert(!view.records.some((r) => r.id === hidden.id));
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT 1 FROM identities WHERE user_id=$1 AND kind='email'",
+        [user],
+      )
+    ).rowCount,
+    0,
+  );
+  await assert.rejects(
+    () => saveRecord(user, w, { kind: "people", data: { name: "Blocked" } }),
+    /role/,
+  );
+  process.env.CRM_LEADS_ENABLED = "true";
+  const search = await leads.createSearch(owner, {
+    workspaceId: w,
+    projectId: project.id,
+    researcherId: user,
+    brief: { target: "Investors", sourceDomains: ["bittrees.org"] },
+  });
+  const conn = await leads.connectSearch(user, search.id);
+  const draft = await leads.prepare(conn.token, {
+    operationId: randomUUID(),
+    candidates: [
+      {
+        name: "Investor",
+        website: "https://bittrees.org",
+        summary: "Research",
+        relevance: "Seed",
+        uncertainties: "Unverified",
+        fit: "low",
+        evidence: "unconfirmed",
+        sources: [
+          {
+            url: "https://bittrees.org",
+            retrievedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    ],
+  });
+  const review = await leads.review(owner, draft.reviewId);
+  await assert.rejects(
+    () =>
+      leads.approve(user, {
+        reviewId: draft.reviewId,
+        digest: review.digest,
+        accept: [0],
+      }),
+    /Only the owner/,
+  );
+  assert.equal(
+    (
+      await leads.approve(owner, {
+        reviewId: draft.reviewId,
+        digest: review.digest,
+        accept: [0],
+      })
+    ).accepted,
+    1,
+  );
+  const pending = await createInvite(owner, w, input);
+  const listing = await listInvites(owner, w);
+  const row = listing.invites.find((i) => i.status === "Pending")!;
+  assert.equal(row.wallet, input.wallet.toLowerCase());
+  assert(!("hash" in row));
+  await revokeInvite(owner, w, row.id);
+  await assert.rejects(
+    () => acceptInvite(user, pending.token),
+    /invalid or expired/,
+  );
+  const expired = await createInvite(owner, w, input);
+  await pool().query(
+    "UPDATE invites SET expires_at=now()-interval '1 second' WHERE hash=$1",
+    [hash(expired.token)],
+  );
+  await assert.rejects(
+    () => acceptInvite(user, expired.token),
+    /invalid or expired/,
+  );
+});

@@ -543,8 +543,8 @@ function Auth({
     <div className="auth-form">
       {invitation && (
         <div className="invite-banner">
-          You have a workspace invitation. Sign in with the invited email, or
-          sign in with your wallet and link that email.
+          You have a workspace invitation. Sign in with the invited email or
+          wallet. You can also link the invited identity to an existing account.
         </div>
       )}
       <h1>
@@ -772,6 +772,7 @@ export default function App() {
     [linking, setLinking] = useState(false),
     [importing, setImporting] = useState(false),
     [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [inviteKind, setInviteKind] = useState<"email" | "wallet">("email");
   const [inviteScope, setInviteScope] = useState<string[] | null>(null);
   const [reauth, setReauth] = useState(false);
   const workspaceRef = useRef(workspace);
@@ -794,7 +795,8 @@ export default function App() {
     [inviteInfo, setInviteInfo] = useState<{
       scope_ids: string[] | null;
       name: string;
-      email: string;
+      email: string | null;
+      wallet?: string | null;
       role: string;
     } | null>(null),
     [inviteError, setInviteError] = useState("");
@@ -937,9 +939,10 @@ export default function App() {
     email: string,
     role: string,
     scopeIds: string[] | null = null,
+    kind: "email" | "wallet" = "email",
   ) {
     const r = await api("workspaces/" + workspace + "/invites", "POST", {
-      email,
+      [kind]: email,
       role,
       scopeIds,
     });
@@ -1493,19 +1496,24 @@ export default function App() {
             <span>
               {inviteError ||
                 (inviteInfo
-                  ? `Join ${inviteInfo.name} as ${inviteInfo.role}. ${inviteInfo.scope_ids === null ? "Whole workspace" : "Limited to selected records"}. Invited email: ${inviteInfo.email}`
+                  ? `Join ${inviteInfo.name} as ${inviteInfo.role}. ${inviteInfo.scope_ids === null ? "Whole workspace" : "Limited to selected records"}. Invited ${inviteInfo.wallet ? "wallet" : "email"}: ${inviteInfo.wallet || inviteInfo.email}`
                   : "Loading invitation…")}
             </span>
             {inviteInfo &&
               !me.identities.some(
-                (i) => i.kind === "email" && i.value === inviteInfo.email,
+                (i) =>
+                  i.kind === (inviteInfo.wallet ? "ethereum" : "email") &&
+                  i.value.toLowerCase() ===
+                    (inviteInfo.wallet || inviteInfo.email || "").toLowerCase(),
               ) && (
                 <button
                   data-insights="verify-invited-email"
                   className="button"
                   onClick={() => setLinking(true)}
                 >
-                  Verify invited email
+                  {inviteInfo.wallet
+                    ? "Link invited wallet"
+                    : "Verify invited email"}
                 </button>
               )}
             <button
@@ -1516,7 +1524,14 @@ export default function App() {
                 !!inviteError ||
                 busy ||
                 !me.identities.some(
-                  (i) => i.kind === "email" && i.value === inviteInfo.email,
+                  (i) =>
+                    i.kind === (inviteInfo.wallet ? "ethereum" : "email") &&
+                    i.value.toLowerCase() ===
+                      (
+                        inviteInfo.wallet ||
+                        inviteInfo.email ||
+                        ""
+                      ).toLowerCase(),
                 )
               }
               onClick={() =>
@@ -2113,23 +2128,50 @@ export default function App() {
                             String(values.get("email")),
                             String(values.get("role")),
                             inviteScope,
+                            inviteKind,
                           ),
                         );
                       }}
                     >
                       <label>
-                        Invite by verified email
+                        Invitation method
+                        <select
+                          aria-label="Invitation method"
+                          value={inviteKind}
+                          onChange={(e) =>
+                            setInviteKind(e.target.value as "email" | "wallet")
+                          }
+                          disabled={busy || demo}
+                        >
+                          <option value="email">Email</option>
+                          <option value="wallet">Ethereum wallet</option>
+                        </select>
+                      </label>
+                      <label>
+                        {inviteKind === "email"
+                          ? "Invite by verified email"
+                          : "Invite by wallet address"}
                         <input
+                          key={inviteKind}
                           name="email"
                           required
-                          type="email"
-                          placeholder="teammate@company.com"
+                          type={inviteKind === "email" ? "email" : "text"}
+                          maxLength={inviteKind === "email" ? 254 : 42}
+                          placeholder={
+                            inviteKind === "email"
+                              ? "teammate@company.com"
+                              : "0x…"
+                          }
                           disabled={demo}
                         />
                       </label>
                       <label>
                         Role
-                        <select data-insights="role" name="role">
+                        <select
+                          aria-label="Role"
+                          data-insights="role"
+                          name="role"
+                        >
                           <option value="editor">Editor</option>
                           <option value="viewer">Viewer</option>
                         </select>
@@ -2177,8 +2219,9 @@ export default function App() {
                         />
                       </label>
                       <p className="small">
-                        Only the recipient’s verified email can accept this
-                        invitation. Share this link directly with them.
+                        Only the recipient’s verified email or matching wallet
+                        can accept this invitation. Share this link directly
+                        with them.
                       </p>
                     </div>
                   )}

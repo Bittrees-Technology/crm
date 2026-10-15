@@ -4,7 +4,7 @@
 
 Enable `CRM_LEADS_ENABLED=true` after applying `scripts/migrate-workflows.ts`. This is separate from `AI_CONNECTOR_ENABLED`; no broader AI access is enabled by this workflow.
 
-1. Create a research project. In Settings, invite the researcher as a **viewer**, limited to that project. Wait for them to accept. An existing editor can also research, but retains their existing editing rights; assigning research never changes membership or sharing.
+1. Create a research project. In Settings, invite the researcher by verified email or Ethereum wallet address as a **viewer**, limited to that project. Wait for them to accept. An existing editor can also research, but retains their existing editing rights; assigning research never changes membership or sharing.
 2. Open **Lead research**. Select a workspace, project and researcher, then specify investor criteria, geography, exclusions, allowed source domains, maximum results (1–20 total people and organizations), and source freshness.
 3. The researcher opens **Lead research** under their own account and selects **Connect / replace agent credential**. The credential is shown once, stored hashed, expires with the seven-day assignment, and can be revoked by either participant. Replacing it invalidates the old credential. Only the assigned researcher can obtain it; the owner does not share their personal credential.
 4. Their MCP agent researches public sources and submits one immutable batch. The researcher can inspect their submitted draft; existing CRM matches, record IDs, private notes and other assignments are withheld.
@@ -42,3 +42,11 @@ Server-side search, lazy lists and aggregate reports were recommended only when 
 Apply the additive migration using an existing restricted database environment, then deploy the code. The migration adds workflow tables plus nullable researcher/project references to existing lead searches; it does not delete or rewrite customer records. Retain additive schema during rollback. A rollback to the older application will display archived records as ordinary active records because the older UI does not understand the new archive timestamp.
 
 Validation and deployment results are recorded in the release report after completion.
+
+## Wallet invitations
+
+In Settings, choose **Invitation method → Ethereum wallet**, enter the recipient's `0x` address, select Viewer and the research project, then create and share the invitation link. The recipient signs in with that wallet (or links it to their existing account) and accepts. No email is required. Only an account with that verified wallet can accept; possession of the invitation link alone is insufficient. Mixed-case addresses must have a valid Ethereum checksum.
+
+Wallet invitations retain the same seven-day expiry, revocation, single-use acceptance, and scope as email invitations. Recreating a link invalidates older pending links for the same address, regardless of casing. Accepting an invitation does not upgrade an existing member's permissions. Research assignment and publication approval remain separate: a viewer may submit assigned research, but only the assigning owner can publish it.
+
+Before deployment, run `scripts/migrate-invites.ts` using the existing restricted production database environment. It adds a wallet recipient column and allows email to be empty only for wallet invitations; existing email invitations remain intact.

@@ -348,6 +348,73 @@ try {
     second.getByRole("button", { name: "Settings", exact: true }),
   ).toBeVisible();
   const secondMe = await remember(second);
+  // Invite a wallet-only account through the UI, preserving a project-only viewer scope.
+  const walletAddress = secondMe.identities.find(
+    (i: any) => i.kind === "ethereum",
+  ).value;
+  const walletProject = await api(page, base + "/records", {
+    kind: "projects",
+    data: { name: "Wallet-only research project" },
+  });
+  await page.goto(
+    origin + "/?workspace=" + first.workspaces[0].id + "&view=settings",
+  );
+  const walletForm = page.locator("form.invite-form");
+  await walletForm.getByLabel("Invitation method").selectOption("wallet");
+  await walletForm.getByLabel("Invite by wallet address").fill(walletAddress);
+  await walletForm.getByLabel("Role", { exact: true }).selectOption("viewer");
+  await walletForm.getByLabel("Access area").selectOption("selected");
+  await walletForm
+    .getByLabel("Wallet-only research project · projects", { exact: true })
+    .check();
+  await walletForm.getByRole("button", { name: "Create invite link" }).click();
+  const walletLink = page.getByLabel("Invitation link · expires in seven days");
+  await expect(walletLink).toHaveValue(/invite=/);
+  const oldWalletLink = await walletLink.inputValue();
+  const walletRow = page.locator("tr").filter({ hasText: walletAddress });
+  await walletRow.getByRole("button", { name: "Recreate link" }).click();
+  await expect(walletLink).not.toHaveValue(oldWalletLink);
+  await accessibility(page, "Wallet invitation management");
+  await second.goto(await walletLink.inputValue());
+  await expect(
+    second.getByRole("button", { name: "Accept invitation", exact: true }),
+  ).toBeEnabled();
+  await second
+    .getByRole("button", { name: "Accept invitation", exact: true })
+    .click();
+  await expect
+    .poll(async () =>
+      (await api(second, "me")).workspaces.some(
+        (w: any) => w.id === first.workspaces[0].id,
+      ),
+    )
+    .toBe(true);
+  const walletAccess = await api(second, base);
+  assert.equal(walletAccess.role, "viewer");
+  assert.equal(walletAccess.limited, true);
+  assert.deepEqual(
+    walletAccess.records.map((r: any) => r.id),
+    [walletProject.id],
+  );
+  assert.equal(
+    (await api(second, "me")).identities.some((i: any) => i.kind === "email"),
+    false,
+  );
+  await api(
+    page,
+    base + "/members",
+    { userId: secondMe.user.id, role: "remove" },
+    "PATCH",
+  );
+  await api(
+    page,
+    base + "/records",
+    { id: walletProject.id, version: walletProject.version },
+    "DELETE",
+  );
+  await second.goto(
+    origin + "/?workspace=" + secondMe.workspaces[0].id + "&view=settings",
+  );
   await second.getByRole("button", { name: "Settings", exact: true }).click();
   await second.getByRole("button", { name: "Link email", exact: true }).click();
   const secondEmail = `browser-check-${randomUUID()}@example.com`;
