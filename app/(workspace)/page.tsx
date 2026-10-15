@@ -1,4 +1,5 @@
 "use client";
+import {SharedProfileCard} from "../../shared/sso/SharedProfileCard.jsx";
 import {useSharedSignIn} from "../../shared/sso/useSharedSignIn.jsx";
 import { LoginPanel, EmailSignIn, EthereumSignIn } from "../shared/login/LoginPanel.jsx";
 import { sameImportIdentity } from "@/lib/import-matches";
@@ -1437,7 +1438,7 @@ useSharedSignIn(me?.user?.id);
             </button>
           </div>
         )}
-        <main className="content">
+        <main className="content"><SharedProfileCard sessionRevision={demo ? null : me?.user?.id}/>
           {page === "today" ? (
             <>
               <div className="page-heading">
