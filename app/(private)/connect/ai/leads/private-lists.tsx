@@ -17,7 +17,7 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
   const [workspace, setWorkspace] = useState(""),
     [project, setProject] = useState(""),
     [owner, setOwner] = useState(""),
-    [busy, setBusy] = useState(false),
+    [busy, setBusy] = useState(true),
     [error, setError] = useState(""),
     [message, setMessage] = useState("");
   const target = targets.find((t) => t.id === workspace);
@@ -114,6 +114,26 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
       >
         New private list
       </button>
+      <button
+        className="button"
+        disabled={busy}
+        onClick={() =>
+          void act(async () => {
+            if (
+              draft &&
+              (entry ||
+                draft.name !== lists.find((l) => l.id === draft.id)?.name) &&
+              !confirm("Reload saved data and discard unsaved changes?")
+            )
+              return;
+            if (draft) await open(draft.id);
+            await load();
+            setMessage("Private lists refreshed.");
+          })
+        }
+      >
+        Refresh private lists
+      </button>
       {!draft &&
         lists.map((l) => (
           <article key={l.id}>
@@ -126,7 +146,14 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
             </button>
             <p>
               {l.count} entries ·{" "}
-              {l.shared_search_id ? "Submitted for approval" : "Private draft"}
+              {{
+                private: "Private draft",
+                awaiting_review: "Awaiting owner review",
+                reviewed: "Reviewed",
+                withdrawn: "Submission closed",
+                expired: "Review expired",
+                unavailable: "Destination removed",
+              }[l.status as string] || "Private draft"}
             </p>
           </article>
         ))}
@@ -458,8 +485,9 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
           {draft.shared_search_id && (
             <p>
               This fixed copy has been submitted. The owner reviews it in Lead
-              research; your account can view the submitted draft in Your
-              searches.
+              research. Check Your searches for the current outcome. If the
+              review expired or was closed, make an editable copy to submit
+              again.
             </p>
           )}
           <button

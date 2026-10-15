@@ -8,6 +8,7 @@ type Review = {
   id: string;
   canApprove: boolean;
   workspace: string;
+  workspaceId: string;
   audience: string;
   digest: string;
   candidates: Candidate[];
@@ -42,6 +43,7 @@ export default function Leads() {
     [review, setReview] = useState<Review | null>(null),
     [accept, setAccept] = useState<number[]>([]),
     [reason, setReason] = useState("other");
+  const [publishedWorkspace, setPublishedWorkspace] = useState("");
   const [reuse, setReuse] = useState<Record<string, string>>({});
   const [credential, setCredential] = useState(""),
     [busy, setBusy] = useState(false),
@@ -94,6 +96,13 @@ export default function Leads() {
         </p>
       )}
       {message && <p role="status">{message}</p>}
+      {publishedWorkspace && (
+        <p>
+          <a href={"/?workspace=" + encodeURIComponent(publishedWorkspace)}>
+            Open destination workspace
+          </a>
+        </p>
+      )}
       {!review && <PrivateLists onShared={() => void act(load)} />}
       {!review && (
         <section className="integration-card">
@@ -449,10 +458,11 @@ export default function Leads() {
                     ),
                     reason,
                   });
+                  setPublishedWorkspace(review.workspaceId);
                   setReview(null);
                   await load();
                   setMessage(
-                    `${result.accepted} leads accepted. New records are visible to workspace owners only; reused organizations retain their existing sharing. Unselected candidates were rejected.`,
+                    `${result.accepted} leads accepted. New records are visible to workspace owners only; reused organizations retain their existing sharing. Unselected candidates were rejected.${accept.some((i) => review.candidates[i]?.kind === "tasks") ? " Follow-up tasks have no due date yet. Set a due date in CRM to include them in Today and daily emails." : ""}`,
                   );
                 })
               }

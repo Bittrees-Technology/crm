@@ -420,6 +420,7 @@ export async function review(user: string, id: string) {
     return {
       id,
       workspace: workspace.name,
+      workspaceId: s.workspace_id,
       brief: s.brief,
       candidates,
       matches,
