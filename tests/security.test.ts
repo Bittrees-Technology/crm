@@ -3103,3 +3103,302 @@ test("Remote MCP authenticates discovery and cannot bypass sourced drafts or pub
     /unavailable/,
   );
 });
+
+test("Combining verified accounts preserves personal research and revokes researcher credentials", async () => {
+  process.env.CRM_LEADS_ENABLED = "true";
+  const d = await import("../lib/lead-drafts"),
+    leads = await import("../lib/leads");
+  const { completeRecovery } = await import("../lib/recovery");
+  const f = await recoveryFixture();
+  const w = f.recovery.current.workspaces[0].id;
+  const project = await saveRecord(f.targetId, w, {
+    kind: "projects",
+    data: { name: "Recovery research" },
+  });
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role,scope_ids) VALUES($1,$2,'viewer',$3)",
+    [w, f.sourceId, [project.id]],
+  );
+  const c = await startChallenge(request(f.targetSession), {
+    kind: "ethereum",
+    value: f.source.wallet.address,
+    link: true,
+  });
+  f.recovery = (
+    await verifyChallenge(
+      request(`${f.targetSession}; ${cookiePair(c.cookie)}`),
+      {
+        id: c.body.id,
+        proof: await f.source.wallet.signMessage(c.body.message!),
+        recover: true,
+      },
+    )
+  ).body.recovery!;
+  const draft = {
+    id: randomUUID(),
+    name: "Recovered private list",
+    version: 0,
+    entries: [{ id: randomUUID(), kind: "people", name: "Recovery person" }],
+  };
+  await d.saveDraft(f.sourceId, draft);
+  const search = await leads.createSearch(f.targetId, {
+    workspaceId: w,
+    projectId: project.id,
+    researcherId: f.sourceId,
+    brief: { target: "Recovery research", sourceDomains: ["bittrees.org"] },
+  });
+  const connection = await leads.connectSearch(f.sourceId, search.id);
+  await leads.agentBrief(connection.token);
+  await verifyRecoveryCurrent(f);
+  await completeRecovery(request(f.targetSession), f.recovery.token);
+  assert.equal(
+    (await d.getDraft(f.targetId, draft.id)).entries[0].name,
+    "Recovery person",
+  );
+  assert.equal((await d.getDraft(f.targetId, draft.id)).version, 2);
+  await assert.rejects(
+    () => d.getDraft(f.sourceId, draft.id),
+    /account changed/,
+  );
+  await assert.rejects(() => leads.agentBrief(connection.token), /unavailable/);
+  const moved = (
+    await pool().query(
+      "SELECT user_id,researcher_id,token_hash,revoked_at FROM lead_searches WHERE id=$1",
+      [search.id],
+    )
+  ).rows[0];
+  assert.equal(moved.researcher_id, f.targetId);
+  assert.equal(moved.token_hash, null);
+  assert(moved.revoked_at);
+});
+
+test("Workspace merging retains research receipts without transferring live grants", async () => {
+  process.env.CRM_LEADS_ENABLED = "true";
+  const d = await import("../lib/lead-drafts"),
+    leads = await import("../lib/leads");
+  const { workspaceOperation } = await import("../lib/workspaces");
+  const source = randomUUID(),
+    target = randomUUID();
+  for (const id of [source, target]) {
+    await pool().query("INSERT INTO workspaces(id,name) VALUES($1,$2)", [
+      id,
+      id,
+    ]);
+    await pool().query(
+      "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'owner')",
+      [id, owner],
+    );
+  }
+  const project = await saveRecord(owner, source, {
+    kind: "projects",
+    data: { name: "Merge research" },
+  });
+  const draft = {
+    id: randomUUID(),
+    name: "Merge private list",
+    version: 0,
+    entries: [{ id: randomUUID(), kind: "people", name: "Merge person" }],
+  };
+  await d.saveDraft(owner, draft);
+  const shared = await d.shareDraft(owner, {
+    id: draft.id,
+    version: 1,
+    workspaceId: source,
+    projectId: project.id,
+    ownerId: owner,
+  });
+  const search = await leads.createSearch(owner, {
+    workspaceId: source,
+    brief: { target: "Merge research", sourceDomains: ["bittrees.org"] },
+  });
+  const { authorize } = await import("../lib/autonote");
+  await authorize(owner, {
+    workspaceId: source,
+    targetId: project.id,
+    challenge: "a".repeat(43),
+    state: "b".repeat(64),
+  });
+  const note = await saveRecord(owner, source, {
+    kind: "notes",
+    data: { name: "Preserved AutoNote", projectId: project.id },
+  });
+  await pool().query(
+    "INSERT INTO autonote_receipts(user_id,workspace_id,target_id,meeting_id,item_id,record_id) VALUES($1,$2,$3,$4,'summary',$5)",
+    [owner, source, project.id, randomUUID(), note.id],
+  );
+  const review = await workspaceOperation(owner, source, {
+    action: "merge",
+    targetId: target,
+  });
+  await workspaceOperation(
+    owner,
+    source,
+    {
+      action: "merge",
+      targetId: target,
+      review: review.review,
+      confirmName: source,
+    },
+    true,
+  );
+  assert(
+    (
+      await pool().query("SELECT id FROM lead_previews WHERE id=$1", [
+        shared.reviewId,
+      ])
+    ).rowCount,
+  );
+  const searches = await leads.listSearches(owner);
+  assert(
+    searches.some(
+      (s) =>
+        s.preview_id === shared.reviewId &&
+        s.workspace_id === target &&
+        s.revoked_at,
+    ),
+  );
+  assert.equal(
+    (await d.listDrafts(owner)).find((l) => l.id === draft.id)?.status,
+    "withdrawn",
+  );
+  const autoGrant = (
+    await pool().query(
+      "SELECT workspace_id,revoked_at,code_hash FROM autonote_grants WHERE target_id=$1",
+      [project.id],
+    )
+  ).rows[0];
+  assert.equal(autoGrant.workspace_id, target);
+  assert(autoGrant.revoked_at);
+  assert.equal(autoGrant.code_hash, null);
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT workspace_id FROM autonote_receipts WHERE record_id=$1",
+        [note.id],
+      )
+    ).rows[0].workspace_id,
+    target,
+  );
+
+  assert.equal((await d.getDraft(owner, draft.id)).entries.length, 1);
+  await assert.rejects(() => leads.agentBrief(search.token), /unavailable/);
+});
+
+test("MCP tasks flow through exact owner approval, linked records, status reconciliation and revocation", async () => {
+  process.env.CRM_LEADS_ENABLED = "true";
+  const leads = await import("../lib/leads");
+  const w = randomUUID();
+  await pool().query(
+    "INSERT INTO workspaces(id,name) VALUES($1,'Task flow test')",
+    [w],
+  );
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'owner')",
+    [w, owner],
+  );
+  const project = await saveRecord(owner, w, {
+    kind: "projects",
+    data: { name: "Task research" },
+  });
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role,scope_ids) VALUES($1,$2,'viewer',$3)",
+    [w, other, [project.id]],
+  );
+  const s = await leads.createSearch(owner, {
+    workspaceId: w,
+    projectId: project.id,
+    researcherId: other,
+    brief: {
+      target: "Task research",
+      sourceDomains: ["bittrees.org"],
+      allowTasks: true,
+    },
+  });
+  const connection = await leads.connectSearch(other, s.id),
+    op = randomUUID();
+  assert.deepEqual(
+    await leads.agentStatus(connection.token, { operationId: op }),
+    { state: "not_found" },
+  );
+  const base = {
+    website: "https://bittrees.org",
+    summary: "Public research",
+    relevance: "Business fit",
+    uncertainties: "Unverified",
+    fit: "medium",
+    evidence: "unconfirmed",
+    sources: [
+      { url: "https://bittrees.org", retrievedAt: new Date().toISOString() },
+    ],
+  };
+  const input = {
+    operationId: op,
+    candidates: [
+      { ...base, kind: "organizations", name: "Task firm" },
+      { ...base, kind: "people", name: "Task contact", organizationIndex: 0 },
+      {
+        ...base,
+        kind: "tasks",
+        name: "Review business fit",
+        contactIndex: 1,
+        organizationIndex: 0,
+      },
+    ],
+  };
+  const preview = await leads.prepare(connection.token, input);
+  assert.equal(
+    (await leads.agentStatus(connection.token, { operationId: op })).state,
+    "awaiting_review",
+  );
+  const review = await leads.review(owner, preview.reviewId);
+  await assert.rejects(
+    () =>
+      leads.approve(owner, {
+        reviewId: preview.reviewId,
+        digest: review.digest,
+        accept: [2],
+      }),
+    /linked contact/,
+  );
+  await assert.rejects(
+    () =>
+      leads.approve(other, {
+        reviewId: preview.reviewId,
+        digest: review.digest,
+        accept: [0, 1, 2],
+      }),
+    /Only the owner/,
+  );
+  const results = await Promise.all(
+    [0, 1].map(() =>
+      leads.approve(owner, {
+        reviewId: preview.reviewId,
+        digest: review.digest,
+        accept: [0, 1, 2],
+      }),
+    ),
+  );
+  assert.deepEqual(results[0].recordIds, results[1].recordIds);
+  const records = (await snapshot(owner, w)).records;
+  const task = records.find((r) => r.kind === "tasks")!,
+    person = records.find((r) => r.kind === "people")!,
+    firm = records.find((r) => r.kind === "organizations")!;
+  assert.equal(task.data.personId, person.id);
+  assert.equal(task.data.organizationId, firm.id);
+  assert.equal(task.data.projectId, project.id);
+  assert.equal(task.data.ownerId, owner);
+  assert.equal(task.data.dueDate, "");
+  assert.equal(task.data.status, "Open");
+  assert.deepEqual(task.visibility_ids, []);
+  assert(!(await snapshot(other, w)).records.some((r) => r.id === task.id));
+  const status = await leads.agentStatus(connection.token, { operationId: op });
+  assert.equal(status.state, "decided");
+  assert.equal(status.accepted, 3);
+  assert(!("recordIds" in status));
+  assert.equal((await leads.prepare(connection.token, input)).state, "decided");
+  await leads.revokeSearch(owner, s.id);
+  await assert.rejects(
+    () => leads.agentStatus(connection.token, { operationId: op }),
+    /unavailable/,
+  );
+});

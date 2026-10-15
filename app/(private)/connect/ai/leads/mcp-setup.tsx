@@ -68,7 +68,7 @@ export default function McpSetup({
           data.error?.message || data.error || "Connection unavailable.",
         );
       setStatus(
-        "CRM connection verified. Your agent should show leads.brief and leads.preview.",
+        "CRM connection verified. Your agent should show leads.brief, leads.preview and leads.status.",
       );
     } catch (e) {
       setStatus((e as Error).message);
@@ -77,7 +77,7 @@ export default function McpSetup({
     }
   }
   const prompt =
-    "Read my assignment with leads.brief. Research investors using the permitted public sources. Categorize people and organizations, link people to their firms, and include sources and uncertainties. Submit one finished batch with leads.preview for the owner’s approval. Do not contact anyone or publish records.";
+    "Read my assignment with leads.brief. Research investors using the permitted public sources. Categorize people and organizations, link people to their firms, and include sources and uncertainties. Propose linked follow-up tasks only if the brief allows them; do not invent deadlines. Submit one finished batch with leads.preview using a stable operationId, then use leads.status with that operationId to check its outcome when requested. Do not contact anyone or publish records.";
   return (
     <section id="agent-setup" className="integration-card">
       <h3>Connect your local agent</h3>

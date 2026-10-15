@@ -171,9 +171,19 @@ export async function completeRecovery(req: Request, raw: string) {
       [r.target_id, r.source_id],
     );
     await db.query("DELETE FROM saved_views WHERE user_id=$1", [r.source_id]);
+    // Personal drafts follow the verified person; stale editors must reload.
     await db.query(
-      "UPDATE lead_searches SET revoked_at=COALESCE(revoked_at,now()),token_hash=NULL WHERE user_id=ANY($1::uuid[])",
+      "UPDATE lead_drafts SET user_id=$1,version=version+1,updated_at=now() WHERE user_id=$2",
+      [r.target_id, r.source_id],
+    );
+    // Preserve research history, but never carry live agent credentials across an account merge.
+    await db.query(
+      "UPDATE lead_searches SET revoked_at=COALESCE(revoked_at,now()),token_hash=NULL WHERE user_id=ANY($1::uuid[]) OR researcher_id=ANY($1::uuid[])",
       [[r.target_id, r.source_id]],
+    );
+    await db.query(
+      "UPDATE lead_searches SET user_id=CASE WHEN user_id=$2 THEN $1 ELSE user_id END,researcher_id=CASE WHEN researcher_id=$2 THEN $1 ELSE researcher_id END WHERE user_id=$2 OR researcher_id=$2",
+      [r.target_id, r.source_id],
     );
     await db.query("DELETE FROM members WHERE user_id=$1", [r.source_id]);
     await db.query(
