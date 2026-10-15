@@ -17,7 +17,7 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
   const [workspace, setWorkspace] = useState(""),
     [project, setProject] = useState(""),
     [owner, setOwner] = useState(""),
-    [busy, setBusy] = useState(false),
+    [busy, setBusy] = useState(true),
     [error, setError] = useState(""),
     [message, setMessage] = useState("");
   const target = targets.find((t) => t.id === workspace);

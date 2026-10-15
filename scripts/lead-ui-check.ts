@@ -267,9 +267,22 @@ export async function checkInvestorAssignment(
     false,
   );
   await researcher.goto(origin + "/connect/ai/leads");
+  const savedListResponse = researcher.waitForResponse(
+    (r) =>
+      r.url().endsWith("/api/leads/draft") && r.request().method() === "POST",
+  );
   await researcher
     .getByRole("button", { name: "New private list", exact: true })
     .click();
+  const createdList = await savedListResponse;
+  assert.equal(
+    createdList.status(),
+    200,
+    "Create private list request must succeed",
+  );
+  await expect(
+    researcher.getByRole("heading", { name: "Edit private list", exact: true }),
+  ).toBeVisible();
   await researcher
     .getByLabel("List name", { exact: true })
     .fill("Manual investor shortlist");
