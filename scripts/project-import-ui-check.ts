@@ -56,4 +56,11 @@ export async function checkProjectImport(
   );
   assert.equal(records.length, 1);
   assert.deepEqual(records[0].visibility_ids, []);
+  await api(page, "leads/draft", { id, version: 1 }, "DELETE");
+  await api(
+    page,
+    "workspaces/" + me.workspaces[0].id + "/records",
+    { id: records[0].id, version: records[0].version },
+    "DELETE",
+  );
 }
