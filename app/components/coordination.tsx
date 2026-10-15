@@ -590,13 +590,15 @@ export function InviteManager({
     email: string,
     role: string,
     scopeIds?: string[] | null,
+    kind?: "email" | "wallet",
   ) => Promise<void>;
   onChanged: (revoked: boolean) => void;
 }) {
   const [invites, setInvites] = useState<
       {
         id: string;
-        email: string;
+        email: string | null;
+        wallet?: string | null;
         role: string;
         status: string;
         expires_at: string;
@@ -637,8 +639,8 @@ export function InviteManager({
     <div className="invitation-manager">
       <h3>Invitations</h3>
       <p className="small">
-        Recreating a link immediately revokes older links for the same email.
-        Share the new link directly with the recipient.
+        Recreating a link immediately revokes older links for the same email or
+        wallet. Share the new link directly with the recipient.
       </p>
       {error && (
         <div className="error" role="alert">
@@ -652,7 +654,7 @@ export function InviteManager({
           <table>
             <thead>
               <tr>
-                <th>Email</th>
+                <th>Recipient</th>
                 <th>Role</th>
                 <th>Status</th>
                 <th>Expires</th>
@@ -662,7 +664,9 @@ export function InviteManager({
             <tbody>
               {invites.map((i) => (
                 <tr key={i.id}>
-                  <td>{i.email}</td>
+                  <td style={{ overflowWrap: "anywhere" }}>
+                    {i.wallet || i.email}
+                  </td>
                   <td>
                     {i.role} ·{" "}
                     {i.scope_ids === null
@@ -702,7 +706,14 @@ export function InviteManager({
                         className="text-button"
                         disabled={busy}
                         onClick={() =>
-                          void act(() => onInvite(i.email, i.role, i.scope_ids))
+                          void act(() =>
+                            onInvite(
+                              i.wallet || i.email || "",
+                              i.role,
+                              i.scope_ids,
+                              i.wallet ? "wallet" : "email",
+                            ),
+                          )
                         }
                       >
                         Recreate link

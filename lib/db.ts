@@ -1,3 +1,4 @@
+import { invitesSchema } from "./invites-schema";
 import { workflowSchema } from "./workflow-schema";
 import { leadsSchema } from "./leads-schema";
 import { performanceSchema } from "./performance-schema";
@@ -60,6 +61,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS digest_options jsonb NOT NULL DEFAULT
 ALTER TABLE records ADD COLUMN IF NOT EXISTS visibility_ids uuid[];
 CREATE TABLE IF NOT EXISTS record_private_notes(record_id uuid NOT NULL REFERENCES records(id) ON DELETE CASCADE,author_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,content text NOT NULL DEFAULT '',version int NOT NULL DEFAULT 1,updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(record_id,author_id));
 ` +
+  invitesSchema +
   integrationSchema +
   aiSchema +
   performanceSchema +

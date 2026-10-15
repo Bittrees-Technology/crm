@@ -1,3 +1,4 @@
+import { getAddress } from "ethers";
 import {
   accessIds,
   checkRecordAccess,
@@ -519,10 +520,31 @@ export async function snapshot(
 export async function createInvite(userId: string, w: string, input: unknown) {
   const body = z
     .object({
-      email: z.email().max(254),
+      email: z.email().max(254).optional(),
+      wallet: z
+        .string()
+        .trim()
+        .regex(
+          /^0x[a-fA-F0-9]{40}$/,
+          "Enter a 42-character Ethereum address starting with 0x.",
+        )
+        .refine((v) => {
+          try {
+            getAddress(v);
+            return !/^0x0{40}$/i.test(v);
+          } catch {
+            return false;
+          }
+        }, "Enter a valid Ethereum address (0x…), with a valid checksum when mixed case.")
+        .transform((v) => getAddress(v).toLowerCase())
+        .optional(),
       role: z.enum(["editor", "viewer"]),
       scopeIds: scopeSchema.default(null),
     })
+    .refine(
+      (v) => !!v.email !== !!v.wallet,
+      "Choose either an email or a wallet address.",
+    )
     .parse(input);
   const raw = token();
   await transaction(async (db) => {
@@ -530,16 +552,24 @@ export async function createInvite(userId: string, w: string, input: unknown) {
     await db.query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE", [w]);
     await validateScope(db, w, body.scopeIds);
     await db.query(
-      "UPDATE invites SET revoked_at=now() WHERE workspace_id=$1 AND email=$2 AND accepted_at IS NULL AND revoked_at IS NULL",
-      [w, body.email.toLowerCase()],
+      "UPDATE invites SET revoked_at=now() WHERE workspace_id=$1 AND (email=$2 OR wallet=$3) AND accepted_at IS NULL AND revoked_at IS NULL",
+      [w, body.email?.toLowerCase() || null, body.wallet || null],
     );
     await db.query(
-      "INSERT INTO invites(hash,workspace_id,email,role,expires_at,scope_ids) VALUES($1,$2,$3,$4,now()+interval '7 days',$5)",
-      [hash(raw), w, body.email.toLowerCase(), body.role, body.scopeIds],
+      "INSERT INTO invites(hash,workspace_id,email,role,expires_at,scope_ids,wallet) VALUES($1,$2,$3,$4,now()+interval '7 days',$5,$6)",
+      [
+        hash(raw),
+        w,
+        body.email?.toLowerCase() || null,
+        body.role,
+        body.scopeIds,
+        body.wallet || null,
+      ],
     );
     await audit(db, w, userId, "Invitation created", null, {
       role: body.role,
       email: body.email,
+      wallet: body.wallet,
     });
   });
   return { token: raw };
@@ -567,14 +597,20 @@ export async function acceptInvite(userId: string, raw: string) {
     if (
       !(
         await db.query(
-          "SELECT value FROM identities WHERE user_id=$1 AND kind='email' AND value=$2",
-          [userId, invite.email],
+          "SELECT value FROM identities WHERE user_id=$1 AND kind=$3 AND value=$2",
+          [
+            userId,
+            invite.wallet || invite.email,
+            invite.wallet ? "ethereum" : "email",
+          ],
         )
       ).rowCount
     )
       throw new HttpError(
         403,
-        "Verify the email address this invitation was sent to in Settings, then open the invitation again.",
+        invite.wallet
+          ? "Sign in with or link the invited Ethereum wallet, then open this invitation again."
+          : "Verify the email address this invitation was sent to in Settings, then open the invitation again.",
       );
     await db.query(
       "INSERT INTO members(workspace_id,user_id,role,scope_ids) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING",
@@ -723,7 +759,7 @@ export async function timeline(userId: string, w: string, id: string) {
 export async function listInvites(userId: string, w: string) {
   await membership(w, userId, false, true);
   const rows = await pool().query(
-    `SELECT id,email,role,scope_ids,created_at,expires_at,CASE WHEN revoked_at IS NOT NULL THEN 'Revoked' WHEN accepted_at IS NOT NULL THEN 'Accepted' WHEN expires_at<now() THEN 'Expired' ELSE 'Pending' END AS status FROM invites WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 100`,
+    `SELECT id,email,wallet,role,scope_ids,created_at,expires_at,CASE WHEN revoked_at IS NOT NULL THEN 'Revoked' WHEN accepted_at IS NOT NULL THEN 'Accepted' WHEN expires_at<now() THEN 'Expired' ELSE 'Pending' END AS status FROM invites WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 100`,
     [w],
   );
   return { invites: rows.rows };
@@ -733,7 +769,7 @@ export async function revokeInvite(userId: string, w: string, id: string) {
   return transaction(async (db) => {
     await membership(w, userId, true, true, db);
     const r = await db.query(
-      "UPDATE invites SET revoked_at=now() WHERE id=$1 AND workspace_id=$2 AND revoked_at IS NULL AND accepted_at IS NULL RETURNING email",
+      "UPDATE invites SET revoked_at=now() WHERE id=$1 AND workspace_id=$2 AND revoked_at IS NULL AND accepted_at IS NULL RETURNING email,wallet",
       [id, w],
     );
     if (!r.rowCount)
@@ -743,6 +779,7 @@ export async function revokeInvite(userId: string, w: string, id: string) {
       );
     await audit(db, w, userId, "Invitation revoked", null, {
       email: r.rows[0].email,
+      wallet: r.rows[0].wallet,
     });
     return { ok: true };
   });
@@ -750,7 +787,7 @@ export async function revokeInvite(userId: string, w: string, id: string) {
 export async function previewInvite(raw: string) {
   const row = (
     await pool().query(
-      `SELECT w.name,i.email,i.role,i.scope_ids FROM invites i JOIN workspaces w ON w.id=i.workspace_id WHERE i.hash=$1 AND i.expires_at>now() AND i.accepted_at IS NULL AND i.revoked_at IS NULL`,
+      `SELECT w.name,i.email,i.wallet,i.role,i.scope_ids FROM invites i JOIN workspaces w ON w.id=i.workspace_id WHERE i.hash=$1 AND i.expires_at>now() AND i.accepted_at IS NULL AND i.revoked_at IS NULL`,
       [hash(raw)],
     )
   ).rows[0];
