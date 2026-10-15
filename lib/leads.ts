@@ -1,3 +1,4 @@
+import { checkWorkflowAuthority } from "./workflow-authority";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { PoolClient } from "pg";
@@ -46,10 +47,17 @@ async function search(db: PoolClient, user: string | null, credential: string) {
     !current ||
     current.revoked_at ||
     (!user && current.token_hash !== hash(credential)) ||
-    new Date(current.expires_at).getTime() <= Date.now()
+    (!(
+      current.standing &&
+      current.authority_managed &&
+      current.expires_at === null
+    ) &&
+      new Date(current.expires_at).getTime() <= Date.now())
   )
     throw new HttpError(401, "Lead search expired or revoked.");
   await checkAssignment(db, current);
+  if (!user && current.authority_managed)
+    await checkWorkflowAuthority(credential, "crm", "propose");
   return current;
 }
 async function checkAssignment(db: PoolClient, s: any) {
@@ -117,6 +125,11 @@ export async function connectSearch(user: string, id: string) {
         400,
         "This is a manually submitted list, not an agent assignment.",
       );
+    if (s.authority_managed)
+      throw new HttpError(
+        403,
+        "Managed connections must be rotated by the workflow operator.",
+      );
     const bearer = token();
     await db.query("UPDATE lead_searches SET token_hash=$2 WHERE id=$1", [
       id,
@@ -168,7 +181,7 @@ export async function listSearches(user: string) {
   return transaction(async (db) => {
     const rows = (
       await db.query(
-        "SELECT s.id,s.user_id,s.researcher_id,s.project_id,s.workspace_id,s.brief,s.expires_at,s.revoked_at,p.id AS preview_id,p.decision,p.record_ids FROM lead_searches s JOIN members m ON m.workspace_id=s.workspace_id AND m.user_id=s.user_id LEFT JOIN lead_previews p ON p.search_id=s.id WHERE (s.user_id=$1 OR s.researcher_id=$1) AND m.role='owner' ORDER BY s.created_at DESC LIMIT 50",
+        "SELECT s.id,s.user_id,s.researcher_id,s.project_id,s.workspace_id,s.brief,s.expires_at,s.standing,s.authority_managed,s.revoked_at,p.id AS preview_id,p.decision,p.record_ids FROM lead_searches s JOIN members m ON m.workspace_id=s.workspace_id AND m.user_id=s.user_id LEFT JOIN lead_previews p ON p.search_id=s.id WHERE (s.user_id=$1 OR s.researcher_id=$1) AND m.role='owner' ORDER BY s.created_at DESC LIMIT 50",
         [user],
       )
     ).rows;
@@ -199,6 +212,7 @@ export async function listSearches(user: string) {
                 : null,
           canApprove: row.user_id === user,
           canConnect:
+            !row.authority_managed &&
             row.brief.method !== "manual" &&
             (row.researcher_id || row.user_id) === user,
         });
@@ -301,8 +315,8 @@ export async function prepare(bearer: string, raw: unknown) {
     const s = await search(db, null, bearer);
     const prior = (
       await db.query(
-        "SELECT id,operation_id,payload_hash,candidates,decision FROM lead_previews WHERE search_id=$1",
-        [s.id],
+        "SELECT id,operation_id,payload_hash,candidates,decision FROM lead_previews WHERE search_id=$1 AND ($2::boolean=false OR operation_id=$3)",
+        [s.id, s.standing, input.operationId],
       )
     ).rows[0];
     const fingerprint = digest(input);
@@ -321,6 +335,19 @@ export async function prepare(bearer: string, raw: unknown) {
         reviewId: prior.id,
         reviewPath: "/connect/ai/leads?review=" + prior.id,
       };
+    }
+    if (s.standing) {
+      const budget = (
+        await db.query(
+          "SELECT count(*) FILTER (WHERE decision IS NULL)::int AS pending, count(*) FILTER (WHERE created_at>now()-interval '1 day')::int AS daily FROM lead_previews WHERE search_id=$1",
+          [s.id],
+        )
+      ).rows[0];
+      if (budget.pending >= 10 || budget.daily >= 5)
+        throw new HttpError(
+          429,
+          "Standing assignment review or daily limit reached.",
+        );
     }
     try {
       validateCandidates(briefSchema.parse(s.brief), input.candidates);

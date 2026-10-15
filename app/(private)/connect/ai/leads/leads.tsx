@@ -19,7 +19,7 @@ type Review = {
     archived: boolean;
   }[][];
   decision: unknown;
-  expiresAt: string;
+  expiresAt: string | null;
 };
 export default function Leads() {
   const [workspaces, setWorkspaces] = useState<
@@ -310,10 +310,12 @@ export default function Leads() {
             the researcher or agent and have not been independently verified.
           </p>
           <p>
-            Expires {new Date(review.expiresAt).toLocaleString()}. Existing
-            organizations can be reused without changing their data or sharing.
-            Duplicate people, archived records, and do-not-contact matches
-            cannot be published here.
+            {review.expiresAt
+              ? `Expires ${new Date(review.expiresAt).toLocaleString()}.`
+              : "Active until revoked."}{" "}
+            Existing organizations can be reused without changing their data or
+            sharing. Duplicate people, archived records, and do-not-contact
+            matches cannot be published here.
           </p>
           <fieldset disabled={busy || !!review.decision || !review.canApprove}>
             <legend>Select people and organizations to publish</legend>
@@ -503,7 +505,7 @@ export default function Leads() {
           Refresh
         </button>
         {searches.map((s) => (
-          <article key={s.id}>
+          <article key={`${s.id}:${s.preview_id || "assignment"}`}>
             <h3>{s.brief.target}</h3>
             <p>
               {s.canApprove
@@ -517,7 +519,7 @@ export default function Leads() {
                 ? "Paused: researcher no longer has access to the active project"
                 : s.revoked_at
                   ? "Revoked"
-                  : new Date(s.expires_at) < new Date()
+                  : s.expires_at && new Date(s.expires_at) < new Date()
                     ? "Expired"
                     : s.decision
                       ? `${s.record_ids?.length || s.decision.accepted || 0} accepted · ${s.decision.rejected} rejected`
@@ -528,7 +530,7 @@ export default function Leads() {
             {s.canConnect &&
               !s.revoked_at &&
               !s.preview_id &&
-              new Date(s.expires_at) > new Date() && (
+              (!s.expires_at || new Date(s.expires_at) > new Date()) && (
                 <button
                   className="button"
                   disabled={busy}
@@ -550,7 +552,7 @@ export default function Leads() {
             {s.preview_id &&
               !s.blocked &&
               !s.revoked_at &&
-              new Date(s.expires_at) > new Date() && (
+              (!s.expires_at || new Date(s.expires_at) > new Date()) && (
                 <button
                   className="button"
                   disabled={busy}
