@@ -351,6 +351,74 @@ export async function checkInvestorAssignment(
       (l: any) => l.id === privateList.id,
     ),
   );
+  const panel = researcher
+    .locator("details")
+    .filter({
+      has: researcher.getByText("Dataset, agent connection & sharing", {
+        exact: true,
+      }),
+    });
+  await panel.locator("summary").click();
+  await panel
+    .getByLabel("Training eligibility for Manual browser firm", { exact: true })
+    .selectOption("eligible");
+  await expect(panel.getByRole("status")).toContainText(
+    "Training decision saved",
+  );
+  const exported = await researcher.request.get(
+    origin + "/api/datasets/export?id=" + privateList.id + "&training=true",
+  );
+  assert.equal(exported.status(), 200);
+  const training = JSON.parse((await exported.text()).trim());
+  assert.equal(training.name, "Manual browser firm");
+  assert(!("email" in training));
+  researcher.once("dialog", (d) => d.accept());
+  const connectionResponse = researcher.waitForResponse(
+    (r) =>
+      r.url().endsWith("/api/datasets/connect") &&
+      r.request().method() === "POST",
+  );
+  await panel
+    .getByRole("button", {
+      name: "Create / replace dataset connection",
+      exact: true,
+    })
+    .click();
+  const connection = await (await connectionResponse).json();
+  assert(connection.token);
+  await expect(
+    panel.getByRole("button", { name: "Copy MCP configuration", exact: true }),
+  ).toBeVisible();
+  assert(!(await panel.innerText()).includes(connection.token));
+  const mcpResponse = await researcher.request.post(
+    origin + "/api/integrations/datasets/mcp",
+    {
+      headers: { Authorization: "Bearer " + connection.token, Origin: origin },
+      data: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "dataset.read", arguments: {} },
+      },
+    },
+  );
+  assert.equal(mcpResponse.status(), 200);
+  const mcpRead = JSON.parse((await mcpResponse.json()).result.content[0].text);
+  assert.equal(mcpRead.entries.length, 2);
+  await accessibility(researcher, "Dataset controls on mobile");
+  await panel
+    .getByRole("button", { name: "Revoke dataset connection", exact: true })
+    .click();
+  await expect(panel.getByRole("status")).toContainText("revoked");
+  const denied = await researcher.request.post(
+    origin + "/api/integrations/datasets/mcp",
+    {
+      headers: { Authorization: "Bearer " + connection.token, Origin: origin },
+      data: { jsonrpc: "2.0", id: 2, method: "tools/list" },
+    },
+  );
+  assert.equal(denied.status(), 401);
+  await panel.locator("summary").click();
   await researcher
     .getByLabel("Share with workspace", { exact: true })
     .selectOption(workspace);
