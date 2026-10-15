@@ -1,6 +1,6 @@
 "use client";
 import {useSharedSignIn} from "../../shared/sso/useSharedSignIn.jsx";
-import { LoginPanel } from "../shared/login/LoginPanel.jsx";
+import { LoginPanel, EmailSignIn, EthereumSignIn } from "../shared/login/LoginPanel.jsx";
 import { sameImportIdentity } from "@/lib/import-matches";
 import { calendarDay, matchesFollowup } from "@/lib/followups";
 import { defaultDigestOptions, type DigestOptions } from "@/lib/digest-options";
@@ -544,83 +544,9 @@ function Auth({
   const form = <LoginPanel product="CRM"
     title={recoveryToken ? "Verify your current account" : link ? "Add a sign-in method" : "Sign in"}
     description={recoveryToken ? "Use a sign-in method already linked to your current account." : link ? "Verify an email or Ethereum wallet to use it with your existing account." : "Use your email address or Ethereum wallet."}
-    email={(!allowedIdentities || allowedIdentities.some(i=>i.kind==="email")) && (          <form onSubmit={emailSubmit}>
-            <label>
-              Email address
-              <input
-                type="email"
-                autoComplete="email"
-                required
-                value={email}
-                disabled={!!challenge || busy || !config.emailEnabled}
-                placeholder="you@company.com"
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </label>
-            {challenge && (
-              <p className="small" role="status">
-                Code sent to {email}. Check your inbox and spam folder. It
-                expires in 10 minutes.
-              </p>
-            )}
-            {challenge && (
-              <label>
-                Verification code
-                <input
-                  autoComplete="one-time-code"
-                  inputMode="numeric"
-                  pattern="[0-9]{8}"
-                  maxLength={8}
-                  required
-                  placeholder="8-digit code"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                />
-              </label>
-            )}
-            <button
-              className="button primary full"
-              disabled={busy || !config.emailEnabled}
-            >
-              {operation === "email-send"
-                ? "Sending code…"
-                : operation === "email-verify"
-                  ? "Checking code…"
-                  : challenge
-                    ? "Verify and continue"
-                    : "Send verification code"}
-              <ArrowRight size={17} />
-            </button>
-            {challenge && (
-              <button
-                data-insights="use-a-different-email-or-request-a-new-code"
-                type="button"
-                className="text-button"
-                onClick={() => {
-                  setChallenge("");
-                  setCode("");
-                }}
-              >
-                Use a different email or request a new code
-              </button>
-            )}
-          </form>)}
-    wallet={(!allowedIdentities || allowedIdentities.some(i=>i.kind==="ethereum")) && <>
-        <button
-          disabled={busy}
-          className="button wallet-button"
-          onClick={wallet}
-        >
-          <Wallet size={19} />
-          {operation.startsWith("wallet-")
-            ? walletStatus[operation]
-            : recoveryToken
-              ? "Verify current wallet"
-              : link
-                ? "Link Ethereum wallet"
-                : "Sign in with Ethereum"}
-          <ArrowUpRight size={16} />
-        </button>
+    email={(!allowedIdentities||allowedIdentities.some(i=>i.kind==='email'))&&<EmailSignIn email={email} onEmailChange={setEmail} challenge={challenge} code={code} onCodeChange={setCode} onSubmit={emailSubmit} onReset={()=>{setChallenge('');setCode('');}} busy={busy} disabled={!config.emailEnabled}/>}
+    wallet={(!allowedIdentities||allowedIdentities.some(i=>i.kind==='ethereum'))&&<>
+      <EthereumSignIn busy={busy} onClick={wallet} label={recoveryToken?'Verify current wallet':link?'Link Ethereum wallet':'Sign in with Ethereum'}/>
       {operation.startsWith("wallet-") && (
         <div className="verification-progress" role="status">
           <p>{walletStatus[operation]}</p>
