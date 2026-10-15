@@ -1,4 +1,6 @@
 "use client";
+import {useSharedSignIn} from "../../shared/sso/useSharedSignIn.jsx";
+import { LoginPanel } from "../shared/login/LoginPanel.jsx";
 import { sameImportIdentity } from "@/lib/import-matches";
 import { calendarDay, matchesFollowup } from "@/lib/followups";
 import { defaultDigestOptions, type DigestOptions } from "@/lib/digest-options";
@@ -539,91 +541,15 @@ function Auth({
         }}
       />
     );
-  const form = (
-    <div className="auth-form">
-      {invitation && (
-        <div className="invite-banner">
-          You have a workspace invitation. Sign in with the invited email or
-          wallet. You can also link the invited identity to an existing account.
-        </div>
-      )}
-      <h1>
-        {recoveryToken
-          ? "Verify your current account"
-          : link
-            ? "Add a sign-in method"
-            : "Sign in"}
-      </h1>
-      <p>
-        {recoveryToken
-          ? "Use one of the sign-in methods listed below. This verifies your current account before the final confirmation."
-          : link
-            ? "Verify an email or Ethereum wallet to use either one with your existing account."
-            : "Use your email address or Ethereum wallet."}
-      </p>
-      {!link && !compact && (
-        <p className="small">
-          New users receive a private workspace. To add a sign-in method to an
-          existing account, use Settings.
-        </p>
-      )}
-      {allowedIdentities && (
-        <ul className="verified-methods">
-          {allowedIdentities.map((i) => (
-            <li key={i.kind + i.value}>
-              {i.kind === "email" ? "Email" : "Wallet"}: {i.value}
-            </li>
-          ))}
-        </ul>
-      )}
-      {(!allowedIdentities ||
-        allowedIdentities.some((i) => i.kind === "ethereum")) && (
-        <button
-          disabled={busy}
-          className="button wallet-button"
-          onClick={wallet}
-        >
-          <Wallet size={19} />
-          {operation.startsWith("wallet-")
-            ? walletStatus[operation]
-            : recoveryToken
-              ? "Verify current wallet"
-              : link
-                ? "Link Ethereum wallet"
-                : "Sign in with Ethereum"}
-          <ArrowUpRight size={16} />
-        </button>
-      )}
-      {operation.startsWith("wallet-") && (
-        <div className="verification-progress" role="status">
-          <p>{walletStatus[operation]}</p>
-          <p className="small">
-            The request may be behind this window. Open your wallet extension or
-            wallet app.
-          </p>
-          {operation !== "wallet-verify" && (
-            <button
-              data-insights="cancel-wallet-request-/-use-email"
-              type="button"
-              className="text-button"
-              onClick={cancel}
-            >
-              Cancel wallet request / use email
-            </button>
-          )}
-        </div>
-      )}
-      {(!allowedIdentities ||
-        allowedIdentities.some((i) => i.kind === "email")) && (
-        <>
-          <div className="separator">
-            <span>continue with email</span>
-          </div>
-          <form onSubmit={emailSubmit}>
+  const form = <LoginPanel product="CRM"
+    title={recoveryToken ? "Verify your current account" : link ? "Add a sign-in method" : "Sign in"}
+    description={recoveryToken ? "Use a sign-in method already linked to your current account." : link ? "Verify an email or Ethereum wallet to use it with your existing account." : "Use your email address or Ethereum wallet."}
+    email={(!allowedIdentities || allowedIdentities.some(i=>i.kind==="email")) && (          <form onSubmit={emailSubmit}>
             <label>
               Email address
               <input
                 type="email"
+                autoComplete="email"
                 required
                 value={email}
                 disabled={!!challenge || busy || !config.emailEnabled}
@@ -678,10 +604,44 @@ function Auth({
                 Use a different email or request a new code
               </button>
             )}
-          </form>
-        </>
+          </form>)}
+    wallet={(!allowedIdentities || allowedIdentities.some(i=>i.kind==="ethereum")) && <>
+        <button
+          disabled={busy}
+          className="button wallet-button"
+          onClick={wallet}
+        >
+          <Wallet size={19} />
+          {operation.startsWith("wallet-")
+            ? walletStatus[operation]
+            : recoveryToken
+              ? "Verify current wallet"
+              : link
+                ? "Link Ethereum wallet"
+                : "Sign in with Ethereum"}
+          <ArrowUpRight size={16} />
+        </button>
+      {operation.startsWith("wallet-") && (
+        <div className="verification-progress" role="status">
+          <p>{walletStatus[operation]}</p>
+          <p className="small">
+            The request may be behind this window. Open your wallet extension or
+            wallet app.
+          </p>
+          {operation !== "wallet-verify" && (
+            <button
+              data-insights="cancel-wallet-request-/-use-email"
+              type="button"
+              className="text-button"
+              onClick={cancel}
+            >
+              Cancel wallet request / use email
+            </button>
+          )}
+        </div>
       )}
-      {!config.emailEnabled && (
+</>}
+    notice={<>{!config.emailEnabled && (
         <p className="small">
           Email delivery is being configured. You can sign in with an Ethereum
           wallet now.
@@ -696,36 +656,28 @@ function Auth({
         <div className="error" role="alert">
           {error}
         </div>
+      )}</>}
+    footer={<>{!link&&!compact&&<p>New users receive a private workspace. Link another sign-in method in Settings.</p>}{onClose&&<button type="button" className="text-button" onClick={onClose}>Cancel</button>}</>}
+  >      {invitation && (
+        <div className="invite-banner">
+          You have a workspace invitation. Sign in with the invited email or
+          wallet. You can also link the invited identity to an existing account.
+        </div>
       )}
-      <div className="auth-foot">
-        <ShieldCheck size={16} />
-        <span>No passwords. Wallet sign-in never requests a transaction.</span>
-      </div>
-
-      {onClose && (
-        <button
-          data-insights="cancel"
-          className="text-button"
-          onClick={onClose}
-        >
-          Cancel
-        </button>
+      {allowedIdentities && (
+        <ul className="verified-methods">
+          {allowedIdentities.map((i) => (
+            <li key={i.kind + i.value}>
+              {i.kind === "email" ? "Email" : "Wallet"}: {i.value}
+            </li>
+          ))}
+        </ul>
       )}
-    </div>
-  );
+</LoginPanel>;
   if (link || compact) return form;
-  return (
-    <main className="auth">
-      <div className="auth-left">
-        <Brand />
-        {form}
-        <a href="/about" className="small">
-          About Bittrees CRM
-        </a>
-      </div>
-    </main>
-  );
+  return <main className="bt-login-page">{form}<a href="/about" className="small">About Bittrees CRM</a></main>;
 }
+
 export default function App() {
   const [me, setMe] = useState<Me | null>(null),
     [loading, setLoading] = useState(true),
@@ -737,6 +689,7 @@ export default function App() {
       members: [],
       audit: [],
     });
+useSharedSignIn(me?.user?.id);
   const loadingRequest = useRef<AbortController | null>(null);
   const [loadedCount, setLoadedCount] = useState<number | null>(null);
   const quickOperations = useRef(new Map<string, string>());
