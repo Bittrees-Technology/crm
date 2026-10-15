@@ -4,6 +4,9 @@ CREATE TABLE IF NOT EXISTS lead_searches(
  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
  brief jsonb NOT NULL, token_hash text UNIQUE, expires_at timestamptz NOT NULL,
  revoked_at timestamptz, created_at timestamptz NOT NULL DEFAULT now());
+ALTER TABLE lead_searches ALTER COLUMN expires_at DROP NOT NULL;
+ALTER TABLE lead_searches ADD COLUMN IF NOT EXISTS standing boolean NOT NULL DEFAULT false;
+ALTER TABLE lead_searches ADD COLUMN IF NOT EXISTS authority_managed boolean NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS lead_previews(
  id uuid PRIMARY KEY, search_id uuid NOT NULL REFERENCES lead_searches(id) ON DELETE CASCADE,
  operation_id uuid NOT NULL, payload_hash text NOT NULL, candidates jsonb NOT NULL,
