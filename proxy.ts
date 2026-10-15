@@ -8,7 +8,7 @@ export function proxy(request: NextRequest) {
     (process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "") +
     "; style-src 'self' 'nonce-" +
     nonce +
-    "'; connect-src 'self'; img-src 'self' data: https:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+    "'; connect-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
   const headers = new Headers(request.headers);
   headers.set("x-nonce", nonce);
   headers.set("Content-Security-Policy", csp);
