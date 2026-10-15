@@ -16,9 +16,10 @@ import {
 const field = z.string().trim().max(200).default("");
 export const draftEntrySchema = z.strictObject({
   id: z.uuid(),
-  kind: z.enum(["people", "organizations"]),
+  kind: z.enum(["people", "organizations", "projects"]),
   name: z.string().trim().min(1).max(200),
   category: field,
+  source: field,
   email: z.union([z.email(), z.literal("")]).default(""),
   title: field,
   website: z.union([publicUrl, z.literal("")]).default(""),
@@ -181,7 +182,7 @@ export async function shareTargets(user: string) {
     await lockActiveAccount(db, user);
     const workspaces = (
       await db.query(
-        "SELECT w.id,w.name FROM workspaces w JOIN members m ON m.workspace_id=w.id WHERE m.user_id=$1 ORDER BY w.id LIMIT 100",
+        "SELECT w.id,w.name,m.role FROM workspaces w JOIN members m ON m.workspace_id=w.id WHERE m.user_id=$1 ORDER BY w.id LIMIT 100",
         [user],
       )
     ).rows;
@@ -195,7 +196,7 @@ export async function shareTargets(user: string) {
           [w.id, ids],
         )
       ).rows;
-      if (projects.length)
+      if (projects.length || w.role === "owner")
         targets.push({
           ...w,
           projects,
@@ -273,6 +274,11 @@ export async function shareDraftInTransaction(
       .min(1)
       .max(20)
       .parse(draft.entries);
+    if (entries.some((e) => e.kind === "projects"))
+      throw new HttpError(
+        400,
+        "Review project imports separately; submit only people and organizations here.",
+      );
     const candidates = entries.map((e) =>
       candidateSchema.parse({
         researchMethod: "manual",

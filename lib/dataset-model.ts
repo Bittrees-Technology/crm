@@ -19,7 +19,7 @@ export const researchSchema = z.strictObject({
     .default("unverified"),
   training: z.enum(["pending", "eligible", "excluded"]).default("pending"),
 });
-export const datasetVersion = "1.0";
+export const datasetVersion = "1.1";
 // A training export is deliberately separate from the lossless research backup.
 export function trainingRows(draft: {
   id: string;

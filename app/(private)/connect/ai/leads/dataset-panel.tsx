@@ -1,4 +1,5 @@
 "use client";
+import ProjectImportPanel from "./project-import-panel";
 import { useState } from "react";
 import type { DraftEntry } from "@/lib/lead-drafts";
 import { api } from "./lead-api";
@@ -48,7 +49,7 @@ export default function DatasetPanel({ draft, targets, reload }: Props) {
       <p>
         Keep working in this private dataset. Connect one local agent, or export
         the data for your own tools. Each batch holds up to 20 people and
-        organizations.
+        organizations, or projects.
       </p>
       {error && (
         <p className="error" role="alert">
@@ -316,24 +317,27 @@ export default function DatasetPanel({ draft, targets, reload }: Props) {
           </article>
         ))}
       </fieldset>
+      <ProjectImportPanel draft={draft} targets={targets} reload={reload} />
       <fieldset disabled={busy}>
-        <legend>Submit selected entries for approval</legend>
+        <legend>Submit selected people and organizations for approval</legend>
         <p>
           This submits a fixed copy and leaves your dataset editable. Choose
           your own workspace to publish there after your review, or a shared
           project for its owner’s approval. A project invitation is needed
           before another workspace appears here.
         </p>
-        {draft.entries.map((e) => (
-          <label key={e.id}>
-            <input
-              type="checkbox"
-              checked={selected.includes(e.id)}
-              onChange={() => setSelected(toggle(selected, e.id))}
-            />
-            {e.name} ({e.kind})
-          </label>
-        ))}
+        {draft.entries
+          .filter((e) => e.kind !== "projects")
+          .map((e) => (
+            <label key={e.id}>
+              <input
+                type="checkbox"
+                checked={selected.includes(e.id)}
+                onChange={() => setSelected(toggle(selected, e.id))}
+              />
+              {e.name} ({e.kind})
+            </label>
+          ))}
         <label>
           Destination workspace
           <select

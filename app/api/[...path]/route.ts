@@ -335,6 +335,10 @@ async function handle(req: NextRequest) {
           body.record,
         ),
       );
+    if (path === "datasets/projects/preview" && req.method === "POST")
+      return json(await datasets.datasetProjectPreview(user.id, body));
+    if (path === "datasets/projects/approve" && req.method === "POST")
+      return json(await datasets.datasetProjectApprove(user.id, body));
     if (path === "datasets/updates" && req.method === "GET")
       return json(
         await datasets.datasetUpdates(

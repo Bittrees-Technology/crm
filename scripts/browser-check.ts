@@ -1,3 +1,4 @@
+import { checkProjectImport } from "./project-import-ui-check";
 import { checkLeads, checkInvestorAssignment } from "./lead-ui-check";
 import { checkAiConsent } from "./ai-consent-check";
 import assert from "node:assert/strict";
@@ -217,6 +218,7 @@ try {
   await accessibility(page, "Settings");
   await checkAiConsent(page, api, first, origin);
   await checkLeads(page, api, first, origin, accessibility);
+  await checkProjectImport(page, api, first, origin, accessibility);
   await checkWorkflows(page, api, first, origin, accessibility);
   await checkAdminWorkflows(page, api, first, origin, accessibility);
   await page.goto(origin + "/?view=settings");

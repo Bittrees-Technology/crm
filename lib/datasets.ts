@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { PoolClient } from "pg";
 import { transaction } from "./db";
 import { hash, token } from "./auth";
-import { HttpError } from "./model";
+import { HttpError, recordSchema } from "./model";
 import {
   membership,
   lockActiveAccount,
@@ -105,8 +105,8 @@ async function crmRows(db: PoolClient, user: string, links: any[]) {
     const rows = (
       await db.query(
         `SELECT id,kind,version,updated_at,archived_at,
-      jsonb_build_object('name',data->>'name','category',data->>'category','title',data->>'title','website',data->>'website','email',data->>'email','description',data->>'description','organizationId',data->>'organizationId') AS data
-      FROM records WHERE workspace_id=$1 AND id=ANY($2::uuid[]) AND kind IN ('people','organizations')`,
+      jsonb_build_object('name',data->>'name','category',data->>'category','source',data->>'source','title',data->>'title','website',data->>'website','email',data->>'email','description',data->>'description','organizationId',data->>'organizationId') AS data
+      FROM records WHERE workspace_id=$1 AND id=ANY($2::uuid[]) AND kind IN ('people','organizations','projects')`,
         [workspace, ids],
       )
     ).rows;
@@ -207,7 +207,7 @@ export async function datasetChoices(user: string, workspace: string) {
     const ids = await accessIds(db, user, workspace);
     return (
       await db.query(
-        "SELECT id,kind,data->>'name' AS name FROM records WHERE workspace_id=$1 AND kind IN ('people','organizations') AND archived_at IS NULL AND ($2::uuid[] IS NULL OR id=ANY($2)) ORDER BY data->>'name',id LIMIT 100",
+        "SELECT id,kind,data->>'name' AS name FROM records WHERE workspace_id=$1 AND kind IN ('people','organizations','projects') AND archived_at IS NULL AND ($2::uuid[] IS NULL OR id=ANY($2)) ORDER BY data->>'name',id LIMIT 100",
         [workspace, ids],
       )
     ).rows;
@@ -252,6 +252,7 @@ export async function datasetImport(user: string, raw: unknown) {
         kind: r.kind,
         name: r.data.name,
         category: r.data.category || "",
+        source: r.data.source || "",
         title: r.data.title || "",
         website: r.data.website || "",
         email: r.data.email || "",
@@ -423,13 +424,16 @@ async function updateProposals(db: PoolClient, d: any) {
     await membership(link.workspace_id, d.user_id, true, true, db);
     const record = (
       await db.query(
-        "SELECT id,kind,data,version FROM records WHERE id=$1 AND workspace_id=$2 AND archived_at IS NULL AND kind IN ('people','organizations')",
+        "SELECT id,kind,data,version FROM records WHERE id=$1 AND workspace_id=$2 AND archived_at IS NULL AND kind IN ('people','organizations','projects')",
         [link.record_id, link.workspace_id],
       )
     ).rows[0];
     if (!record || entry.kind !== record.kind) continue;
     const proposed = Object.fromEntries(
-      syncFields.map((f) => [f, entry[f] || ""]),
+      (record.kind === "projects"
+        ? ["name", "category", "source", "description"]
+        : syncFields
+      ).map((f) => [f, entry[f] || ""]),
     );
     if (record.kind === "people") {
       const org = links.find(
@@ -505,5 +509,106 @@ export async function datasetApply(user: string, raw: unknown) {
       data: p.data,
     });
     return { recordId: saved.id, version: saved.version };
+  });
+}
+
+const projectSelection = z.strictObject({
+  id: uuid,
+  workspaceId: uuid,
+  entryIds: z
+    .array(uuid)
+    .min(1)
+    .max(20)
+    .refine((a) => new Set(a).size === a.length),
+});
+async function projectPreview(
+  db: PoolClient,
+  user: string,
+  a: z.infer<typeof projectSelection>,
+) {
+  const d = await owned(db, user, a.id);
+  if (d.shared_search_id) throw new HttpError(409, "Use an editable dataset.");
+  await membership(a.workspaceId, user, true, true, db);
+  // Same lock as record creation: duplicate detection and approval are atomic.
+  await db.query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE", [
+    a.workspaceId,
+  ]);
+  const entries = d.entries.filter((e: any) => a.entryIds.includes(e.id));
+  if (
+    entries.length !== a.entryIds.length ||
+    entries.some((e: any) => e.kind !== "projects")
+  )
+    throw new HttpError(400, "Select project entries only.");
+  const links = (
+    await db.query("SELECT * FROM dataset_record_links WHERE draft_id=$1", [
+      d.id,
+    ])
+  ).rows;
+  const rows = [];
+  const names = new Set<string>();
+  for (const entry of entries) {
+    const name = entry.name.trim().toLowerCase();
+    const existing = (
+      await db.query(
+        "SELECT id FROM records WHERE workspace_id=$1 AND kind='projects' AND lower(trim(data->>'name'))=$2",
+        [a.workspaceId, name],
+      )
+    ).rows;
+    const linked = links.some((l) => l.entry_id === entry.id);
+    const blocked = linked
+      ? "Already linked: use Review proposed CRM updates."
+      : existing.length
+        ? "A project with this name already exists, including archived records. Link the existing record instead."
+        : names.has(name)
+          ? "Duplicate project name in this selection."
+          : "";
+    names.add(name);
+    rows.push({
+      entryId: entry.id,
+      name: entry.name,
+      blocked,
+      data: recordSchema.parse({
+        name: entry.name,
+        category: entry.category,
+        source: entry.source,
+        description: entry.description,
+        ownerId: user,
+      }),
+    });
+  }
+  const digest = createHash("sha256")
+    .update(JSON.stringify({ user, ...a, version: d.version, rows }))
+    .digest("hex");
+  return { digest, version: d.version, workspaceId: a.workspaceId, rows };
+}
+export async function datasetProjectPreview(user: string, raw: unknown) {
+  const a = projectSelection.parse(raw);
+  return transaction((db) => projectPreview(db, user, a));
+}
+export async function datasetProjectApprove(user: string, raw: unknown) {
+  const { digest, ...a } = projectSelection
+    .extend({ digest: z.string().regex(/^[a-f0-9]{64}$/) })
+    .parse(raw);
+  return transaction(async (db) => {
+    const preview = await projectPreview(db, user, a);
+    if (preview.digest !== digest || preview.rows.some((r) => r.blocked))
+      throw new HttpError(
+        409,
+        "Dataset, access or matching projects changed. Review a fresh preview before approving.",
+      );
+    const records = [];
+    for (const row of preview.rows) {
+      const saved = await saveRecordInTransaction(db, user, a.workspaceId, {
+        kind: "projects",
+        data: row.data,
+        visibilityIds: [],
+      });
+      await db.query(
+        "INSERT INTO dataset_record_links(draft_id,entry_id,record_id,workspace_id) VALUES($1,$2,$3,$4)",
+        [a.id, row.entryId, saved.id, a.workspaceId],
+      );
+      records.push({ entryId: row.entryId, recordId: saved.id });
+    }
+    return { records };
   });
 }

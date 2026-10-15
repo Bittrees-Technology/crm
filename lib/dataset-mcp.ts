@@ -63,7 +63,7 @@ export async function datasetMcp(
         ? input.params.protocolVersion
         : versions[0],
       capabilities: { tools: {} },
-      serverInfo: { name: "bittrees-crm-dataset", version: "1.0.0" },
+      serverInfo: { name: "bittrees-crm-dataset", version: "1.1.0" },
     });
   if (input.method === "ping") return reply({});
   if (input.method === "tools/list") return reply({ tools: datasetTools });
