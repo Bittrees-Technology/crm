@@ -11,6 +11,6 @@ export async function GET(request:Request){
   const identities=(await pool().query('SELECT kind,value FROM identities WHERE user_id=$1 AND verified_at IS NOT NULL ORDER BY kind,value LIMIT 21',[user.id])).rows;
   const subjects=identities.map(i=>ecosystemSubject('crm',i.kind==='ethereum'?'wallet':i.kind,i.value,process.env.ROLES_FEED_SUBJECT_SECRET));
   const access=await ecosystemAccess('crm',subjects,{verifiedEmails:identities.flatMap((i,index)=>i.kind==='email'?[{subject:subjects[index],email:i.value}]:[])});
-  return Response.json({...access,rolesUrl:'https://roles.bittrees.org',workflowsUrl:'https://workflow.bittrees.org',privateOwnershipRequired:true},{headers});
+  return Response.json({...access,rolesUrl:'https://roles.bittrees.org',manageRolesUrl:'https://roles.bittrees.org/role-management?project=crm',workflowsUrl:'https://workflow.bittrees.org',privateOwnershipRequired:true},{headers});
  }catch{return Response.json({error:'Shared permission check unavailable. Private workspace access is unchanged.'},{status:503,headers});}
 }
