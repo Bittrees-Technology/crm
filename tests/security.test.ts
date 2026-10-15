@@ -3042,7 +3042,7 @@ test("Remote MCP authenticates discovery and cannot bypass sourced drafts or pub
   const listing: any = await leadMcp(req, c.token, rpc("tools/list"));
   assert.deepEqual(
     listing.result.tools.map((t: any) => t.name),
-    ["leads.brief", "leads.preview"],
+    ["leads.status", "leads.brief", "leads.preview"],
   );
   assert.equal(
     await leadMcp(req, c.token, {
