@@ -3,6 +3,18 @@
 import { pathToFileURL } from "node:url";
 export const tools = [
   {
+    name: "leads.status",
+    description:
+      "Reconcile this assignment's proposal outcome. Does not approve or expose CRM records.",
+    inputSchema: {
+      type: "object",
+      required: ["operationId"],
+      properties: { operationId: { type: "string", format: "uuid" } },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: "leads.brief",
     description:
       "Read the user-approved investor research brief. Public research must use permitted sources. Do not send private CRM information to search/model providers.",
@@ -16,7 +28,7 @@ export const tools = [
   {
     name: "leads.preview",
     description:
-      "Submit one immutable batch of up to 20 sourced people and organizations for review in CRM. Does not import, contact, or merge records. Retry with the same operationId and identical candidates after an uncertain response.",
+      "Submit one immutable batch of up to 20 sourced people, organizations and explicitly permitted follow-up tasks for review in CRM. Does not import, contact, or merge records. Retry with the same operationId and identical candidates after an uncertain response.",
     inputSchema: {
       type: "object",
       required: ["operationId", "candidates"],
@@ -42,7 +54,7 @@ export const tools = [
             ],
             properties: {
               kind: {
-                enum: ["organizations", "people"],
+                enum: ["organizations", "people", "tasks"],
                 default: "organizations",
               },
               category: {
@@ -56,6 +68,12 @@ export const tools = [
                 type: "string",
                 description:
                   "Publicly sourced professional email only, or empty.",
+              },
+              contactIndex: {
+                type: "integer",
+                minimum: 0,
+                maximum: 19,
+                description: "For tasks: index of a person in this batch.",
               },
               organizationIndex: {
                 type: "integer",
@@ -137,7 +155,11 @@ export function handler({
       const response = await request(
         origin +
           "/api/integrations/leads/" +
-          (name === "leads.brief" ? "brief" : "prepare"),
+          (name === "leads.brief"
+            ? "brief"
+            : name === "leads.status"
+              ? "status"
+              : "prepare"),
         {
           method: "POST",
           headers: {

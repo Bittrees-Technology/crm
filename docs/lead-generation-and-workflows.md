@@ -64,3 +64,9 @@ When ready, select an accessible workspace/project and an approving owner, then 
 Manual entries are marked as researcher submissions with unconfirmed evidence, rather than pretending to have agent-supplied sources. Agent submissions still require public websites and evidence URLs. The independent list editor is manual in this release; MCP research still uses an owner-created assignment and submits directly to its approval queue.
 
 The additive workflow migration now also creates `lead_drafts`. No background polling, enrichment, paid service or new scheduled job is added. Validation includes private-list isolation, optimistic concurrency/retries, scoped sharing, manual person-to-firm publication, MCP discovery authentication, origin/protocol rejection, and prevention of manual-mode bypass by an agent. Browser coverage exercises both generated configurations, the connection check, private entry persistence, sharing and owner publication.
+
+## AI marketplace coordinator pilot
+
+Owners may now opt an assignment into proposed follow-up tasks with `allowTasks: true`; omitted/older briefs default to false. Tasks use the same sourced candidate format and may link to people through `contactIndex` and organizations through `organizationIndex`. Review must select linked records before importing the task. Tasks are assigned to the approving owner without invented deadlines. They do not send outreach.
+
+`leads.status` and `POST /api/integrations/leads/status` reconcile `{operationId}` against the current assignment. They recheck assignment authority and return proposal state and review location without exposing CRM record IDs. AI uses this through MCP Connect to recover uncertain responses. A fresh weekly batch still needs a fresh seven-day assignment; the pilot does not grant permanent workspace access.

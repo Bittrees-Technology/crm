@@ -1,5 +1,5 @@
 import { tools } from "../integrations/lead-mcp.mjs";
-import { agentBrief, prepare } from "./leads";
+import { agentBrief, prepare, agentStatus } from "./leads";
 import { checkOrigin } from "./auth";
 import { HttpError } from "./model";
 const versions = ["2025-11-25", "2025-06-18", "2025-03-26"];
@@ -41,7 +41,9 @@ export async function leadMcp(req: Request, bearer: string, input: any) {
     const result =
       input.params.name === "leads.brief"
         ? brief
-        : await prepare(bearer, input.params.arguments);
+        : input.params.name === "leads.status"
+          ? await agentStatus(bearer, input.params.arguments)
+          : await prepare(bearer, input.params.arguments);
     return reply({ content: [{ type: "text", text: JSON.stringify(result) }] });
   } catch (e) {
     return reply({
