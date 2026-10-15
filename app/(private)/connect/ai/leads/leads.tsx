@@ -1,21 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import type { Candidate } from "@/lib/lead-model";
-async function api(
-  path: string,
-  body?: unknown,
-  method = body ? "POST" : "GET",
-) {
-  const r = await fetch("/api/" + path, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(20000),
-  });
-  const value = await r.json();
-  if (!r.ok) throw Error(value.error || "Request failed. Try again.");
-  return value;
-}
+import { api } from "./lead-api";
+import McpSetup from "./mcp-setup";
+import PrivateLists from "./private-lists";
 type Review = {
   id: string;
   canApprove: boolean;
@@ -105,6 +93,7 @@ export default function Leads() {
         </p>
       )}
       {message && <p role="status">{message}</p>}
+      {!review && <PrivateLists onShared={() => void act(load)} />}
       {!review && (
         <section className="integration-card">
           <h2>Search brief</h2>
@@ -282,24 +271,10 @@ export default function Leads() {
             </p>
           )}
           {credential && (
-            <section>
-              <h3>Connection credential</h3>
-              <p>
-                Shown once. Store as CRM_LEAD_TOKEN in your local MCP server
-                environment, outside prompts and shared files.
-              </p>
-              <input
-                aria-label="Lead connection credential"
-                type="password"
-                readOnly
-                value={credential}
-                autoComplete="off"
-                onFocus={(e) => e.target.select()}
-              />
-              <button className="button" onClick={() => setCredential("")}>
-                Hide credential
-              </button>
-            </section>
+            <McpSetup
+              credential={credential}
+              onHide={() => setCredential("")}
+            />
           )}
         </section>
       )}
@@ -313,7 +288,7 @@ export default function Leads() {
           <p>
             Destination: {review.workspace}. Visibility: {review.audience}.
             Communication permission: Unknown. Research claims are supplied by
-            your agent and have not been independently verified.
+            the researcher or agent and have not been independently verified.
           </p>
           <p>
             Expires {new Date(review.expiresAt).toLocaleString()}. Existing
@@ -338,11 +313,17 @@ export default function Leads() {
                   />
                   {c.name}
                 </label>
-                <p>
-                  <a href={c.website} target="_blank" rel="noopener noreferrer">
-                    {c.website}
-                  </a>
-                </p>
+                {c.website && (
+                  <p>
+                    <a
+                      href={c.website}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {c.website}
+                    </a>
+                  </p>
+                )}
                 <p>
                   {c.kind === "people" ? "Person" : "Organization"} ·{" "}
                   {c.category}
@@ -355,6 +336,11 @@ export default function Leads() {
                     . Select this organization too.
                   </p>
                 )}
+                <p>
+                  {c.researchMethod === "manual"
+                    ? "Manually added · owner review required"
+                    : "Agent research"}
+                </p>
                 <p>{c.summary}</p>
                 <p>{c.relevance}</p>
                 <p>
@@ -493,7 +479,9 @@ export default function Leads() {
             <p>
               {s.canApprove
                 ? "You approve publication"
-                : "Assigned to you · owner approval required"}
+                : s.brief.method === "manual"
+                  ? "Your submitted list · owner approval required"
+                  : "Assigned to you · owner approval required"}
             </p>
             <p>
               {s.blocked
@@ -555,7 +543,11 @@ export default function Leads() {
                   })
                 }
               >
-                Revoke connection
+                {s.brief.method === "manual"
+                  ? s.decision
+                    ? "Close review"
+                    : "Withdraw submitted list"
+                  : "Revoke connection"}
               </button>
             )}
           </article>

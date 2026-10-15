@@ -12,5 +12,10 @@ CREATE TABLE IF NOT EXISTS lead_previews(
 ALTER TABLE lead_searches ADD COLUMN IF NOT EXISTS researcher_id uuid REFERENCES users(id) ON DELETE CASCADE;
 ALTER TABLE lead_searches ADD COLUMN IF NOT EXISTS project_id uuid REFERENCES records(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS lead_searches_researcher ON lead_searches(researcher_id,created_at);
+CREATE TABLE IF NOT EXISTS lead_drafts(
+ id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ name text NOT NULL, entries jsonb NOT NULL DEFAULT '[]', version integer NOT NULL DEFAULT 1,
+ shared_search_id uuid, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS lead_drafts_user ON lead_drafts(user_id,updated_at);
 CREATE INDEX IF NOT EXISTS lead_searches_user ON lead_searches(user_id,created_at);
 `;

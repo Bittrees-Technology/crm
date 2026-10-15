@@ -2890,3 +2890,216 @@ test("Wallet invitations require the verified recipient and retain research scop
     /invalid or expired/,
   );
 });
+
+test("Private research lists stay personal, share only to accessible projects, and require owner approval", async () => {
+  process.env.CRM_LEADS_ENABLED = "true";
+  const d = await import("../lib/lead-drafts");
+  const leads = await import("../lib/leads");
+  const login = await walletLogin();
+  const researcher = (await currentUser(
+    request(cookiePair(login.result.cookie)),
+  ))!.id;
+  const id = randomUUID(),
+    firmId = randomUUID();
+  const input = {
+    id,
+    name: "Independent investors",
+    version: 0,
+    entries: [
+      {
+        id: firmId,
+        kind: "organizations",
+        name: "Private manual firm",
+        category: "Family office",
+      },
+      {
+        id: randomUUID(),
+        kind: "people",
+        name: "Private manual partner",
+        organizationId: firmId,
+        title: "Partner",
+      },
+    ],
+  };
+  const receipts = await Promise.all([
+    d.saveDraft(researcher, input),
+    d.saveDraft(researcher, input),
+  ]);
+  assert.equal(receipts[0].version, 1);
+  assert.deepEqual(receipts[0], receipts[1]);
+  assert(!(await d.listDrafts(owner)).some((r) => r.id === id));
+  await assert.rejects(() => d.getDraft(owner, id), /not found/);
+  await assert.rejects(() => d.saveDraft(owner, input), /not found/);
+  await assert.rejects(
+    () => d.saveDraft(researcher, { ...input, name: "Stale" }),
+    /another tab/,
+  );
+  await assert.rejects(
+    () =>
+      d.saveDraft(researcher, {
+        ...input,
+        id: randomUUID(),
+        entries: [{ ...input.entries[1], organizationId: randomUUID() }],
+      }),
+    /organization in this list/,
+  );
+  const w = randomUUID();
+  await pool().query(
+    "INSERT INTO workspaces(id,name) VALUES($1,'Private list scope test')",
+    [w],
+  );
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'owner')",
+    [w, owner],
+  );
+  const project = await saveRecord(owner, w, {
+    kind: "projects",
+    data: { name: "Research destination" },
+  });
+  const hidden = await saveRecord(owner, w, {
+    kind: "projects",
+    data: { name: "Hidden destination" },
+  });
+  const share = {
+    id,
+    version: 1,
+    workspaceId: w,
+    projectId: project.id,
+    ownerId: owner,
+  };
+  await assert.rejects(() => d.shareDraft(researcher, share));
+  await pool().query(
+    "INSERT INTO members(workspace_id,user_id,role,scope_ids) VALUES($1,$2,'viewer',$3)",
+    [w, researcher, [project.id]],
+  );
+  const targets = await d.shareTargets(researcher);
+  assert.deepEqual(
+    targets.find((t) => t.id === w)?.projects.map((p: { id: string }) => p.id),
+    [project.id],
+  );
+  await assert.rejects(
+    () => d.shareDraft(researcher, { ...share, projectId: hidden.id }),
+    /active project/,
+  );
+  await assert.rejects(() =>
+    d.shareDraft(researcher, { ...share, ownerId: researcher }),
+  );
+  const shared = await Promise.all([
+    d.shareDraft(researcher, share),
+    d.shareDraft(researcher, share),
+  ]);
+  assert.deepEqual(shared[0], shared[1]);
+  await assert.rejects(
+    () => d.saveDraft(researcher, { ...input, version: 1 }),
+    /submitted/,
+  );
+  assert.equal((await snapshot(owner, w)).records.length, 2);
+  const review = await leads.review(owner, shared[0].reviewId);
+  assert.equal(review.candidates[0].researchMethod, "manual");
+  const approval = {
+    reviewId: shared[0].reviewId,
+    digest: review.digest,
+    accept: [0, 1],
+  };
+  await assert.rejects(
+    () => leads.approve(researcher, approval),
+    /Only the owner/,
+  );
+  await d.deleteDraft(researcher, { id, version: 1 });
+  assert.equal((await leads.approve(owner, approval)).accepted, 2);
+  const records = (await snapshot(owner, w)).records;
+  const firm = records.find((r) => r.data.name === "Private manual firm")!;
+  const person = records.find((r) => r.data.name === "Private manual partner")!;
+  assert.equal(person.data.organizationId, firm.id);
+  assert.equal(person.data.source, "Research list");
+  assert.deepEqual(person.visibility_ids, []);
+  assert(
+    !(await snapshot(researcher, w)).records.some((r) => r.id === person.id),
+  );
+});
+
+test("Remote MCP authenticates discovery and cannot bypass sourced drafts or publication approval", async () => {
+  process.env.CRM_LEADS_ENABLED = "true";
+  const leads = await import("../lib/leads");
+  const { leadMcp } = await import("../lib/lead-mcp-http");
+  const c = await leads.createSearch(owner, {
+    workspaceId: workspace,
+    brief: { target: "Remote research", sourceDomains: ["bittrees.org"] },
+  });
+  const req = new Request(origin + "/api/integrations/leads/mcp");
+  const rpc = (method: string, params?: unknown) => ({
+    jsonrpc: "2.0",
+    id: 1,
+    method,
+    params,
+  });
+  const initialized: any = await leadMcp(
+    req,
+    c.token,
+    rpc("initialize", { protocolVersion: "2025-11-25" }),
+  );
+  assert.equal(initialized.result.protocolVersion, "2025-11-25");
+  const listing: any = await leadMcp(req, c.token, rpc("tools/list"));
+  assert.deepEqual(
+    listing.result.tools.map((t: any) => t.name),
+    ["leads.brief", "leads.preview"],
+  );
+  assert.equal(
+    await leadMcp(req, c.token, {
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    }),
+    null,
+  );
+  await assert.rejects(
+    () =>
+      leadMcp(
+        new Request(req.url, { headers: { Origin: "https://evil.example" } }),
+        c.token,
+        rpc("tools/list"),
+      ),
+    /origin/i,
+  );
+  await assert.rejects(
+    () =>
+      leadMcp(
+        new Request(req.url, {
+          headers: { "MCP-Protocol-Version": "invalid" },
+        }),
+        c.token,
+        rpc("tools/list"),
+      ),
+    /protocol/,
+  );
+  const candidate = {
+    name: "Manual bypass",
+    researchMethod: "manual",
+    website: "",
+    summary: "x",
+    relevance: "x",
+    uncertainties: "x",
+    fit: "low",
+    evidence: "unconfirmed",
+    sources: [],
+  };
+  const bypass: any = await leadMcp(
+    req,
+    c.token,
+    rpc("tools/call", {
+      name: "leads.preview",
+      arguments: { operationId: randomUUID(), candidates: [candidate] },
+    }),
+  );
+  assert.equal(bypass.result.isError, true);
+  const unknown: any = await leadMcp(
+    req,
+    c.token,
+    rpc("tools/call", { name: "leads.publish", arguments: {} }),
+  );
+  assert.equal(unknown.error.code, -32602);
+  await leads.revokeSearch(owner, c.id);
+  await assert.rejects(
+    () => leadMcp(req, c.token, rpc("tools/list")),
+    /unavailable/,
+  );
+});
