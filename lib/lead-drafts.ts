@@ -34,7 +34,7 @@ export async function listDrafts(user: string) {
     await lockActiveAccount(db, user);
     return (
       await db.query(
-        "SELECT id,name,version,shared_search_id,jsonb_array_length(entries) AS count,updated_at FROM lead_drafts WHERE user_id=$1 ORDER BY updated_at DESC LIMIT 100",
+        "SELECT d.id,d.name,d.version,d.shared_search_id,jsonb_array_length(d.entries) AS count,d.updated_at,CASE WHEN d.shared_search_id IS NULL THEN 'private' WHEN s.id IS NULL THEN 'unavailable' WHEN p.decision IS NOT NULL THEN 'reviewed' WHEN s.revoked_at IS NOT NULL THEN 'withdrawn' WHEN s.expires_at <= now() THEN 'expired' ELSE 'awaiting_review' END AS status FROM lead_drafts d LEFT JOIN lead_searches s ON s.id=d.shared_search_id LEFT JOIN lead_previews p ON p.search_id=s.id WHERE d.user_id=$1 ORDER BY d.updated_at DESC",
         [user],
       )
     ).rows;

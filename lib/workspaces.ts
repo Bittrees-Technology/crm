@@ -115,6 +115,21 @@ export async function workspaceOperation(
         "UPDATE records SET workspace_id=$1,version=version+1,updated_at=now() WHERE workspace_id=$2",
         [body.targetId, sourceId],
       );
+      // AutoNote references would otherwise block deleting the merged source workspace.
+      // Preserve idempotency receipts and require a fresh connection for the new destination.
+      await db.query(
+        "UPDATE autonote_grants SET workspace_id=$1,revoked_at=COALESCE(revoked_at,now()),token_hash=NULL,code_hash=NULL WHERE workspace_id=$2",
+        [body.targetId, sourceId],
+      );
+      await db.query(
+        "UPDATE autonote_receipts SET workspace_id=$1 WHERE workspace_id=$2",
+        [body.targetId, sourceId],
+      );
+      // Retain submitted research and draft receipts, without transferring a live grant to a new workspace.
+      await db.query(
+        "UPDATE lead_searches SET workspace_id=$1,revoked_at=COALESCE(revoked_at,now()),token_hash=NULL WHERE workspace_id=$2",
+        [body.targetId, sourceId],
+      );
       await db.query("UPDATE audit SET workspace_id=$1 WHERE workspace_id=$2", [
         body.targetId,
         sourceId,

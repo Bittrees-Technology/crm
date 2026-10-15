@@ -152,6 +152,9 @@ export async function checkInvestorAssignment(
   await owner
     .getByLabel("Permitted source domains, separated by commas")
     .fill("bittrees.org");
+  await owner
+    .getByLabel("Allow proposed follow-up tasks (review required; no outreach)")
+    .check();
   await owner.getByRole("button", { name: "Create search connection" }).click();
   await expect(owner.getByRole("status")).toContainText("Research assigned");
   await expect(owner.getByLabel("Lead connection credential")).toHaveCount(0);
@@ -175,12 +178,13 @@ export async function checkInvestorAssignment(
       { url: "https://bittrees.org", retrievedAt: new Date().toISOString() },
     ],
   };
+  const operationId = randomUUID();
   const response = await researcher.request.post(
     origin + "/api/integrations/leads/prepare",
     {
       headers: { Authorization: "Bearer " + token },
       data: {
-        operationId: randomUUID(),
+        operationId,
         candidates: [
           candidate,
           {
@@ -188,6 +192,13 @@ export async function checkInvestorAssignment(
             kind: "people",
             name: "Browser investor partner",
             title: "Partner",
+            organizationIndex: 0,
+          },
+          {
+            ...candidate,
+            kind: "tasks",
+            name: "Browser follow-up task",
+            contactIndex: 1,
             organizationIndex: 0,
           },
         ],
@@ -217,18 +228,37 @@ export async function checkInvestorAssignment(
   await owner
     .getByRole("checkbox", { name: "Browser investor partner", exact: true })
     .check();
-  await accessibility(owner, "Investor person and organization approval");
+  await owner
+    .getByRole("checkbox", { name: "Browser follow-up task", exact: true })
+    .check();
+  await accessibility(owner, "Investor person, organization and task approval");
   await owner.screenshot({
     path: "/tmp/crm-investor-review.png",
     fullPage: true,
   });
-  await owner.getByRole("button", { name: "Publish 2 selected leads" }).click();
-  await expect(owner.getByRole("status")).toContainText("2 leads accepted");
+  await owner.getByRole("button", { name: "Publish 3 selected leads" }).click();
+  await expect(owner.getByRole("status")).toContainText("3 leads accepted");
+  await expect(owner.getByRole("status")).toContainText("Set a due date");
+  await expect(
+    owner.getByRole("link", { name: "Open destination workspace" }),
+  ).toHaveAttribute("href", "/?workspace=" + workspace);
+  const reconciled = await researcher.request.post(
+    origin + "/api/integrations/leads/status",
+    { headers: { Authorization: "Bearer " + token }, data: { operationId } },
+  );
+  assert.equal(reconciled.status(), 200);
+  assert.equal((await reconciled.json()).accepted, 3);
   const records = (await api(owner, base)).records;
   const firm = records.find((r: any) => r.data.name === candidate.name);
   const person = records.find(
     (r: any) => r.data.name === "Browser investor partner",
   );
+  const task = records.find(
+    (r: any) => r.data.name === "Browser follow-up task",
+  );
+  assert.equal(task.data.personId, person.id);
+  assert.equal(task.data.organizationId, firm.id);
+  assert.equal(task.data.dueDate, "");
   assert.equal(person.data.organizationId, firm.id);
   assert.equal(person.data.category, "Venture capital");
   assert.deepEqual(person.visibility_ids, []);
@@ -283,6 +313,12 @@ export async function checkInvestorAssignment(
       exact: true,
     }),
   ).toBeVisible();
+  await researcher
+    .getByRole("button", { name: "Back to private lists", exact: true })
+    .click();
+  await researcher
+    .getByRole("button", { name: "Refresh private lists", exact: true })
+    .click();
   await researcher.reload();
   await researcher
     .getByRole("button", { name: "Manual investor shortlist", exact: true })
@@ -361,7 +397,7 @@ export async function checkInvestorAssignment(
     { id: privateList.id, version: savedDraft.version },
     "DELETE",
   );
-  for (const record of [person, firm, project])
+  for (const record of [task, person, firm, project])
     await api(
       owner,
       base + "/records",
