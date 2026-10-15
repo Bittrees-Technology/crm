@@ -1,3 +1,4 @@
+import {SharedRoles} from '../components/shared-roles';
 import { productMetadata } from "@/lib/site-metadata";
 import InsightsScript from "next/script";
 import type { Metadata } from "next";
@@ -15,6 +16,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <html lang="en">
       <body>
         {children}
+        <SharedRoles/>
         <InsightsScript
           src="https://insights.bittrees.org/consent.js"
           data-insights-site="bittrees-crm"
