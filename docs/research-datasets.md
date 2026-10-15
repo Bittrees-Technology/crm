@@ -49,3 +49,11 @@ The researcher can also select their own project and themselves as owner to publ
 Apply `scripts/migrate-datasets.ts` before deploying this feature. It creates three additive tables for expiring dataset connections, selected source links, and idempotent submission receipts. Existing lead credentials gain no new capabilities. The normal full schema migration includes the same tables.
 
 Tests cover credential isolation/revocation/expiry, stale writes and retries, linked records, training eligibility, selective submission and owner approval, read visibility, exact reviewed CRM updates, private-note exclusion, mobile accessibility and HTTP MCP discovery.
+
+## Projects and the Mac companion (schema 1.1)
+
+Datasets now accept `projects` alongside people and organizations. Project entries use stable entry IDs, name, category, source and description. The same dataset MCP credential remains limited to schema/read/save. Use the Mac app's Connections → CRM dataset panel to paste the copied MCP configuration, read selected source snapshots and preview private dataset saves.
+
+Project import is a separate owner-only CRM review. Select project entries and an owned workspace, preview all fields, and approve the current digest. New projects are restricted to workspace owners and receive dataset record links. Same-name projects, including archived records, block creation; import existing records into the dataset to propose updates instead. A concurrent dataset or destination change invalidates approval. Repeated approval cannot create a second copy.
+
+Linked projects participate in existing readback and reviewed-update flows. Private notes and unrelated fields are excluded or preserved. Project entries cannot enter investor lead publication; submit only people and organizations through that review path. No background sync, automatic sharing or agent approval is added.

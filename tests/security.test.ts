@@ -3729,3 +3729,129 @@ test("Dataset updates require exact human review and preserve CRM sharing and pr
     /expired or revoked/,
   );
 });
+
+test("project dataset import requires exact owner preview; MCP sync preserves approval and privacy", async () => {
+  process.env.CRM_LEADS_ENABLED = "true";
+  const ds = await import("../lib/datasets");
+  const drafts = await import("../lib/lead-drafts");
+  const login = await walletLogin();
+  const user = (await currentUser(request(cookiePair(login.result.cookie))))!
+    .id;
+  const w = (
+    await pool().query("SELECT workspace_id FROM members WHERE user_id=$1", [
+      user,
+    ])
+  ).rows[0].workspace_id;
+  const id = randomUUID(),
+    entryId = randomUUID();
+  await drafts.saveDraft(user, {
+    id,
+    version: 0,
+    name: "Project sync",
+    entries: [
+      {
+        id: entryId,
+        kind: "projects",
+        name: "Synthetic project",
+        source: "https://example.org",
+        description: "Original",
+      },
+    ],
+  });
+  const connection = await ds.datasetConnect(user, { id });
+  const selection = { id, workspaceId: w, entryIds: [entryId] };
+  const p = await ds.datasetProjectPreview(user, selection);
+  assert.equal(p.rows[0].data.source, "https://example.org");
+  assert.equal((await snapshot(user, w)).records.length, 0);
+  await assert.rejects(() =>
+    ds.datasetProjectApprove(other, { ...selection, digest: p.digest }),
+  );
+  await assert.rejects(
+    () =>
+      ds.datasetAgent(connection.token!, "dataset.projects.approve", {
+        ...selection,
+        digest: p.digest,
+      }),
+    /Unknown/,
+  );
+  await ds.datasetAgent(connection.token!, "dataset.save", {
+    version: 1,
+    name: "Project sync",
+    entries: [
+      {
+        id: entryId,
+        kind: "projects",
+        name: "Synthetic project",
+        description: "Changed before approval",
+      },
+    ],
+  });
+  await assert.rejects(
+    () => ds.datasetProjectApprove(user, { ...selection, digest: p.digest }),
+    /changed/,
+  );
+  const fresh = await ds.datasetProjectPreview(user, selection);
+  const approved = await ds.datasetProjectApprove(user, {
+    ...selection,
+    digest: fresh.digest,
+  });
+  assert.equal(approved.records.length, 1);
+  await assert.rejects(
+    () =>
+      ds.datasetProjectApprove(user, { ...selection, digest: fresh.digest }),
+    /changed/,
+  );
+  assert.equal((await snapshot(user, w)).records.length, 1);
+  const record = (await snapshot(user, w)).records[0];
+  assert.deepEqual(record.visibility_ids, []);
+  await saveRecord(user, w, {
+    id: record.id,
+    kind: "projects",
+    version: record.version,
+    data: { ...record.data, description: "CRM-side revision" },
+    privateNote: { version: 0, content: "Never send to dataset" },
+  });
+  let d: any = await ds.datasetAgent(connection.token!, "dataset.read", {});
+  assert.equal(d.crm[0].data.description, "CRM-side revision");
+  assert(!JSON.stringify(d).includes("Never send"));
+  assert.equal(d.entries[0].description, "Changed before approval");
+  d.entries[0].description = "Agent proposed revision";
+  await ds.datasetAgent(connection.token!, "dataset.save", {
+    version: d.version,
+    name: d.name,
+    entries: d.entries,
+  });
+  assert.equal(
+    (await snapshot(user, w)).records[0].data.description,
+    "CRM-side revision",
+  );
+  const updates = await ds.datasetUpdates(user, id);
+  await ds.datasetApply(user, { id, entryId, digest: updates[0].digest });
+  d = await ds.datasetAgent(connection.token!, "dataset.read", {});
+  assert.equal(d.crm[0].data.description, "Agent proposed revision");
+  const duplicate = randomUUID();
+  await drafts.saveDraft(user, {
+    id: duplicate,
+    version: 0,
+    name: "Duplicate",
+    entries: [
+      { id: randomUUID(), kind: "projects", name: " synthetic PROJECT " },
+    ],
+  });
+  const dup = await drafts.getDraft(user, duplicate);
+  assert.match(
+    (
+      await ds.datasetProjectPreview(user, {
+        id: duplicate,
+        workspaceId: w,
+        entryIds: [dup.entries[0].id],
+      })
+    ).rows[0].blocked,
+    /already exists/,
+  );
+  await ds.datasetConnect(user, { id, revoke: true });
+  await assert.rejects(
+    () => ds.datasetAgent(connection.token!, "dataset.read", {}),
+    /revoked/,
+  );
+});

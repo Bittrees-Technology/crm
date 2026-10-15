@@ -64,12 +64,13 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
     await load();
     return updated;
   }
-  function add(kind: "people" | "organizations") {
+  function add(kind: "people" | "organizations" | "projects") {
     setEntry({
       id: crypto.randomUUID(),
       kind,
       name: "",
-      category: "Investor",
+      category: kind === "projects" ? "" : "Investor",
+      source: "",
       email: "",
       title: "",
       website: "",
@@ -81,9 +82,10 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
     <section className="integration-card">
       <h2>My private research lists</h2>
       <p>
-        Add people and organizations yourself, without an AI connection or
-        assignment. Lists are private to your account until you share a fixed
-        copy with an owner for approval. Nothing is published automatically.
+        Add people, organizations and projects yourself, without an AI
+        connection or assignment. Lists are private to your account until you
+        share a fixed copy with an owner for approval. Nothing is published
+        automatically.
       </p>
       {error && (
         <p className="error" role="alert">
@@ -209,6 +211,13 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
             >
               Add organization to list
             </button>
+            <button
+              className="button"
+              disabled={draft.entries.length >= 20 || !!entry}
+              onClick={() => add("projects")}
+            >
+              Add project to list
+            </button>
             <p>
               {draft.entries.length}/20 entries. Save each entry before sharing.
             </p>
@@ -232,7 +241,11 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
             >
               <fieldset disabled={busy}>
                 <legend>
-                  {entry.kind === "people" ? "Person" : "Organization"}
+                  {entry.kind === "people"
+                    ? "Person"
+                    : entry.kind === "projects"
+                      ? "Project"
+                      : "Organization"}
                 </legend>
                 <label>
                   Name
@@ -253,6 +266,16 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
                     value={entry.category}
                     onChange={(e) =>
                       setEntry({ ...entry, category: e.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  Source / reference
+                  <input
+                    maxLength={200}
+                    value={entry.source || ""}
+                    onChange={(e) =>
+                      setEntry({ ...entry, source: e.target.value })
                     }
                   />
                 </label>
@@ -351,7 +374,12 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
             <article className="integration-card" key={e.id}>
               <h4>{e.name}</h4>
               <p>
-                {e.kind === "people" ? "Person" : "Organization"} · {e.category}
+                {e.kind === "people"
+                  ? "Person"
+                  : e.kind === "projects"
+                    ? "Project"
+                    : "Organization"}{" "}
+                · {e.category}
                 {e.organizationId
                   ? " · " +
                     draft.entries.find((o) => o.id === e.organizationId)?.name
