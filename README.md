@@ -13,11 +13,11 @@ Contact, organization, opportunity, project, task, and note management.
 - Validated CSV imports with duplicate preview; CSV view exports and a JSON export of accessible shared records.
 - Ethereum EOA sign-in and email codes through Resend.
 - Explicit verification to link an email and wallet to one account. Never merges separate accounts automatically. If both methods already have accounts, a recovery review requires fresh verification of both accounts and explicit confirmation.
-- Multiple independent workspaces, owner/editor/viewer permissions, email-bound invite links, member access changes.
+- Multiple independent workspaces, owner/editor/viewer permissions, email- or wallet-bound invite links, member access changes.
 - Inline task completion, opportunity stage changes, and due-date changes.
 - Contact and organization timelines with linked notes, task completions, and opportunity updates.
 - Optional daily follow-up email to a verified address, disabled by default.
-- Pending invitation status, revocation, replacement links, and guided email matching.
+- Pending invitation status, revocation, replacement links, and guided identity matching.
 - Backup sign-in prompts, verified-method visibility, cancellable wallet requests, and bounded waits.
 - Optimistic edit versions, atomic writes, relationship integrity, and a workspace activity history.
 - Responsive desktop and mobile interface.
@@ -71,13 +71,13 @@ Use an independent database for previews, or leave preview auth unavailable. Nev
 ## Team coordination
 
 1. Rename the workspace and your display name in Settings.
-2. Create an invite for the teammate's email and selected role.
+2. Choose Email or Ethereum wallet, enter the teammate's address, and select their role and access scope.
 3. Share the generated link directly. The app does not send invitation emails.
-4. The teammate signs in with that verified email, or links it to their wallet account, then accepts the invite.
+4. The teammate signs in with the invited email or wallet (or links that identity to their account), then accepts. Wallet invitations require no email.
 
 Owners manage membership, invitations, and record sharing. Editors create and update accessible records; CSV import requires whole-workspace access. Viewers can read and export accessible shared records. Each owner can keep a personal private note alongside a shared description; other owners cannot read that note.
 
-The owner role cannot be removed or transferred through this MVP. Reassign a member's records before removing them. Invitations expire after seven days and are single-use; redemption checks the exact verified email. Owners can revoke or recreate links in Settings. Recreating invalidates all earlier pending links for that email. Identity deletion and standalone ownership transfer are deferred. Link both email and wallet early if you need two independent sign-in methods.
+The owner role cannot be removed or transferred through this MVP. Reassign a member's records before removing them. Invitations expire after seven days and are single-use; redemption checks the exact verified email or wallet. Owners can revoke or recreate links in Settings. Recreating invalidates all earlier pending links for that email or wallet. Identity deletion and standalone ownership transfer are deferred. Link both email and wallet early if you need two independent sign-in methods.
 
 ## Identity and security model
 
