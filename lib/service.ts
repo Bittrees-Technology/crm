@@ -1,3 +1,4 @@
+import { trustedSupplierData, withoutSupplierMetadata } from "./supplier-research";
 import { getAddress } from "ethers";
 import {
   accessIds,
@@ -130,7 +131,7 @@ export async function saveRecordInTransaction(
         })
         .optional(),
     })
-    .parse(input);
+    .parse(input && typeof input === "object" ? {...input,data:withoutSupplierMetadata((input as any).data)} : input);
   const fingerprint = body.operationId
     ? createHmac("sha256", process.env.AUTH_SECRET!)
         .update(JSON.stringify(body))
@@ -224,6 +225,17 @@ export async function saveRecordInTransaction(
           )
         ).rows[0]?.data
       : undefined;
+    const submitted = (input as any)?.data || {};
+    for (const key of ["supplierResearch", "supplierPreparation", "sourceTaskIds"]) {
+      if (submitted[key] !== undefined && JSON.stringify(submitted[key]) !== JSON.stringify(previous?.[key]))
+        throw new HttpError(403, "Supplier research sources and parent links require owner preparation.");
+    }
+    if (previous?.supplierPreparation || previous?.supplierResearch) {
+      if (!trustedSupplierData(previous)) throw new HttpError(409, "Invalid supplier research approval.");
+      for (const key of ["projectId", "organizationId", "ownerId", "category", "name", "description"])
+        if ((body.data as any)[key] !== previous[key]) throw new HttpError(409, "Prepared supplier research scope is immutable. Keep the approved task unchanged.");
+      Object.assign(body.data, { supplierResearch: previous.supplierResearch, supplierPreparation: previous.supplierPreparation, sourceTaskIds: previous.sourceTaskIds });
+    }
     let record;
     if (body.id) {
       if (!body.version)
