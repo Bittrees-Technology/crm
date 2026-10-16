@@ -388,7 +388,7 @@ export async function projectAgent(
       if (!task) throw new HttpError(409, "Task moved.");
       return {
         runId: a.runId,
-        task: prior.result ? null : task,
+        task: prior.result ? null : redactRecord(task, [projectId, task.id]),
         completed: !!prior.result,
       };
     }
@@ -403,7 +403,7 @@ export async function projectAgent(
       "INSERT INTO project_ai_runs(id,draft_id,task_id,task_version,expires_at) VALUES($1,$2,$3,$4,now()+interval '15 minutes')",
       [a.runId, d.id, task.id, task.version],
     );
-    return { runId: a.runId, task };
+    return { runId: a.runId, task: redactRecord(task, [projectId, task.id]) };
   }
   if (name === "tasks.finish") {
     const a = z
