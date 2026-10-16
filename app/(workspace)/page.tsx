@@ -616,7 +616,7 @@ export default function App() {
       members: [],
       audit: [],
     });
-useSharedSignIn(me?.user?.id);
+  useSharedSignIn(me?.user?.id);
   const loadingRequest = useRef<AbortController | null>(null);
   const [loadedCount, setLoadedCount] = useState<number | null>(null);
   const quickOperations = useRef(new Map<string, string>());
@@ -1438,7 +1438,8 @@ useSharedSignIn(me?.user?.id);
             </button>
           </div>
         )}
-        <main className="content"><SharedProfileCard sessionRevision={demo ? null : me?.user?.id}/>
+        <main className="content">
+          <SharedProfileCard sessionRevision={demo ? null : me?.user?.id} />
           {page === "today" ? (
             <>
               <div className="page-heading">
@@ -2764,6 +2765,110 @@ function Empty({
     </div>
   );
 }
+function RecordProfile({
+  record,
+  records,
+  members,
+  onOpen,
+}: {
+  record: CrmRecord;
+  records: CrmRecord[];
+  members: Member[];
+  onOpen?: (record: CrmRecord) => void;
+}) {
+  const { data, kind } = record;
+  const fields: [keyof RecordData, string][] = [["ownerId", "Owner"]];
+  if (kind === "people")
+    fields.push(
+      ["title", "Role / title"],
+      ["email", "Email address"],
+      ["website", "Public profile"],
+      ["organizationId", "Organization"],
+      ["communication", "Communication preference"],
+    );
+  if (kind === "organizations") fields.push(["website", "Website"]);
+  if (["people", "organizations", "projects", "opportunities"].includes(kind))
+    fields.push(["category", "Type / category"]);
+  if (kind === "opportunities")
+    fields.push(
+      ["stage", "Stage"],
+      ["value", "Estimated value"],
+      ["organizationId", "Organization"],
+      ["personId", "Contact"],
+      ["nextAction", "Next action"],
+      ["dueDate", "Next action due"],
+    );
+  if (kind === "tasks")
+    fields.push(
+      ["status", "Status"],
+      ["dueDate", "Due date"],
+      ["opportunityId", "Opportunity"],
+      ["personId", "Contact"],
+    );
+  if (kind === "notes")
+    fields.push(
+      ["personId", "Person"],
+      ["organizationId", "Organization"],
+      ["opportunityId", "Opportunity"],
+    );
+  if (kind !== "projects") fields.push(["projectId", "Project"]);
+  if (["people", "organizations"].includes(kind))
+    fields.push(["wallet", "Wallet reference (unverified)"]);
+  fields.push(["source", "Source / reference"]);
+  return (
+    <section aria-label="Record profile">
+      <dl className="record-profile">
+        {fields.map(([key, label]) => {
+          const value = data[key];
+          if (value === "" || value == null) return null;
+          const linked =
+            key.endsWith("Id") && key !== "ownerId"
+              ? records.find((r) => r.id === value)
+              : undefined;
+          return (
+            <div key={key}>
+              <dt>{label}</dt>
+              <dd>
+                {key === "ownerId" ? (
+                  members.find((m) => m.id === value)?.name ||
+                  "Unavailable member"
+                ) : linked ? (
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => onOpen?.(linked)}
+                  >
+                    {linked.data.name}
+                  </button>
+                ) : key.endsWith("Id") ? (
+                  "Linked record unavailable"
+                ) : key === "website" && /^https?:\/\//i.test(String(value)) ? (
+                  <a
+                    href={String(value)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {String(value)}
+                  </a>
+                ) : key === "email" ? (
+                  <a href={`mailto:${value}`}>{String(value)}</a>
+                ) : key === "value" ? (
+                  `${value} ${data.currency}`
+                ) : (
+                  String(value)
+                )}
+              </dd>
+            </div>
+          );
+        })}
+      </dl>
+      <h3>{kind === "notes" ? "Note" : "Description / context"}</h3>
+      <p className="profile-text">
+        {data.description || "No description added."}
+      </p>
+    </section>
+  );
+}
 function RecordEditor({
   isOwner,
   savedTypes,
@@ -2805,6 +2910,8 @@ function RecordEditor({
   onDelete?: () => void;
   onOpen?: (record: CrmRecord) => void;
 }) {
+  const [editingProfile, setEditingProfile] = useState(!record);
+  const editable = canEdit && editingProfile && !record?.archived_at;
   const [operationId] = useState(() => crypto.randomUUID());
   const [data, setData] = useState<RecordData>(
     record?.data || {
@@ -2865,7 +2972,7 @@ function RecordEditor({
   const [customType, setCustomType] = useState(false);
   const original = useRef(JSON.stringify(data));
   const dirty =
-    canEdit &&
+    editable &&
     (JSON.stringify(data) !== original.current || sharingDirty || privateDirty);
   function closeEditor() {
     if (busy) return;
@@ -2955,6 +3062,7 @@ function RecordEditor({
         className="record-form"
         onSubmit={(e) => {
           e.preventDefault();
+          if (!editable || busy) return;
           onSave(
             data,
             isOwner && !demo
@@ -2974,221 +3082,246 @@ function RecordEditor({
           );
         }}
       >
-        <fieldset
-          disabled={!canEdit || busy || !!record?.archived_at}
-          className="editor-fields"
-        >
-          <div className="form-grid">
-            {input(
-              "name",
-              kind === "tasks"
-                ? "Task"
-                : kind === "notes"
-                  ? "Note title"
-                  : "Name",
-              "text",
-              true,
-            )}
-            {select(
-              "ownerId",
-              "Owner",
-              members.map((m) => ({ value: m.id, label: m.name })),
-              kind === "opportunities" && !["Won", "Lost"].includes(data.stage),
-            )}
-            {kind === "people" && (
-              <>
-                {input("email", "Email address", "email")}
-                {input("title", "Role / title")}
-                {input("website", "Public profile", "url")}
-                {ref("organizationId", "Organization", "organizations")}
-                {select(
-                  "communication",
-                  "Communication preference",
-                  ["Unknown", "Allowed", "Do not contact"].map((v) => ({
-                    value: v,
-                    label: v,
-                  })),
-                )}
-              </>
-            )}
-            {kind === "organizations" && (
-              <>{input("website", "Website", "url")}</>
-            )}
-            {(kind === "people" || kind === "organizations") && (
-              <label>
-                {kind === "people"
-                  ? "Investor / contact category"
-                  : "Organization type"}
-                <input
-                  list="investor-categories"
-                  maxLength={200}
-                  value={data.category}
-                  onChange={(e) => update("category", e.target.value)}
-                />
-                <datalist id="investor-categories">
-                  {[
-                    ...new Set([
-                      "Angel",
-                      "Venture capital",
-                      "Family office",
-                      "Corporate investor",
-                      "Accelerator",
-                      "Fund of funds",
-                      "Investor",
-                      ...records
-                        .filter((r) => r.kind === kind)
-                        .map((r) => r.data.category)
-                        .filter(Boolean),
-                    ]),
-                  ].map((category) => (
-                    <option key={category} value={category} />
-                  ))}
-                </datalist>
-              </label>
-            )}
-            {kind === "projects" && input("category", "Project type")}
-            {kind === "opportunities" && (
-              <>
-                <div>
-                  {customType ? (
-                    <label>
-                      Custom opportunity type
-                      <input
-                        autoFocus
-                        required
-                        maxLength={200}
-                        pattern=".*\S.*"
-                        value={data.category}
-                        onChange={(e) => update("category", e.target.value)}
-                        aria-describedby="custom-type-help"
-                      />
-                    </label>
-                  ) : (
-                    select(
-                      "category",
-                      "Opportunity type",
-                      typeOptions(savedTypes, data.category).map((value) => ({
-                        value,
-                        label: value,
-                      })),
-                    )
+        {record && !editingProfile && (
+          <>
+            <div className="profile-toolbar">
+              <span className="muted small">
+                {record.archived_at ? "Archived record" : "Record profile"}
+              </span>
+              {canEdit && !record.archived_at && (
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => setEditingProfile(true)}
+                  disabled={busy}
+                >
+                  Edit record
+                </button>
+              )}
+            </div>
+            <RecordProfile
+              record={record}
+              records={records}
+              members={members}
+              onOpen={onOpen}
+            />
+          </>
+        )}
+        {editingProfile && (
+          <fieldset disabled={!editable || busy} className="editor-fields">
+            <div className="form-grid">
+              {input(
+                "name",
+                kind === "tasks"
+                  ? "Task"
+                  : kind === "notes"
+                    ? "Note title"
+                    : "Name",
+                "text",
+                true,
+              )}
+              {select(
+                "ownerId",
+                "Owner",
+                members.map((m) => ({ value: m.id, label: m.name })),
+                kind === "opportunities" &&
+                  !["Won", "Lost"].includes(data.stage),
+              )}
+              {kind === "people" && (
+                <>
+                  {input("email", "Email address", "email")}
+                  {input("title", "Role / title")}
+                  {input("website", "Public profile", "url")}
+                  {ref("organizationId", "Organization", "organizations")}
+                  {select(
+                    "communication",
+                    "Communication preference",
+                    ["Unknown", "Allowed", "Do not contact"].map((v) => ({
+                      value: v,
+                      label: v,
+                    })),
                   )}
-                  {canEdit && (
-                    <button
-                      type="button"
-                      className="text-button"
-                      onClick={() => {
-                        setCustomType(!customType);
-                        update(
-                          "category",
-                          customType ? record?.data.category || "" : "",
-                        );
-                      }}
-                    >
-                      {customType
-                        ? "Choose an existing type"
-                        : "Create custom type"}
-                    </button>
-                  )}
-                  {customType && (
-                    <p id="custom-type-help" className="small">
-                      Saved to your personal options when you save this
-                      opportunity{demo ? " (this demo session only)" : ""}.
-                    </p>
-                  )}
-                </div>
-                {select(
-                  "stage",
-                  "Stage",
-                  stages.map((v) => ({ value: v, label: v })),
-                  true,
-                )}
+                </>
+              )}
+              {kind === "organizations" && (
+                <>{input("website", "Website", "url")}</>
+              )}
+              {(kind === "people" || kind === "organizations") && (
                 <label>
-                  Estimated value
+                  {kind === "people"
+                    ? "Investor / contact category"
+                    : "Organization type"}
                   <input
-                    type="text"
-                    inputMode="decimal"
-                    required
-                    pattern={amountPattern}
-                    maxLength={32}
-                    value={String(data.value)}
-                    onChange={(e) => update("value", e.target.value)}
-                    aria-label="Estimated value"
-                    aria-describedby="amount-help"
+                    list="investor-categories"
+                    maxLength={200}
+                    value={data.category}
+                    onChange={(e) => update("category", e.target.value)}
                   />
-                  <span id="amount-help" className="small">
-                    Up to 18 decimal places. Use a dot for decimals.
-                  </span>
-                </label>
-                <label>
-                  Currency
-                  <select
-                    value={data.currency}
-                    required
-                    onChange={(e) => update("currency", e.target.value)}
-                  >
-                    {currencyGroups.map((group) => (
-                      <optgroup key={group.label} label={group.label}>
-                        {group.options.map(([code, name]) => (
-                          <option key={code} value={code}>
-                            {code} — {name}
-                          </option>
-                        ))}
-                      </optgroup>
+                  <datalist id="investor-categories">
+                    {[
+                      ...new Set([
+                        "Angel",
+                        "Venture capital",
+                        "Family office",
+                        "Corporate investor",
+                        "Accelerator",
+                        "Fund of funds",
+                        "Investor",
+                        ...records
+                          .filter((r) => r.kind === kind)
+                          .map((r) => r.data.category)
+                          .filter(Boolean),
+                      ]),
+                    ].map((category) => (
+                      <option key={category} value={category} />
                     ))}
-                  </select>
+                  </datalist>
                 </label>
-                {ref("organizationId", "Organization", "organizations")}
-                {ref("personId", "Contact", "people")}
-                {input(
-                  "nextAction",
-                  "Next action",
-                  "text",
-                  !["Won", "Lost"].includes(data.stage),
-                )}
-                {input(
-                  "dueDate",
-                  "Next action due",
-                  "date",
-                  !["Won", "Lost"].includes(data.stage),
-                )}
-              </>
-            )}
-            {kind === "tasks" && (
-              <>
-                {select(
-                  "status",
-                  "Status",
-                  ["Open", "Done"].map((v) => ({ value: v, label: v })),
-                  true,
-                )}
-                {input("dueDate", "Due date", "date")}
-                {ref("opportunityId", "Opportunity", "opportunities")}
-                {ref("personId", "Contact", "people")}
-              </>
-            )}
-            {kind === "notes" && (
-              <>
-                {ref("personId", "Person", "people")}
-                {ref("organizationId", "Organization", "organizations")}
-                {ref("opportunityId", "Opportunity", "opportunities")}
-              </>
-            )}
-            {kind !== "projects" && ref("projectId", "Project", "projects")}
-            {["people", "organizations"].includes(kind) &&
-              input("wallet", "Wallet reference (unverified)")}
-            {input("source", "Source / reference")}
-            <label className="full-span">
-              {kind === "notes" ? "Note" : "Description / context"}
-              <textarea
-                rows={5}
-                maxLength={4000}
-                value={data.description}
-                onChange={(e) => update("description", e.target.value)}
-              />
-            </label>
-          </div>
-        </fieldset>
+              )}
+              {kind === "projects" && input("category", "Project type")}
+              {kind === "opportunities" && (
+                <>
+                  <div>
+                    {customType ? (
+                      <label>
+                        Custom opportunity type
+                        <input
+                          autoFocus
+                          required
+                          maxLength={200}
+                          pattern=".*\S.*"
+                          value={data.category}
+                          onChange={(e) => update("category", e.target.value)}
+                          aria-describedby="custom-type-help"
+                        />
+                      </label>
+                    ) : (
+                      select(
+                        "category",
+                        "Opportunity type",
+                        typeOptions(savedTypes, data.category).map((value) => ({
+                          value,
+                          label: value,
+                        })),
+                      )
+                    )}
+                    {canEdit && (
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={() => {
+                          setCustomType(!customType);
+                          update(
+                            "category",
+                            customType ? record?.data.category || "" : "",
+                          );
+                        }}
+                      >
+                        {customType
+                          ? "Choose an existing type"
+                          : "Create custom type"}
+                      </button>
+                    )}
+                    {customType && (
+                      <p id="custom-type-help" className="small">
+                        Saved to your personal options when you save this
+                        opportunity{demo ? " (this demo session only)" : ""}.
+                      </p>
+                    )}
+                  </div>
+                  {select(
+                    "stage",
+                    "Stage",
+                    stages.map((v) => ({ value: v, label: v })),
+                    true,
+                  )}
+                  <label>
+                    Estimated value
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      required
+                      pattern={amountPattern}
+                      maxLength={32}
+                      value={String(data.value)}
+                      onChange={(e) => update("value", e.target.value)}
+                      aria-label="Estimated value"
+                      aria-describedby="amount-help"
+                    />
+                    <span id="amount-help" className="small">
+                      Up to 18 decimal places. Use a dot for decimals.
+                    </span>
+                  </label>
+                  <label>
+                    Currency
+                    <select
+                      value={data.currency}
+                      required
+                      onChange={(e) => update("currency", e.target.value)}
+                    >
+                      {currencyGroups.map((group) => (
+                        <optgroup key={group.label} label={group.label}>
+                          {group.options.map(([code, name]) => (
+                            <option key={code} value={code}>
+                              {code} — {name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </label>
+                  {ref("organizationId", "Organization", "organizations")}
+                  {ref("personId", "Contact", "people")}
+                  {input(
+                    "nextAction",
+                    "Next action",
+                    "text",
+                    !["Won", "Lost"].includes(data.stage),
+                  )}
+                  {input(
+                    "dueDate",
+                    "Next action due",
+                    "date",
+                    !["Won", "Lost"].includes(data.stage),
+                  )}
+                </>
+              )}
+              {kind === "tasks" && (
+                <>
+                  {select(
+                    "status",
+                    "Status",
+                    ["Open", "Done"].map((v) => ({ value: v, label: v })),
+                    true,
+                  )}
+                  {input("dueDate", "Due date", "date")}
+                  {ref("opportunityId", "Opportunity", "opportunities")}
+                  {ref("personId", "Contact", "people")}
+                </>
+              )}
+              {kind === "notes" && (
+                <>
+                  {ref("personId", "Person", "people")}
+                  {ref("organizationId", "Organization", "organizations")}
+                  {ref("opportunityId", "Opportunity", "opportunities")}
+                </>
+              )}
+              {kind !== "projects" && ref("projectId", "Project", "projects")}
+              {["people", "organizations"].includes(kind) &&
+                input("wallet", "Wallet reference (unverified)")}
+              {input("source", "Source / reference")}
+              <label className="full-span">
+                {kind === "notes" ? "Note" : "Description / context"}
+                <textarea
+                  rows={5}
+                  maxLength={4000}
+                  value={data.description}
+                  onChange={(e) => update("description", e.target.value)}
+                />
+              </label>
+            </div>
+          </fieldset>
+        )}
         <p className="small muted shared-content-help">
           The description and record fields are shared with everyone who can
           access this record. Assignment does not grant access.
@@ -3215,6 +3348,10 @@ function RecordEditor({
                     Retry private note
                   </button>
                 </div>
+              ) : !editingProfile ? (
+                <p className="profile-text">
+                  {privateOriginal.content || "No private note."}
+                </p>
               ) : (
                 <label>
                   Private context
@@ -3223,7 +3360,7 @@ function RecordEditor({
                     maxLength={20000}
                     aria-label="Private context"
                     value={privateDraft}
-                    disabled={busy || !!record?.archived_at}
+                    disabled={!editable || busy}
                     onChange={(e) => setPrivateDraft(e.target.value)}
                   />
                 </label>
@@ -3236,7 +3373,7 @@ function RecordEditor({
               data={data}
               value={visibility}
               onChange={setVisibility}
-              disabled={busy || !!record?.archived_at}
+              disabled={!editable || busy}
             />
           </>
         )}
@@ -3302,7 +3439,7 @@ function RecordEditor({
           </div>
         )}
         <div className="modal-actions">
-          {onDelete && canEdit && (
+          {onDelete && canEdit && (editingProfile || !!record?.archived_at) && (
             <button
               data-insights="delete-record"
               type="button"
@@ -3323,7 +3460,25 @@ function RecordEditor({
           >
             Close
           </button>
-          {canEdit && !record?.archived_at && (
+          {record && editingProfile && (
+            <button
+              type="button"
+              className="button"
+              disabled={busy}
+              onClick={() => {
+                if (dirty && !window.confirm("Discard your unsaved changes?"))
+                  return;
+                setData(record.data);
+                setVisibility(record.visibility_ids ?? null);
+                setPrivateDraft(privateOriginal.content);
+                setCustomType(false);
+                setEditingProfile(false);
+              }}
+            >
+              Cancel editing
+            </button>
+          )}
+          {editable && (
             <button className="button primary" disabled={busy}>
               {busy ? (
                 <LoaderCircle size={16} className="spin" />

@@ -16,6 +16,10 @@ export async function checkAdminWorkflows(
   await page.goto(
     origin + `/?workspace=${original}&view=projects&record=${root.id}`,
   );
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Edit record", exact: true })
+    .click();
   await expect(
     page.getByRole("dialog").getByLabel("Name", { exact: true }),
   ).toHaveValue("Access test project");
@@ -78,6 +82,9 @@ export async function checkAdminWorkflows(
   await page.goto(
     origin + `/?workspace=${original}&view=projects&record=${root.id}`,
   );
+  await dialog
+    .getByRole("button", { name: "Edit record", exact: true })
+    .click();
   await dialog
     .locator("summary")
     .filter({ hasText: "Your private note" })

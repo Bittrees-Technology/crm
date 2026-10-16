@@ -2121,3 +2121,35 @@ td,
   height: 18px;
   flex: 0 0 18px;
 }
+
+.profile-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.record-profile {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem 1.5rem;
+  margin: 0 0 1.5rem;
+}
+.record-profile dt {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+}
+.record-profile dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.profile-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .record-profile {
+    grid-template-columns: 1fr;
+  }
+}

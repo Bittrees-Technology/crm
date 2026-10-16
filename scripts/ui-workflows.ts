@@ -156,6 +156,9 @@ export async function checkWorkflows(
     await page.getByText("UX opportunity", { exact: true }).click();
     const editor = page.getByRole("dialog");
     await editor
+      .getByRole("button", { name: "Edit record", exact: true })
+      .click();
+    await editor
       .getByRole("combobox", { name: "Currency", exact: true })
       .selectOption(currency);
     await editor.getByLabel("Estimated value", { exact: true }).fill(value);
@@ -163,6 +166,9 @@ export async function checkWorkflows(
     await expect(editor).not.toBeVisible();
     await page.reload();
     await page.getByText("UX opportunity", { exact: true }).click();
+    await editor
+      .getByRole("button", { name: "Edit record", exact: true })
+      .click();
     await expect(
       editor.getByLabel("Estimated value", { exact: true }),
     ).toHaveValue(value);
@@ -256,6 +262,29 @@ export async function checkWorkflows(
   await page.getByRole("button", { name: "People", exact: true }).click();
   await page.getByText("UX person", { exact: true }).click();
   let dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByLabel("Record profile", { exact: true }),
+  ).toBeVisible();
+  await expect(dialog.getByLabel("Name", { exact: true })).toHaveCount(0);
+  await expect(
+    dialog.getByRole("button", { name: "Save record", exact: true }),
+  ).toHaveCount(0);
+  await checkAccessibility(page, "Read-only person profile");
+  await dialog
+    .getByRole("button", { name: "Edit record", exact: true })
+    .click();
+  await dialog.getByLabel("Name", { exact: true }).fill("Cancelled edit");
+  page.once("dialog", (d) => d.accept());
+  await dialog
+    .getByRole("button", { name: "Cancel editing", exact: true })
+    .click();
+  await expect(dialog.getByLabel("Name", { exact: true })).toHaveCount(0);
+  await dialog
+    .getByRole("button", { name: "Edit record", exact: true })
+    .click();
+  await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue(
+    "UX person",
+  );
   await dialog.getByLabel("Name", { exact: true }).fill("Unsaved contact");
   page.once("dialog", (d) => d.dismiss());
   await dialog
@@ -301,6 +330,9 @@ export async function checkWorkflows(
   await expect(refreshButton).toBeEnabled();
   await page.getByText("UX person", { exact: true }).click();
   dialog = page.getByRole("dialog");
+  await dialog
+    .getByRole("button", { name: "Edit record", exact: true })
+    .click();
   await dialog.getByLabel("Name", { exact: true }).fill("Recovered contact");
   await pool().query(
     "UPDATE sessions SET expires_at=now()-interval '1 minute' WHERE user_id=$1",
@@ -408,6 +440,9 @@ export async function checkWorkflows(
     await page.goto(origin + "/?view=" + r.kind);
     await page.getByText(r.data.name, { exact: true }).click();
     const edit = page.getByRole("dialog");
+    await edit
+      .getByRole("button", { name: "Edit record", exact: true })
+      .click();
     page.once("dialog", (d) => d.accept());
     await edit.getByRole("button", { name: "Archive record" }).click();
     await expect(edit).not.toBeVisible();
