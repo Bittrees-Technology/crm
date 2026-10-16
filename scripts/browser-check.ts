@@ -476,6 +476,15 @@ try {
   ).toHaveCount(0);
   await second.getByText("Browser contact", { exact: true }).click();
   await expect(
+    second.getByRole("dialog").getByLabel("Record profile", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    second.getByRole("button", { name: "Edit record", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    second.getByRole("dialog").getByLabel("Name", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
     second.getByRole("button", { name: "Save record", exact: true }),
   ).toHaveCount(0);
   await second
