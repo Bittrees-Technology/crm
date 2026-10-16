@@ -1,3 +1,4 @@
+import { investorProfile } from "@/lib/investor-profile";
 import { projectOptions, configureProject } from "@/lib/project-automation";
 import * as datasets from "@/lib/datasets";
 import { datasetMcp } from "@/lib/dataset-mcp";
@@ -631,6 +632,9 @@ async function handle(req: NextRequest) {
         return json(await importRecords(user.id, w, body));
       if (resource === "access" && req.method === "GET")
         return json(await inspectAccess(user.id, w));
+      const investorMatch = resource?.match(/^records\/([^/]+)\/investor-research$/);
+      if (investorMatch && req.method === "GET")
+        return json(await investorProfile(user.id, w, investorMatch[1]));
       const privateMatch = resource?.match(/^records\/([^/]+)\/private-note$/);
       if (privateMatch && req.method === "GET")
         return json(await privateNote(user.id, w, privateMatch[1]));

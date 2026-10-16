@@ -9,6 +9,8 @@ import { saveDraftInTransaction } from "./lead-drafts";
 import {
   qualificationSchema,
   qualificationCategory,
+  fitAssessmentSchema,
+  investorAssessmentFields,
 } from "./qualification-model";
 const uuid = z.uuid();
 const contextInput = z.strictObject({ projectId: uuid });
@@ -21,13 +23,19 @@ const syncInput = z.strictObject({
   datasetVersion: z.number().int().positive(),
   entries: z.array(ref).min(1).max(20),
 });
-const enrichInput = z.strictObject({
-  projectId: uuid,
-  datasetVersion: z.number().int().positive(),
-  entryId: uuid,
-  recordVersion: z.number().int().positive(),
-  qualification: qualificationSchema,
-});
+const enrichInput = z
+  .strictObject({
+    projectId: uuid,
+    datasetVersion: z.number().int().positive(),
+    entryId: uuid,
+    recordVersion: z.number().int().positive(),
+    qualification: qualificationSchema.optional(),
+    fitAssessment: fitAssessmentSchema.optional(),
+  })
+  .refine(
+    (a) => !!a.qualification || !!a.fitAssessment,
+    "Provide qualification evidence or a fit assessment.",
+  );
 export const qualificationTools = [
   {
     name: "qualification.context",
@@ -39,14 +47,14 @@ export const qualificationTools = [
   {
     name: "qualification.sync",
     description:
-      "Sync existing qualification labels only, preserving every other CRM field and sharing setting. Requires explicit project qualification permission and current versions; max20 entries.",
+      "Sync existing qualification, fit and verification labels only, preserving every other CRM field and sharing setting. Requires explicit project qualification permission and current versions; max20 entries.",
     inputSchema: z.toJSONSchema(syncInput),
     annotations: { readOnlyHint: false, idempotentHint: true },
   },
   {
     name: "qualification.enrich",
     description:
-      "Save sourced qualification evidence for one mapped person and synchronize only its qualification category. Preserves identity, descriptions, organization links, sources and permissions. Training remains pending or excluded.",
+      "Save sourced qualification evidence for one mapped person and synchronize its qualification category and separate fit/verification labels. An optional sourced fitAssessment expresses promising fit independently of full verification. Preserves identity, descriptions, organization links, sources and permissions. Training remains pending or excluded.",
     inputSchema: z.toJSONSchema(enrichInput),
     annotations: { readOnlyHint: false, idempotentHint: true },
   },
@@ -84,6 +92,8 @@ export async function qualificationAgent(
           id: record.id,
           version: record.version,
           category: record.data.category || "",
+          investorFit: record.data.investorFit,
+          investorVerification: record.data.investorVerification,
         },
       })),
     };
@@ -110,7 +120,17 @@ export async function qualificationAgent(
       );
     return { ...row, expected: ref.recordVersion };
   });
-  const enrichment = "qualification" in a ? a.qualification : null;
+  const enrichment = "entries" in a ? null : a;
+  const researchPatch = enrichment
+    ? {
+        ...(enrichment.qualification
+          ? { qualification: enrichment.qualification }
+          : {}),
+        ...(enrichment.fitAssessment
+          ? { fitAssessment: enrichment.fitAssessment }
+          : {}),
+      }
+    : {};
   if (enrichment && selected[0].entry.kind !== "people")
     throw new HttpError(
       400,
@@ -118,28 +138,34 @@ export async function qualificationAgent(
     );
   const exactRetry =
     !!enrichment &&
-    isDeepStrictEqual(selected[0].entry.research?.qualification, enrichment);
+    Object.entries(researchPatch).every(([key, value]) =>
+      isDeepStrictEqual(selected[0].entry.research?.[key], value),
+    );
   if (a.datasetVersion !== d.version && !exactRetry)
     throw new HttpError(409, "Dataset changed; refresh qualification context.");
   const desired = selected.map((row) => {
     const entry = enrichment
       ? {
           ...row.entry,
-          research: { ...row.entry.research, qualification: enrichment },
+          research: { ...row.entry.research, ...researchPatch },
         }
       : row.entry;
     const category = qualificationCategory(entry, p.project_data.name);
     if (!category)
       throw new HttpError(400, "No recognized project qualification label.");
-    if (
-      row.record.version !== row.expected &&
-      row.record.data.category !== category
-    )
+    const assessmentFields =
+      row.entry.kind === "people" ? investorAssessmentFields(entry) : {};
+    const unchanged =
+      row.record.data.category === category &&
+      Object.entries(assessmentFields).every(
+        ([key, value]) => row.record.data[key] === value,
+      );
+    if (row.record.version !== row.expected && !unchanged)
       throw new HttpError(
         409,
         "CRM record changed; review current label before retrying.",
       );
-    return { ...row, category };
+    return { ...row, category, assessmentFields, unchanged };
   });
   let datasetVersion = d.version;
   if (enrichment && !exactRetry) {
@@ -150,7 +176,7 @@ export async function qualificationAgent(
             category: desired[0].category,
             research: {
               ...e.research,
-              qualification: enrichment,
+              ...researchPatch,
               training:
                 e.research?.training === "excluded" ? "excluded" : "pending",
             },
@@ -167,7 +193,7 @@ export async function qualificationAgent(
   }
   const receipts = [];
   for (const row of desired) {
-    if (row.record.data.category === row.category) {
+    if (row.unchanged) {
       receipts.push({
         entryId: row.entry.id,
         recordId: row.record.id,
@@ -180,7 +206,11 @@ export async function qualificationAgent(
       id: row.record.id,
       kind: row.record.kind,
       version: row.record.version,
-      data: { ...row.record.data, category: row.category },
+      data: {
+        ...row.record.data,
+        category: row.category,
+        ...row.assessmentFields,
+      },
     });
     receipts.push({
       entryId: row.entry.id,

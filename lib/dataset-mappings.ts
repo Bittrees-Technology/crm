@@ -29,7 +29,7 @@ export async function mappedProjectEntries(
   if (!map.size) return [];
   const records = (
     await db.query(
-      `SELECT id,kind,${selectedIds ? "data" : "jsonb_build_object('category',data->>'category') AS data"},version FROM records r WHERE workspace_id=$1 AND id=ANY($2::uuid[]) AND archived_at IS NULL AND kind IN ('people','organizations') AND (data->>'projectId'=$3 OR (kind='organizations' AND EXISTS(SELECT 1 FROM records person WHERE person.workspace_id=r.workspace_id AND person.kind='people' AND person.archived_at IS NULL AND person.data->>'projectId'=$3 AND person.data->>'organizationId'=r.id::text)))`,
+      `SELECT id,kind,${selectedIds ? "data" : "jsonb_build_object('category',data->>'category','investorFit',data->>'investorFit','investorVerification',data->>'investorVerification') AS data"},version FROM records r WHERE workspace_id=$1 AND id=ANY($2::uuid[]) AND archived_at IS NULL AND kind IN ('people','organizations') AND (data->>'projectId'=$3 OR (kind='organizations' AND EXISTS(SELECT 1 FROM records person WHERE person.workspace_id=r.workspace_id AND person.kind='people' AND person.archived_at IS NULL AND person.data->>'projectId'=$3 AND person.data->>'organizationId'=r.id::text)))`,
       [
         p.workspace_id,
         [...map.entries()]

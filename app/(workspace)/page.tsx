@@ -1,4 +1,5 @@
 "use client";
+import { InvestorResearch } from "../components/investor-research";
 import {SharedProfileCard} from "../../shared/sso/SharedProfileCard.jsx";
 import {useSharedSignIn} from "../../shared/sso/useSharedSignIn.jsx";
 import { LoginPanel, EmailSignIn, EthereumSignIn } from "../shared/login/LoginPanel.jsx";
@@ -1021,6 +1022,9 @@ export default function App() {
       r.kind === page &&
       JSON.stringify(r.data).toLowerCase().includes(search.toLowerCase()),
   );
+  if (filter === "promising") visible = visible.filter((r) => r.data.investorFit === "Promising fit");
+  if (filter === "verified") visible = visible.filter((r) => r.data.investorVerification === "Fully verified");
+  if (filter === "research") visible = visible.filter((r) => r.data.investorVerification === "Incomplete");
   if (filter === "mine")
     visible = visible.filter((r) => r.data.ownerId === me?.user.id);
   if (filter === "due")
@@ -2176,6 +2180,11 @@ export default function App() {
                   <option value="all">Active records</option>
                   <option value="archived">Archived</option>
                   <option value="mine">Assigned to me</option>
+                  {page === "people" && <>
+                    <option value="promising">Promising fit</option>
+                    <option value="verified">Fully verified</option>
+                    <option value="research">Verification incomplete</option>
+                  </>}
                   {["tasks", "opportunities"].includes(page) && (
                     <option value="due">Follow-ups due</option>
                   )}
@@ -2434,6 +2443,7 @@ export default function App() {
                               </span>
                               <span>
                                 <strong>{r.data.name}</strong>
+                                {r.kind === "people" && r.data.investorFit && <small>{r.data.investorFit} · {r.data.investorVerification || "Incomplete"}</small>}
                                 {r.data.title && <small>{r.data.title}</small>}
                               </span>
                             </button>
@@ -3105,6 +3115,7 @@ function RecordEditor({
               members={members}
               onOpen={onOpen}
             />
+            {record.kind === "people" && <InvestorResearch workspace={workspace} recordId={record.id} version={record.version} data={record.data} isOwner={isOwner} demo={demo} />}
           </>
         )}
         {editingProfile && (

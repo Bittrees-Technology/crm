@@ -17,7 +17,15 @@ export const viewSchema = z.strictObject({
     "settings",
   ]),
   search: z.string().max(500),
-  filter: z.enum(["all", "mine", "due", "archived"]),
+  filter: z.enum([
+    "all",
+    "mine",
+    "due",
+    "archived",
+    "promising",
+    "verified",
+    "research",
+  ]),
   board: z.boolean(),
 });
 export async function views(user: string, workspace: string, raw?: unknown) {
