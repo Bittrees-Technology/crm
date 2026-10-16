@@ -1,4 +1,5 @@
 "use client";
+import { SupplierPreparation } from "./supplier-preparation";
 import { useEffect, useState } from "react";
 import { api } from "../leads/lead-api";
 export default function ProjectConnections() {
@@ -237,6 +238,7 @@ function ProjectPermission({ dataset, project, permission, busy, save }: any) {
       {permission && (
         <p>Expires {new Date(permission.expires_at).toLocaleString()}</p>
       )}
+      <SupplierPreparation project={project} />
       <button
         onClick={() => {
           if (

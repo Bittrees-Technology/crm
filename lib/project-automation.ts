@@ -1,3 +1,4 @@
+import { validateSupplierTask, withoutSupplierMetadata } from "./supplier-research";
 import { mappedProjectEntries } from "./dataset-mappings";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -444,7 +445,7 @@ export async function projectAgent(
       kind: "tasks",
       version: a.version,
       data: recordSchema.parse({
-        ...task.data,
+        ...withoutSupplierMetadata(task.data),
         name: a.name,
         description: a.description,
         category: a.mode,
@@ -486,6 +487,7 @@ export async function projectAgent(
         )
       ).rows[0];
       if (!task) throw new HttpError(409, "Task moved.");
+      await validateSupplierTask(db, task);
       return {
         runId: a.runId,
         task: prior.result ? null : redactRecord(task, [projectId, task.id]),
@@ -499,6 +501,7 @@ export async function projectAgent(
       )
     ).rows[0];
     if (!task) return { task: null };
+    await validateSupplierTask(db, task);
     await db.query(
       "INSERT INTO project_ai_runs(id,draft_id,task_id,task_version,expires_at) VALUES($1,$2,$3,$4,now()+interval '15 minutes')",
       [a.runId, d.id, task.id, task.version],
@@ -529,6 +532,7 @@ export async function projectAgent(
         [run.task_id, p.workspace_id],
       )
     ).rows[0];
+    if (currentTask) await validateSupplierTask(db, currentTask);
     if (
       !currentTask ||
       currentTask.data.projectId !== projectId ||
@@ -574,7 +578,7 @@ export async function projectAgent(
       id: task.id,
       kind: "tasks",
       version: task.version,
-      data: { ...task.data, status: "Done" },
+      data: { ...withoutSupplierMetadata(task.data), status: "Done" },
     });
     const result = { taskId: task.id, version: saved.version, noteId: note.id };
     await db.query(

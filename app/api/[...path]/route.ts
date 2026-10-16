@@ -1,3 +1,4 @@
+import { supplierInventory, prepareSupplier } from "@/lib/supplier-preparation";
 import { investorProfile } from "@/lib/investor-profile";
 import { projectOptions, configureProject } from "@/lib/project-automation";
 import * as datasets from "@/lib/datasets";
@@ -588,6 +589,8 @@ async function handle(req: NextRequest) {
     if (match) {
       const [, w, resource] = match;
       z.uuid().parse(w);
+      if (resource === "supplier-research" && req.method === "GET") return json(await supplierInventory(user.id, w));
+      if (resource === "supplier-research" && req.method === "POST") return json(await prepareSupplier(user.id, w, body));
       if (resource === "revision" && req.method === "GET")
         return json(await workspaceRevision(user.id, w));
       if (!resource && req.method === "GET")
