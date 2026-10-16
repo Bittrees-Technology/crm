@@ -35,6 +35,10 @@ export const recordSchema = z
       .union([z.url({ protocol: /^https?$/ }), z.literal("")])
       .default(""),
     category: short,
+    investorFit: z
+      .enum(["Promising fit", "Needs research", "Low fit"])
+      .optional(),
+    investorVerification: z.enum(["Incomplete", "Fully verified"]).optional(),
     source: short,
     description: text,
     nextAction: short,

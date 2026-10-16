@@ -4253,6 +4253,7 @@ test("CRM polling has a separate bounded budget from research/task mutations", a
 });
 
 test("qualification permission syncs labels only, rejects conflicts and preserves private data", async () => {
+  process.env.CRM_LEADS_ENABLED = "true";
   const ds = await import("../lib/datasets");
   const drafts = await import("../lib/lead-drafts");
   const { configureProject } = await import("../lib/project-automation");
@@ -4401,6 +4402,36 @@ test("qualification permission syncs labels only, rejects conflicts and preserve
     draft.entries.find((e: any) => e.id === person).research.training,
     "excluded",
   );
+  const fit = {
+    status: "Promising fit", reviewedAt: new Date().toISOString(),
+    rationale: "Flexible family capital with relevant private investment experience; the deal-specific requirements remain unproven.",
+    sources: [{ url: "https://bittrees.org/", retrievedAt: new Date().toISOString(), quote: "Synthetic sourced private investment responsibility" }],
+  };
+  ctx = await call("qualification.context", { projectId: project.id });
+  const fitArgs = { projectId: project.id, datasetVersion: ctx.datasetVersion, entryId:person,
+    recordVersion:ctx.entries.find((x:any)=>x.entry.id===person).record.version, fitAssessment:fit };
+  await call("qualification.enrich", fitArgs);
+  const fitStored=(await pool().query("SELECT * FROM records WHERE id=$1",[p.record.id])).rows[0];
+  assert.equal(fitStored.data.investorFit,"Promising fit");
+  assert.equal(fitStored.data.investorVerification,"Incomplete");
+  assert.equal(fitStored.data.description,stored.data.description);
+  assert.deepEqual(fitStored.visibility_ids,stored.visibility_ids);
+  const { investorProfile } = await import("../lib/investor-profile");
+  const profile=await investorProfile(owner,workspace,p.record.id);
+  assert.equal(profile.assessments[0].fit.status,"Promising fit");
+  assert.equal(profile.assessments[0].missingEvidence.length,6);
+  assert.equal(JSON.stringify(profile).includes("Never expose this"),false);
+  await assert.rejects(investorProfile(other,workspace,p.record.id));
+  // Another workspace owner does not inherit the dataset author's private research.
+  await pool().query("INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'owner')",[workspace,other]);
+  assert.equal((await investorProfile(other,workspace,p.record.id)).assessments.length,0);
+  await pool().query("DELETE FROM members WHERE workspace_id=$1 AND user_id=$2",[workspace,other]);
+  ctx=await call("qualification.context",{projectId:project.id});
+  await call("qualification.enrich",{projectId:project.id,datasetVersion:ctx.datasetVersion,entryId:person,
+    recordVersion:fitStored.version,qualification:{...q,reviewedAt:new Date().toISOString()}});
+  const afterResearch=await drafts.getDraft(owner,id);
+  assert.deepEqual(afterResearch.entries.find((e:any)=>e.id===person).research.fitAssessment,fit);
+  assert.equal((await pool().query("SELECT data->>'investorVerification' AS state FROM records WHERE id=$1",[p.record.id])).rows[0].state,"Incomplete");
   await configureProject(owner, { ...grant, qualification: false });
   await assert.rejects(
     call("qualification.context", { projectId: project.id }),
