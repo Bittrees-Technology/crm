@@ -3591,7 +3591,8 @@ test("Dataset MCP scopes reads and writes, exports training, and shares immutabl
     { jsonrpc: "2.0", id: 1, method: "tools/list" },
     null,
   );
-  assert.equal(rpc.result.tools.length, 14);
+  assert.equal(rpc.result.tools.length, 15);
+  assert(rpc.result.tools.some((t: any) => t.name === "tasks.inventory" && t.annotations.readOnlyHint));
   assert(rpc.result.tools.some((t: any) => t.name === "qualification.context"));
   await assert.rejects(() =>
     mcp.datasetMcp(
@@ -4218,7 +4219,7 @@ test("CRM polling has a separate bounded budget from research/task mutations", a
   });
   // Fifteen-second task refreshes alone exhausted the previous shared budget.
   for (let i = 0; i < 41; i++)
-    await datasetOperationLimit(token, call("tasks.list"));
+    await datasetOperationLimit(token, call(i % 2 ? "tasks.inventory" : "tasks.list"));
   await datasetOperationLimit(token, call("dataset.append"));
   await datasetOperationLimit(token, call("tasks.create"));
   await datasetOperationLimit(token, call("tasks.update"));
@@ -4591,7 +4592,19 @@ test("supplier preparation requires reviewed sources, preserves parents, and can
  const datasetId=randomUUID();await saveDraft(owner,{id:datasetId,name:'Supplier test',version:0,entries:[]});const connection=await datasetConnect(owner,{id:datasetId});
  const call=(name:string,args:any)=>datasetAgent(connection.token!,name,args) as Promise<any>;
  await assert.rejects(()=>call('tasks.claim',{projectId:project.id,runId:randomUUID()}));
+ await assert.rejects(()=>call('tasks.inventory',{projectId:project.id}));
  await configureProject(owner,{datasetId,projectId:project.id,tasks:true,autoLeads:false});
+ await assert.rejects(()=>call('tasks.inventory',{projectId:randomUUID()}),/capability/);
+ const ordinary=await saveRecord(owner,workspace,{kind:'tasks',data:{name:'Ordinary in project',projectId:project.id,ownerId:owner,category:'Vendor',status:'Open'}});
+ await pool().query("INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'viewer') ON CONFLICT DO NOTHING",[workspace,other]);
+ const foreign=await saveRecord(owner,workspace,{kind:'tasks',data:{name:'Other owner',projectId:project.id,ownerId:other,category:'Vendor',status:'Open'}});
+ const inventory:any[]=[];let afterId:string|undefined;
+ do {const page=await call('tasks.inventory',{projectId:project.id,limit:1,...(afterId?{afterId}:{})});inventory.push(...page.tasks);afterId=page.nextAfterId||undefined;}while(afterId);
+ assert.deepEqual(new Set(inventory.map(t=>t.id)),new Set([child.id,ordinary.id]));
+ assert.equal(inventory.find(t=>t.id===child.id).eligibleForWorker,true);
+ assert.deepEqual(inventory.find(t=>t.id===ordinary.id).exclusionReasons,['ordinary_task_requires_separate_research_task']);
+ assert.equal(inventory.some(t=>[parent.id,indirect.id,foreign.id].includes(t.id)),false);
+ assert.equal((await call('tasks.list',{projectId:project.id})).tasks.length,1);
  const runId=randomUUID();const claim=await call('tasks.claim',{projectId:project.id,runId});
  assert.equal(claim.task.id,child.id);assert.deepEqual(claim.task.data.supplierResearch,{version:1,urls:selection.urls});
  const finish=await call('tasks.finish',{projectId:project.id,runId,result:'Public evidence reviewed. Stock and shipping remain unconfirmed.'});
