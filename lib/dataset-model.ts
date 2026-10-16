@@ -1,6 +1,8 @@
+import { qualificationSchema } from "./qualification-model";
 import { z } from "zod";
 import { publicUrl } from "./lead-model";
 export const researchSchema = z.strictObject({
+  qualification: qualificationSchema.optional(),
   sources: z
     .array(
       z.strictObject({
