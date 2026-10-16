@@ -4101,8 +4101,12 @@ test("explicit project permissions gate automatic leads and versioned local AI t
   };
   const updated = await call("tasks.update", change);
   assert.equal(updated.version, task.version + 1);
-  assert.equal(updated.data.ownerId, owner);
-  assert.equal(updated.data.projectId, project.id);
+  assert.deepEqual(Object.keys(updated).sort(), ["id", "version"]);
+  const stored = (
+    await pool().query("SELECT data FROM records WHERE id=$1", [task.id])
+  ).rows[0].data;
+  assert.equal(stored.ownerId, owner);
+  assert.equal(stored.projectId, project.id);
   assert.equal((await call("tasks.update", change)).version, updated.version);
   await assert.rejects(() =>
     call("tasks.update", {
