@@ -1,0 +1,64 @@
+{
+  "schema": "bittrees.app-tools.v1",
+  "version": 1,
+  "projectId": "crm",
+  "canonicalDiscovery": "https://mcp.bittrees.org/mcp",
+  "connections": [
+    {
+      "projectId": "crm",
+      "transport": "mcp",
+      "endpoint": "https://crm.bittrees.org/api/integrations/datasets/mcp",
+      "verification": "source-inspected",
+      "source": "https://github.com/Bittrees-Technology/crm/blob/9e24caf5e8948af58ce6588646f52fac5761abfd/lib/project-automation.ts",
+      "operations": {
+        "read": [
+          "projects.list",
+          "project.read",
+          "tasks.inventory",
+          "tasks.list",
+          "dataset.read",
+          "qualification.context",
+          "dataset.schema"
+        ],
+        "create": [
+          "tasks.create",
+          "dataset.append"
+        ],
+        "update": [
+          "tasks.update",
+          "dataset.save"
+        ],
+        "complete": [
+          "tasks.claim",
+          "tasks.finish"
+        ],
+        "research": [
+          "qualification.context",
+          "qualification.enrich"
+        ],
+        "sync": [
+          "qualification.sync"
+        ]
+      },
+      "boundary": "Dataset and current project grants required. Inventory reads owner-assigned ordinary and AI tasks directly linked to a connected project, with pagination and eligibility reasons. Claim/finish cover AI draft/review tasks only. Unassigned supplier confirmations need separate preparation. Completion saves a note and finishes only the claimed task."
+    },
+    {
+      "projectId": "crm",
+      "transport": "managed-mcp",
+      "endpoint": "https://mcp.bittrees.org/mcp",
+      "verification": "source-inspected",
+      "source": "https://github.com/Bittrees-Technology/mcp/blob/a19ce2a/src/service/source-connections.mjs",
+      "operations": {
+        "research": [
+          "source_crm_brief",
+          "source_crm_preview",
+          "source_crm_status"
+        ],
+        "complete": [
+          "source_crm_execute"
+        ]
+      },
+      "boundary": "Requires an existing owner-bound managed source connection, selected project and current source authority. Preview/status do not approve or publish. Never pass source tokens through tool arguments. Execution additionally requires the existing managed sources:execute grant and current source policy; exceptions remain held."
+    }
+  ]
+}
