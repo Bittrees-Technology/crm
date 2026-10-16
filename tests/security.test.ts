@@ -4205,3 +4205,48 @@ test("explicit project permissions gate automatic leads and versioned local AI t
   );
   await ds.datasetConnect(owner, { id, revoke: true });
 });
+
+test("CRM polling has a separate bounded budget from research/task mutations", async () => {
+  const { datasetOperationLimit } = await import("../lib/dataset-rate-limit");
+  const token = randomUUID().replaceAll("-", "").repeat(2);
+  const call = (name: string) => ({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: { name },
+  });
+  // Fifteen-second task refreshes alone exhausted the previous shared budget.
+  for (let i = 0; i < 41; i++)
+    await datasetOperationLimit(token, call("tasks.list"));
+  await datasetOperationLimit(token, call("dataset.append"));
+  await datasetOperationLimit(token, call("tasks.create"));
+  await datasetOperationLimit(token, call("tasks.update"));
+  const key = (kind: string) => hash(`dataset:${kind}:${hash(token)}`);
+  assert.equal(
+    (
+      await pool().query("SELECT hits FROM rate_limits WHERE key=$1", [
+        key("write"),
+      ])
+    ).rows[0].hits,
+    3,
+  );
+  await pool().query("UPDATE rate_limits SET hits=160 WHERE key=$1", [
+    key("read"),
+  ]);
+  await assert.rejects(
+    datasetOperationLimit(token, call("dataset.read")),
+    /Too many attempts/,
+  );
+  await datasetOperationLimit(token, call("tasks.update"));
+  await pool().query("UPDATE rate_limits SET hits=40 WHERE key=$1", [
+    key("write"),
+  ]);
+  await assert.rejects(
+    datasetOperationLimit(token, call("dataset.save")),
+    /Too many attempts/,
+  );
+  await assert.rejects(
+    datasetOperationLimit(token, call("unknown.read")),
+    /Too many attempts/,
+  );
+});

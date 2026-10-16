@@ -252,3 +252,5 @@ Workspace loading uses revision-checked record pages. Routine saves update the r
 ## Lead research and workflow improvements
 
 See [the lead-generation and workflows guide](docs/lead-generation-and-workflows.md) for guided remote MCP setup, private research lists with later owner review, the optional local adapter, project-scoped researcher assignments, person/organization links, categories and owner-only publication approval, archive/restore, synced views, CSV mapping and timezone-aware follow-ups. Apply the additive `scripts/migrate-workflows.ts` migration before deploying this release. Lead research requires its own `CRM_LEADS_ENABLED=true` flag.
+
+Dataset MCP keeps separate per-connection ten-minute budgets: 160 read/discovery calls and 40 mutation/unknown calls, with a 240-request inbound ceiling before body parsing. Task polling cannot spend the save budget. All source authentication, project grants, versions and exact-retry checks still apply; these budgets grant no additional access.
