@@ -7,6 +7,7 @@ const reads = new Set([
   "projects.list",
   "project.read",
   "tasks.list",
+  "tasks.inventory",
 ]);
 /** Polling must not spend the mutation budget used to save research and tasks. */
 export async function datasetOperationLimit(bearer: string, input: unknown) {
