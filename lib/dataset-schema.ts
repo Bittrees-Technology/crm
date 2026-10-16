@@ -1,4 +1,6 @@
-export const datasetSchema = `
+import { projectAutomationSchema } from "./project-automation-schema";
+export const datasetSchema =
+  `
 CREATE TABLE IF NOT EXISTS dataset_connections(
  draft_id uuid PRIMARY KEY REFERENCES lead_drafts(id) ON DELETE CASCADE,
  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -12,4 +14,4 @@ CREATE TABLE IF NOT EXISTS dataset_submissions(
  operation_id uuid NOT NULL, payload_hash text NOT NULL,
  snapshot_id uuid NOT NULL, review_id uuid NOT NULL,
  PRIMARY KEY(draft_id,operation_id));
-`;
+` + projectAutomationSchema;

@@ -1,13 +1,15 @@
+import { projectTools } from "./project-automation";
 import { z } from "zod";
 import { draftEntrySchema } from "./lead-drafts";
 import { datasetAgent } from "./datasets";
 import { HttpError } from "./model";
 const versions = ["2025-11-25", "2025-06-18", "2025-03-26"];
 export const datasetTools = [
+  ...projectTools,
   {
     name: "dataset.append",
     description:
-      "Add at most 20 private research entries without replacing existing entries. Requires the current version. Exact entry-ID retries are harmless. Conflicts require review. Never publishes, shares or approves training.",
+      "Add at most 20 private research entries without replacing existing entries. Requires the current version. Exact entry-ID retries are harmless. Conflicts require review. Automatically creates CRM people/organizations only when the owner enabled a project destination; otherwise stays private. Never approves training or sends messages.",
     inputSchema: z.toJSONSchema(
       z.strictObject({
         version: z.number().int().positive(),

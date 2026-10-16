@@ -1,3 +1,4 @@
+import { autoAddLeads, projectAgent } from "./project-automation";
 import { randomUUID, createHash } from "node:crypto";
 import { z } from "zod";
 import type { PoolClient } from "pg";
@@ -348,6 +349,12 @@ export async function datasetShare(user: string, raw: any) {
 export async function datasetAgent(bearer: string, name: string, raw: unknown) {
   return transaction(async (db) => {
     const d = await credential(db, bearer);
+    if (
+      name.startsWith("projects.") ||
+      name.startsWith("project.") ||
+      name.startsWith("tasks.")
+    )
+      return projectAgent(db, d, name, raw);
     if (name === "dataset.read") {
       const a = z
         .strictObject({
@@ -416,7 +423,8 @@ export async function datasetAgent(bearer: string, name: string, raw: unknown) {
         name: d.name,
         entries: [...d.entries, ...added],
       });
-      return { ...result, added: added.length };
+      const crm = await autoAddLeads(db, d, added);
+      return { ...result, added: added.length, crm };
     }
     if (name === "dataset.save") {
       const a = z
@@ -449,7 +457,7 @@ export async function datasetAgent(bearer: string, name: string, raw: unknown) {
         maxEntries: 600,
         maxAppendEntries: 20,
         instructions:
-          "Read before saving. Preserve stable entry IDs; organizationId references another entry. Save with the current version. Human approval is required to share or publish. CRM records are read-only source snapshots; do not silently overwrite conflicts. Training eligibility requires human review.",
+          "Read before saving. Preserve stable entry IDs; organizationId references another entry. Save with the current version. Automatic CRM additions require explicit project permission; otherwise human approval is required to share or publish. CRM records are read-only source snapshots; do not silently overwrite conflicts. Training eligibility requires human review.",
       };
     }
     throw new HttpError(400, "Unknown dataset tool.");

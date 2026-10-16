@@ -3591,7 +3591,7 @@ test("Dataset MCP scopes reads and writes, exports training, and shares immutabl
     { jsonrpc: "2.0", id: 1, method: "tools/list" },
     null,
   );
-  assert.equal(rpc.result.tools.length, 4);
+  assert.equal(rpc.result.tools.length, 9);
   await assert.rejects(() =>
     mcp.datasetMcp(
       "a".repeat(64),
@@ -3989,4 +3989,182 @@ test("Standing research accepts more than five daily batches while retaining rev
     leads.agentBrief(connection.token),
     /unavailable|revoked/,
   );
+});
+
+test("explicit project permissions gate automatic leads and versioned local AI tasks", async () => {
+  const ds = await import("../lib/datasets"),
+    drafts = await import("../lib/lead-drafts"),
+    automation = await import("../lib/project-automation");
+  const project = await saveRecord(owner, workspace, {
+    kind: "projects",
+    data: { name: "Automation isolated project" },
+  });
+  const unrelated = await saveRecord(owner, workspace, {
+    kind: "projects",
+    data: { name: "Unconnected project" },
+  });
+  const id = randomUUID();
+  await drafts.saveDraft(owner, {
+    id,
+    name: "Automation test",
+    version: 0,
+    entries: [],
+  });
+  const c = await ds.datasetConnect(owner, { id });
+  const call = (name: string, args: any) =>
+    ds.datasetAgent(c.token!, name, args) as Promise<any>;
+  assert.deepEqual((await call("projects.list", {})).projects, []);
+  await assert.rejects(() => call("project.read", { projectId: project.id }));
+  await automation.configureProject(owner, {
+    datasetId: id,
+    projectId: project.id,
+    autoLeads: true,
+    tasks: true,
+  });
+  await assert.rejects(() =>
+    automation.configureProject(other, {
+      datasetId: id,
+      projectId: project.id,
+      autoLeads: true,
+      tasks: true,
+    }),
+  );
+  const org = randomUUID(),
+    person = randomUUID();
+  const entries = [
+    { id: org, kind: "organizations", name: "Unique automation organization" },
+    {
+      id: person,
+      kind: "people",
+      name: "Unique automation person",
+      organizationId: org,
+      research: { training: "pending" },
+    },
+  ];
+  const added = await call("dataset.append", { version: 1, entries });
+  assert.equal(added.crm.added, 2);
+  const linked = (
+    await pool().query(
+      "SELECT r.* FROM records r JOIN dataset_record_links l ON l.record_id=r.id WHERE l.draft_id=$1",
+      [id],
+    )
+  ).rows;
+  assert.equal(linked.length, 2);
+  assert.ok(linked.every((r) => r.data.projectId === project.id));
+  assert.equal(
+    linked.find((r) => r.kind === "people").data.organizationId,
+    linked.find((r) => r.kind === "organizations").id,
+  );
+  await call("dataset.append", { version: 1, entries });
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT count(*)::int AS n FROM dataset_record_links WHERE draft_id=$1",
+        [id],
+      )
+    ).rows[0].n,
+    2,
+  );
+  await assert.rejects(() => call("project.read", { projectId: unrelated.id }));
+  const operationId = randomUUID();
+  const task = await call("tasks.create", {
+    projectId: project.id,
+    operationId,
+    name: "Draft investor qualification questions",
+    description: "Draft questions; do not send them.",
+    mode: "AI draft",
+  });
+  assert.equal(
+    (
+      await call("tasks.create", {
+        projectId: project.id,
+        operationId,
+        name: "Draft investor qualification questions",
+        description: "Draft questions; do not send them.",
+        mode: "AI draft",
+      })
+    ).id,
+    task.id,
+  );
+  const runId = randomUUID();
+  const claimed = await call("tasks.claim", { projectId: project.id, runId });
+  assert.equal(claimed.task.id, task.id);
+  assert.equal(
+    (await call("tasks.claim", { projectId: project.id, runId: randomUUID() }))
+      .task,
+    null,
+  );
+  const result = await call("tasks.finish", {
+    projectId: project.id,
+    runId,
+    result: "Draft: Which instrument types and geographies do you allocate to?",
+  });
+  assert.equal(result.taskId, task.id);
+  assert.deepEqual(
+    await call("tasks.finish", {
+      projectId: project.id,
+      runId,
+      result:
+        "Draft: Which instrument types and geographies do you allocate to?",
+    }),
+    result,
+  );
+  await assert.rejects(() =>
+    call("tasks.finish", {
+      projectId: unrelated.id,
+      runId,
+      result: "Different project",
+    }),
+  );
+  const t2 = await call("tasks.create", {
+    projectId: project.id,
+    operationId: randomUUID(),
+    name: "Review research",
+    description: "Summarize uncertainty.",
+    mode: "AI review",
+  });
+  const r2 = randomUUID();
+  await call("tasks.claim", { projectId: project.id, runId: r2 });
+  await saveRecord(owner, workspace, {
+    id: t2.id,
+    kind: "tasks",
+    version: t2.version,
+    data: { ...t2.data, description: "Changed by human" },
+  });
+  await assert.rejects(() =>
+    call("tasks.finish", {
+      projectId: project.id,
+      runId: r2,
+      result: "Stale result",
+    }),
+  );
+  await automation.configureProject(owner, {
+    datasetId: id,
+    projectId: project.id,
+    autoLeads: false,
+    tasks: false,
+  });
+  await assert.rejects(() =>
+    call("tasks.create", {
+      projectId: project.id,
+      operationId: randomUUID(),
+      name: "Denied",
+      description: "",
+      mode: "AI draft",
+    }),
+  );
+  assert.deepEqual((await call("projects.list", {})).projects, []);
+  await automation.configureProject(owner, {
+    datasetId: id,
+    projectId: project.id,
+    autoLeads: true,
+    tasks: true,
+  });
+  const replacement = await ds.datasetConnect(owner, { id });
+  assert.deepEqual(
+    ((await ds.datasetAgent(replacement.token!, "projects.list", {})) as any)
+      .projects,
+    [],
+  );
+  await ds.datasetConnect(owner, { id, revoke: true });
 });
