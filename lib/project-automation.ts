@@ -1,3 +1,4 @@
+import { mappedProjectEntries } from "./dataset-mappings";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { PoolClient } from "pg";
@@ -273,6 +274,22 @@ export async function autoAddLeads(db: PoolClient, d: any, entries: any[]) {
           409,
           "Existing dataset mapping targets an archived record or another project. Review it before automatic additions.",
         );
+      continue;
+    }
+    // Older owner-approved imports have durable submission receipts but no
+    // automatic-import link. Reuse that exact mapping, never a name match.
+    const approved = (await mappedProjectEntries(db, d, p, [e.id]))[0];
+    if (approved) {
+      await checkRecordAccess(
+        db,
+        d.user_id,
+        p.workspace_id,
+        approved.record.id,
+      );
+      await db.query(
+        "INSERT INTO dataset_record_links(draft_id,entry_id,record_id,workspace_id) VALUES($1,$2,$3,$4)",
+        [d.id, e.id, approved.record.id, p.workspace_id],
+      );
       continue;
     }
     const duplicate = (
