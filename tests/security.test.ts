@@ -4548,3 +4548,15 @@ test("automatic additions reuse approved import receipts without merging name ma
     /Possible CRM duplicate/,
   );
 });
+
+test('Calendar feed retains current CRM membership and per-record visibility',async()=>{
+ const {calendarItems}=await import('../lib/calendar');const o=randomUUID(),reader=randomUUID(),outsider=randomUUID(),w=randomUUID(),id=randomUUID();
+ await pool().query("INSERT INTO users(id,name) VALUES($1,'Calendar owner'),($2,'Calendar reader'),($3,'Calendar outsider')",[o,reader,outsider]);
+ await pool().query("INSERT INTO identities(kind,value,user_id) VALUES('email','calendar-owner@example.test',$1),('email','calendar-reader@example.test',$2),('email','calendar-outsider@example.test',$3)",[o,reader,outsider]);
+ await pool().query("INSERT INTO workspaces(id,name) VALUES($1,'Calendar fixture')",[w]);await pool().query("INSERT INTO members(workspace_id,user_id,role) VALUES($1,$2,'owner'),($1,$3,'viewer')",[w,o,reader]);
+ await pool().query("INSERT INTO records(id,workspace_id,kind,data,visibility_ids) VALUES($1,$2,'tasks',$3,$4)",[id,w,JSON.stringify({name:'Restricted deadline',dueDate:'2026-10-16',status:'Open'}),[o]]);
+ const range={from:'2026-10-01T00:00:00Z',to:'2026-11-01T00:00:00Z',timeZone:'Europe/Lisbon'};
+ assert.equal((await calendarItems('calendar-owner@example.test',range)).items.length,1);assert.equal((await calendarItems('calendar-reader@example.test',range)).items.length,0);assert.equal((await calendarItems('calendar-outsider@example.test',range)).items.length,0);
+ await pool().query('UPDATE records SET visibility_ids=NULL WHERE id=$1',[id]);const shared=await calendarItems('calendar-reader@example.test',range);assert.equal(shared.items[0].title,'Restricted deadline');assert.equal(shared.items[0].start,'2026-10-15T23:00:00.000Z');assert.equal(shared.items[0].description,'');
+ await pool().query('DELETE FROM members WHERE workspace_id=$1 AND user_id=$2',[w,reader]);assert.equal((await calendarItems('calendar-reader@example.test',range)).items.length,0);
+});
