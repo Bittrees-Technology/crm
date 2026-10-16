@@ -37,10 +37,10 @@ export function InvestorResearch({
   const [assessments, setAssessments] = useState<Assessment[]>([]),
     [error, setError] = useState("");
   useEffect(() => {
-    if (!isOwner || demo) return;
-    const controller = new AbortController();
     setAssessments([]);
     setError("");
+    if (!isOwner || demo) return;
+    const controller = new AbortController();
     fetch(
       `/api/workspaces/${workspace}/records/${recordId}/investor-research`,
       {
@@ -89,7 +89,7 @@ export function InvestorResearch({
         legal eligibility.
       </p>
       {error && <p role="alert">{error}</p>}
-      {assessments.map((a) => (
+      {isOwner && !demo && assessments.map((a) => (
         <div key={a.dataset_id}>
           <p className="muted small">
             Your private research · {a.dataset_name}
