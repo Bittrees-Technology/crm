@@ -199,27 +199,28 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
             </button>{" "}
             <button
               className="button"
-              disabled={draft.entries.length >= 20 || !!entry}
+              disabled={draft.entries.length >= 600 || !!entry}
               onClick={() => add("people")}
             >
               Add person to list
             </button>{" "}
             <button
               className="button"
-              disabled={draft.entries.length >= 20 || !!entry}
+              disabled={draft.entries.length >= 600 || !!entry}
               onClick={() => add("organizations")}
             >
               Add organization to list
             </button>
             <button
               className="button"
-              disabled={draft.entries.length >= 20 || !!entry}
+              disabled={draft.entries.length >= 600 || !!entry}
               onClick={() => add("projects")}
             >
               Add project to list
             </button>
             <p>
-              {draft.entries.length}/20 entries. Save each entry before sharing.
+              {draft.entries.length}/600 entries. Save each entry before
+              sharing.
             </p>
           </fieldset>
           {entry && (
@@ -426,8 +427,21 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
             </article>
           ))}
           {!draft.shared_search_id && (
-            <fieldset disabled={busy || !!entry || !draft.entries.length}>
+            <fieldset
+              disabled={
+                busy ||
+                !!entry ||
+                !draft.entries.length ||
+                draft.entries.length > 20
+              }
+            >
               <legend>Share when ready</legend>
+              {draft.entries.length > 20 && (
+                <p>
+                  Use “Submit selected people and organizations” above to review
+                  up to 20 entries at a time.
+                </p>
+              )}
               <p>
                 Choose where this list belongs and who should approve it.
                 Sharing freezes this list; the owner receives a review copy and

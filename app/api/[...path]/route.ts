@@ -205,7 +205,7 @@ async function handle(req: NextRequest) {
       if (!bearer) throw new HttpError(401, "Dataset connection required.");
       await rateLimit("dataset:" + hash(bearer), 40);
       const raw = await req.text();
-      if (raw.length > 120000) throw new HttpError(413, "Dataset too large.");
+      if (Buffer.byteLength(raw) > 2_000_000) throw new HttpError(413, "Dataset too large.");
       const result = await datasetMcp(
         bearer,
         JSON.parse(raw || "{}"),

@@ -3591,7 +3591,7 @@ test("Dataset MCP scopes reads and writes, exports training, and shares immutabl
     { jsonrpc: "2.0", id: 1, method: "tools/list" },
     null,
   );
-  assert.equal(rpc.result.tools.length, 3);
+  assert.equal(rpc.result.tools.length, 4);
   await assert.rejects(() =>
     mcp.datasetMcp(
       "a".repeat(64),
@@ -3853,5 +3853,83 @@ test("project dataset import requires exact owner preview; MCP sync preserves ap
   await assert.rejects(
     () => ds.datasetAgent(connection.token!, "dataset.read", {}),
     /revoked/,
+  );
+});
+
+test("dataset append supports large private research, exact retries and owner-only publication", async () => {
+  const drafts = await import("../lib/lead-drafts");
+  const ds = await import("../lib/datasets");
+  const id = randomUUID();
+  await drafts.saveDraft(owner, {
+    id,
+    name: "Research append test",
+    version: 0,
+    entries: [],
+  });
+  const c = await ds.datasetConnect(owner, { id });
+  let version = 1;
+  const ids: string[] = [];
+  for (let batch = 0; batch < 11; batch++) {
+    const entries = Array.from({ length: 20 }, (_, i) => ({
+      id: randomUUID(),
+      kind: "people",
+      name: `US research person ${batch * 20 + i}`,
+      research: { training: "pending" },
+    }));
+    ids.push(...entries.map((e) => e.id));
+    const result: any = await ds.datasetAgent(c.token!, "dataset.append", {
+      version,
+      entries,
+    });
+    assert.equal(result.added, 20);
+    version = result.version;
+    const retry: any = await ds.datasetAgent(c.token!, "dataset.append", {
+      version: version - 1,
+      entries,
+    });
+    assert.equal(retry.added, 0);
+  }
+  const current: any = await ds.datasetAgent(c.token!, "dataset.read", {});
+  assert.equal(current.entries.length, 220);
+  await assert.rejects(() =>
+    ds.datasetAgent(c.token!, "dataset.append", {
+      version: 1,
+      entries: [{ id: randomUUID(), kind: "people", name: "Late writer" }],
+    }),
+  );
+  await assert.rejects(() =>
+    ds.datasetAgent(c.token!, "dataset.append", {
+      version,
+      entries: [
+        { id: randomUUID(), kind: "people", name: "US research person 0" },
+      ],
+    }),
+  );
+  await assert.rejects(() =>
+    ds.datasetAgent(c.token!, "dataset.append", {
+      version,
+      entries: [{ id: ids[0], kind: "people", name: "Overwritten" }],
+    }),
+  );
+  await assert.rejects(() =>
+    ds.datasetAgent(c.token!, "dataset.append", {
+      version,
+      entries: [
+        {
+          id: randomUUID(),
+          kind: "people",
+          name: "Training bypass",
+          research: { training: "eligible" },
+        },
+      ],
+    }),
+  );
+  await assert.rejects(() => ds.datasetAgent(c.token!, "dataset.share", {}));
+  await ds.datasetConnect(owner, { id, revoke: true });
+  await assert.rejects(() =>
+    ds.datasetAgent(c.token!, "dataset.append", {
+      version,
+      entries: [{ id: randomUUID(), kind: "people", name: "Revoked" }],
+    }),
   );
 });
