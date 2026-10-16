@@ -423,6 +423,16 @@ export async function importRecords(userId: string, w: string, input: unknown) {
     return { imported, skipped };
   });
 }
+// A tiny authenticated change check avoids repeatedly transferring workspace records.
+export async function workspaceRevision(userId: string, w: string) {
+  return transaction(async (db) => {
+    await membership(w, userId, false, false, db);
+    const result = await db.query(
+      "SELECT read_revision::text AS revision FROM workspaces WHERE id=$1", [w],
+    );
+    return { revision: result.rows[0].revision };
+  });
+}
 export async function snapshot(
   userId: string,
   w: string,
@@ -497,6 +507,7 @@ export async function snapshot(
       return {
         records: pageRows.map((r) => redactRecord(r, ids)),
         nextCursor,
+        revision,
         role,
         limited: false,
         members: [],
@@ -515,6 +526,7 @@ export async function snapshot(
         : { rows: [] };
     return {
       role,
+      revision,
       limited: members.rows.find((m) => m.id === userId)?.scope_ids !== null,
       records: pageRows.map((r) => redactRecord(r, ids)),
       ...(paging ? { nextCursor } : {}),

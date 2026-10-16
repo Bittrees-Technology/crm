@@ -37,6 +37,7 @@ import {
   lockActiveAccount,
   saveRecord,
   snapshot,
+  workspaceRevision,
   updateMember,
   listInvites,
   revokeInvite,
@@ -587,6 +588,8 @@ async function handle(req: NextRequest) {
     if (match) {
       const [, w, resource] = match;
       z.uuid().parse(w);
+      if (resource === "revision" && req.method === "GET")
+        return json(await workspaceRevision(user.id, w));
       if (!resource && req.method === "GET")
         return json(
           await snapshot(
