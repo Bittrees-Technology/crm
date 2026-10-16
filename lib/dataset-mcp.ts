@@ -5,6 +5,22 @@ import { HttpError } from "./model";
 const versions = ["2025-11-25", "2025-06-18", "2025-03-26"];
 export const datasetTools = [
   {
+    name: "dataset.append",
+    description:
+      "Add at most 20 private research entries without replacing existing entries. Requires the current version. Exact entry-ID retries are harmless. Conflicts require review. Never publishes, shares or approves training.",
+    inputSchema: z.toJSONSchema(
+      z.strictObject({
+        version: z.number().int().positive(),
+        entries: z.array(draftEntrySchema).min(1).max(20),
+      }),
+    ),
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "dataset.schema",
     description:
       "Read the dataset entry schema and workflow. No CRM publication authority.",
@@ -34,7 +50,7 @@ export const datasetTools = [
       z.strictObject({
         version: z.number().int().positive(),
         name: z.string().min(1).max(200),
-        entries: z.array(draftEntrySchema).max(20),
+        entries: z.array(draftEntrySchema).max(600),
       }),
     ),
     annotations: {

@@ -73,7 +73,7 @@ export async function saveDraftInTransaction(
       id: z.uuid(),
       name: z.string().trim().min(1).max(200),
       version: z.number().int().min(0),
-      entries: z.array(draftEntrySchema).max(20),
+      entries: z.array(draftEntrySchema).max(600),
     })
     .parse(raw);
   if (new Set(input.entries.map((e) => e.id)).size !== input.entries.length)

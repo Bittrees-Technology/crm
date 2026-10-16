@@ -5,7 +5,7 @@
 1. Sign in to CRM with email or an Ethereum wallet. Use your own workspace.
 2. Open **Lead research → New private list**. Name it **BBRF-PT investor pilot**.
 3. Open **Dataset, agent connection & sharing**. Create a dataset connection and copy its MCP configuration into your local agent's MCP server settings. This is an HTTP MCP server; clients must support URL + Authorization header connections.
-4. Ask the agent to call `dataset.schema`, then `dataset.read`, and research 5–10 people linked to their organizations. Save through `dataset.save`. Use additional lists for additional batches; a list holds 20 combined people/organizations.
+4. Ask the agent to call `dataset.schema`, then `dataset.read`, and research 5–10 people linked to their organizations. Save through `dataset.save`. Private lists hold 600 combined entries; submit up to 20 at a time for publication review.
 5. Review evidence and mark training eligibility. Download research JSON for a lossless saved dataset and approved CRM mappings, or eligible JSONL for training. The email field is excluded from training JSONL; review free text for personal information and source restrictions yourself.
 
 Do not use the assignment-based lead MCP credential for this workflow. Dataset connections have their own endpoint and permissions.
@@ -57,3 +57,7 @@ Datasets now accept `projects` alongside people and organizations. Project entri
 Project import is a separate owner-only CRM review. Select project entries and an owned workspace, preview all fields, and approve the current digest. New projects are restricted to workspace owners and receive dataset record links. Same-name projects, including archived records, block creation; import existing records into the dataset to propose updates instead. A concurrent dataset or destination change invalidates approval. Repeated approval cannot create a second copy.
 
 Linked projects participate in existing readback and reviewed-update flows. Private notes and unrelated fields are excluded or preserved. Project entries cannot enter investor lead publication; submit only people and organizations through that review path. No background sync, automatic sharing or agent approval is added.
+
+## Bounded investor research
+
+`dataset.append {version, entries}` adds at most 20 entries per call, up to 600 private entries total. It never overwrites an existing entry: identical IDs/content are safe retries, differing content and duplicate names are conflicts. Training approval remains human-only. Full `dataset.save` remains an explicit replacement, now bounded to 600 entries and a 2 MB request. Publication submissions remain limited to 20, and MCP exposes no submission or approval method. No schema migration is needed.
