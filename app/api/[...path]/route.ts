@@ -1,6 +1,7 @@
 import { projectOptions, configureProject } from "@/lib/project-automation";
 import * as datasets from "@/lib/datasets";
 import { datasetMcp } from "@/lib/dataset-mcp";
+import { datasetOperationLimit } from "@/lib/dataset-rate-limit";
 import { cookie as sharedCookie } from "../../../shared/sso/client.mjs";
 import * as leadDrafts from "@/lib/lead-drafts";
 import { leadMcp } from "@/lib/lead-mcp-http";
@@ -204,13 +205,16 @@ async function handle(req: NextRequest) {
         .get("authorization")
         ?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
       if (!bearer) throw new HttpError(401, "Dataset connection required.");
-      await rateLimit("dataset:" + hash(bearer), 40);
+      // Bound all inbound traffic before reading/parsing the body.
+      await rateLimit("dataset:transport:" + hash(bearer), 240);
       const raw = await req.text();
       if (Buffer.byteLength(raw) > 2_000_000)
         throw new HttpError(413, "Dataset too large.");
+      const input = JSON.parse(raw || "{}");
+      await datasetOperationLimit(bearer, input);
       const result = await datasetMcp(
         bearer,
-        JSON.parse(raw || "{}"),
+        input,
         req.headers.get("mcp-protocol-version"),
       );
       return result === null
