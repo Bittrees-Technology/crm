@@ -4408,3 +4408,112 @@ test("qualification permission syncs labels only, rejects conflicts and preserve
   );
   await ds.datasetConnect(owner, { id, revoke: true });
 });
+
+test("automatic additions reuse approved import receipts without merging name matches", async () => {
+  process.env.CRM_LEADS_ENABLED = "true";
+  const ds = await import("../lib/datasets");
+  const drafts = await import("../lib/lead-drafts");
+  const leads = await import("../lib/leads");
+  const { configureProject } = await import("../lib/project-automation");
+  const project = await saveRecord(owner, workspace, {
+    kind: "projects",
+    data: { name: "Approved receipt continuation" },
+  });
+  const datasetId = randomUUID(),
+    orgId = randomUUID(),
+    personId = randomUUID();
+  const orgName = "Receipt organization " + orgId;
+  await drafts.saveDraft(owner, {
+    id: datasetId,
+    name: "Approved org research",
+    version: 0,
+    entries: [{ id: orgId, kind: "organizations", name: orgName }],
+  });
+  const connection = await ds.datasetConnect(owner, { id: datasetId });
+  const call = (name: string, args: any) =>
+    ds.datasetAgent(connection.token!, name, args) as Promise<any>;
+  let read = await call("dataset.read", {});
+  const share = await ds.datasetShare(owner, {
+    id: datasetId,
+    version: read.version,
+    entryIds: [orgId],
+    workspaceId: workspace,
+    projectId: project.id,
+    ownerId: owner,
+    operationId: randomUUID(),
+  });
+  const review = await leads.review(owner, share.reviewId);
+  await leads.approve(owner, {
+    reviewId: share.reviewId,
+    digest: review.digest,
+    accept: [0],
+  });
+  const before = (
+    await pool().query(
+      "SELECT * FROM records WHERE workspace_id=$1 AND kind='organizations' AND data->>'name'=$2",
+      [workspace, orgName],
+    )
+  ).rows[0];
+  assert(before);
+  await configureProject(owner, {
+    datasetId,
+    projectId: project.id,
+    autoLeads: true,
+    tasks: false,
+  });
+  read = await call("dataset.read", {});
+  const append = {
+    version: read.version,
+    entries: [
+      {
+        id: personId,
+        kind: "people",
+        name: "Receipt person " + personId,
+        organizationId: orgId,
+      },
+    ],
+  };
+  await call("dataset.append", append);
+  await call("dataset.append", append);
+  const links = (
+    await pool().query("SELECT * FROM dataset_record_links WHERE draft_id=$1", [
+      datasetId,
+    ])
+  ).rows;
+  assert.equal(
+    links.find((x: any) => x.entry_id === orgId).record_id,
+    before.id,
+  );
+  const after = (
+    await pool().query("SELECT * FROM records WHERE id=$1", [before.id])
+  ).rows[0];
+  assert.deepEqual(after.data, before.data);
+  assert.equal(after.version, before.version);
+  const person = (
+    await pool().query("SELECT data FROM records WHERE id=$1", [
+      links.find((x: any) => x.entry_id === personId).record_id,
+    ])
+  ).rows[0];
+  assert.equal(person.data.organizationId, before.id);
+  const otherDataset = randomUUID();
+  await drafts.saveDraft(owner, {
+    id: otherDataset,
+    name: "No approval receipt",
+    version: 0,
+    entries: [],
+  });
+  const otherConnection = await ds.datasetConnect(owner, { id: otherDataset });
+  await configureProject(owner, {
+    datasetId: otherDataset,
+    projectId: project.id,
+    autoLeads: true,
+    tasks: false,
+  });
+  await assert.rejects(
+    ds.datasetAgent(otherConnection.token!, "dataset.append", {
+      version: 1,
+      entries: [{ id: randomUUID(), kind: "organizations", name: orgName }],
+    }),
+    /Possible CRM duplicate/,
+  );
+});
