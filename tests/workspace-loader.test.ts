@@ -15,16 +15,17 @@ test("pages commit a complete view and restart once after concurrent changes", a
   const result = await loadWorkspacePages(async () => {
     calls++;
     if (calls === 1)
-      return { records: [record("old")], nextCursor: "old-page" };
+      return { records: [record("old")], revision: "1", nextCursor: "old-page" };
     if (calls === 2) throw new ApiError("changed", 409);
-    if (calls === 3) return { records: [record("a")], nextCursor: "new-page" };
-    return { records: [record("b")], nextCursor: null };
+    if (calls === 3) return { records: [record("a")], revision: "2", nextCursor: "new-page" };
+    return { records: [record("b")], revision: "2", nextCursor: null };
   }, "workspace");
   assert.deepEqual(
     result.records.map((r) => r.id),
     ["a", "b"],
   );
   assert.equal(calls, 4);
+  assert.equal(result.revision, "2");
 });
 test("failed/looping pages cannot publish partial records or retry forever", async () => {
   let calls = 0;

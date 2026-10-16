@@ -109,6 +109,7 @@ type Me = {
   identities: { kind: string; value: string }[];
 };
 type Snapshot = {
+  revision?: string;
   limited?: boolean;
   role: string;
   records: CrmRecord[];
@@ -955,6 +956,50 @@ export default function App() {
       loadingRequest.current?.abort();
     };
   }, [workspace, demo]);
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
+  const deferExternalRefresh = !!(busy || editing || importing || linking || creatingWorkspace || reauth);
+  useEffect(() => {
+    if (!workspace || demo || deferExternalRefresh) return;
+    let cancelled = false;
+    let checking = false;
+    let lastCheck = 0;
+    const controller = new AbortController();
+    const check = async () => {
+      if (cancelled || checking || document.visibilityState !== "visible" ||
+          Date.now() - lastCheck < 60_000 || loadingRequest.current) return;
+      checking = true;
+      lastCheck = Date.now();
+      try {
+        const current = await api(`workspaces/${workspace}/revision`, "GET", undefined, controller.signal);
+        if (cancelled || current.revision === snapshotRef.current.revision) return;
+        // Use a separate controller so background checks never cancel a foreground save/load.
+        const fresh = await loadWorkspacePages<Snapshot>(
+          (path) => api(path, "GET", undefined, controller.signal), workspace,
+        );
+        if (!cancelled && workspaceRef.current === workspace) setSnapshot(fresh);
+      } catch (e) {
+        if (!cancelled && e instanceof ApiError && [401, 403, 404].includes(e.status)) {
+          setSnapshot({ role: "viewer", records: [], members: [], audit: [] });
+          setError(e.message);
+        }
+        // Transient failures retry next minute without interrupting work.
+      } finally {
+        checking = false;
+      }
+    };
+    void check();
+    const timer = window.setInterval(check, 60_000);
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearInterval(timer);
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [workspace, demo, deferExternalRefresh]);
   useEffect(() => {
     if (notice) {
       const t = setTimeout(() => setNotice(""), 5000);
