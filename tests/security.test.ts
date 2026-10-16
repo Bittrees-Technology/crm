@@ -3933,3 +3933,60 @@ test("dataset append supports large private research, exact retries and owner-on
     }),
   );
 });
+
+test("Standing research accepts more than five daily batches while retaining review and revocation checks", async () => {
+  const leads = await import("../lib/leads");
+  process.env.CRM_LEADS_ENABLED = "true";
+  const connection = await leads.createSearch(owner, {
+    workspaceId: workspace,
+    brief: {
+      target: "Synthetic supplier research",
+      sourceDomains: ["bittrees.org"],
+      maxResults: 2,
+      freshnessDays: 30,
+    },
+  });
+  await pool().query("UPDATE lead_searches SET standing=true WHERE id=$1", [
+    connection.id,
+  ]);
+  const input = () => ({
+    operationId: randomUUID(),
+    candidates: [
+      {
+        name: "Synthetic supplier " + randomUUID(),
+        website: "https://bittrees.org",
+        summary: "Synthetic public evidence",
+        relevance: "Infrastructure",
+        uncertainties: "Unverified",
+        fit: "medium",
+        evidence: "primary",
+        sources: [
+          {
+            url: "https://bittrees.org/",
+            retrievedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    ],
+  });
+  const first = input();
+  const preview = await leads.prepare(connection.token, first);
+  for (let i = 1; i < 10; i++)
+    assert.equal(
+      (await leads.prepare(connection.token, input())).state,
+      "awaiting_review",
+    );
+  assert.equal(
+    (await leads.prepare(connection.token, first)).reviewId,
+    preview.reviewId,
+  );
+  await assert.rejects(
+    leads.prepare(connection.token, input()),
+    /review limit reached/,
+  );
+  await leads.revokeSearch(owner, connection.id);
+  await assert.rejects(
+    leads.agentBrief(connection.token),
+    /unavailable|revoked/,
+  );
+});

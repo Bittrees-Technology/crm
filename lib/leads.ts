@@ -342,14 +342,14 @@ export async function prepare(bearer: string, raw: unknown) {
     if (s.standing) {
       const budget = (
         await db.query(
-          "SELECT count(*) FILTER (WHERE decision IS NULL)::int AS pending, count(*) FILTER (WHERE created_at>now()-interval '1 day')::int AS daily FROM lead_previews WHERE search_id=$1",
+          "SELECT count(*)::int AS pending FROM lead_previews WHERE search_id=$1 AND decision IS NULL",
           [s.id],
         )
       ).rows[0];
-      if (budget.pending >= 10 || budget.daily >= 5)
+      if (budget.pending >= 10)
         throw new HttpError(
           429,
-          "Standing assignment review or daily limit reached.",
+          "Standing assignment review limit reached.",
         );
     }
     try {
