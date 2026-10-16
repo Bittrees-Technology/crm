@@ -51,7 +51,7 @@ export const qualificationTools = [
   },
 ];
 // Resolve accepted submissions as well as automatic imports, using stable IDs only.
-async function mapped(db: PoolClient, d: any, p: any) {
+async function mapped(db: PoolClient, d: any, p: any, selectedIds?: string[]) {
   const links = (
     await db.query(
       "SELECT entry_id,record_id,workspace_id FROM dataset_record_links WHERE draft_id=$1 AND workspace_id=$2",
@@ -60,23 +60,29 @@ async function mapped(db: PoolClient, d: any, p: any) {
   ).rows;
   const receipts = (
     await db.query(
-      `SELECT s.workspace_id,p.decision,p.record_ids,snapshot.entries FROM dataset_submissions x JOIN lead_drafts snapshot ON snapshot.id=x.snapshot_id JOIN lead_previews p ON p.id=x.review_id JOIN lead_searches s ON s.id=p.search_id WHERE x.draft_id=$1 AND s.workspace_id=$2 ORDER BY p.created_at DESC LIMIT 50`,
+      `SELECT s.workspace_id,p.decision,p.record_ids,(SELECT jsonb_agg(e->'id') FROM jsonb_array_elements(snapshot.entries) e) AS entry_ids FROM dataset_submissions x JOIN lead_drafts snapshot ON snapshot.id=x.snapshot_id JOIN lead_previews p ON p.id=x.review_id JOIN lead_searches s ON s.id=p.search_id WHERE x.draft_id=$1 AND s.workspace_id=$2 ORDER BY p.created_at DESC LIMIT 50`,
       [d.id, p.workspace_id],
     )
   ).rows;
   const map = new Map<string, string>();
   for (const r of receipts)
     for (const [i, index] of (r.decision?.accept || []).entries()) {
-      const e = r.entries[index],
+      const e = r.entry_ids[index],
         id = r.record_ids?.[i];
-      if (e && id && !map.has(e.id)) map.set(e.id, id);
+      if (e && id && !map.has(e)) map.set(e, id);
     }
   for (const l of links) map.set(l.entry_id, l.record_id);
   if (!map.size) return [];
   const records = (
     await db.query(
-      `SELECT id,kind,data,version FROM records r WHERE workspace_id=$1 AND id=ANY($2::uuid[]) AND archived_at IS NULL AND kind IN ('people','organizations') AND (data->>'projectId'=$3 OR (kind='organizations' AND EXISTS(SELECT 1 FROM records person WHERE person.workspace_id=r.workspace_id AND person.kind='people' AND person.archived_at IS NULL AND person.data->>'projectId'=$3 AND person.data->>'organizationId'=r.id::text)))`,
-      [p.workspace_id, [...map.values()], p.project_id],
+      `SELECT id,kind,${selectedIds ? "data" : "jsonb_build_object('category',data->>'category') AS data"},version FROM records r WHERE workspace_id=$1 AND id=ANY($2::uuid[]) AND archived_at IS NULL AND kind IN ('people','organizations') AND (data->>'projectId'=$3 OR (kind='organizations' AND EXISTS(SELECT 1 FROM records person WHERE person.workspace_id=r.workspace_id AND person.kind='people' AND person.archived_at IS NULL AND person.data->>'projectId'=$3 AND person.data->>'organizationId'=r.id::text)))`,
+      [
+        p.workspace_id,
+        [...map.entries()]
+          .filter(([id]) => !selectedIds || selectedIds.includes(id))
+          .map(([, recordId]) => recordId),
+        p.project_id,
+      ],
     )
   ).rows;
   const byId = new Map(records.map((r) => [r.id, r]));
@@ -104,7 +110,18 @@ export async function qualificationAgent(
 ) {
   const projectId = uuid.parse((raw as any)?.projectId);
   const p = await permission(db, d, projectId, "qualification");
-  const rows = await mapped(db, d, p);
+  const rows = await mapped(
+    db,
+    d,
+    p,
+    name === "qualification.context"
+      ? undefined
+      : name === "qualification.sync"
+        ? syncInput.parse(raw).entries.map((r) => r.entryId)
+        : name === "qualification.enrich"
+          ? [enrichInput.parse(raw).entryId]
+          : [],
+  );
   if (name === "qualification.context") {
     contextInput.parse(raw);
     return {
