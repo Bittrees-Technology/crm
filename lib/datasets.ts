@@ -359,12 +359,71 @@ export async function datasetAgent(bearer: string, name: string, raw: unknown) {
         .parse(raw);
       return read(db, d, a.revision);
     }
+    if (name === "dataset.append") {
+      const a = z
+        .strictObject({
+          version: z.number().int().positive(),
+          entries: z.array(draftEntrySchema).min(1).max(20),
+        })
+        .parse(raw);
+      if (new Set(a.entries.map((e) => e.id)).size !== a.entries.length)
+        throw new HttpError(400, "Distinct entry IDs required.");
+      const existing = new Map(
+        d.entries.map((e: any) => [e.id, draftEntrySchema.parse(e)]),
+      );
+      const added = a.entries.filter((e) => !existing.has(e.id));
+      for (const e of a.entries) {
+        if (
+          existing.has(e.id) &&
+          JSON.stringify(existing.get(e.id)) !== JSON.stringify(e)
+        )
+          throw new HttpError(
+            409,
+            "Entry already exists with different content; review conflict.",
+          );
+        if (e.research?.training === "eligible" && !existing.has(e.id))
+          throw new HttpError(
+            400,
+            "Training eligibility requires human review.",
+          );
+      }
+      // Exact retries are harmless, including after other additions. Never replace existing research.
+      if (!added.length) return { id: d.id, version: d.version, added: 0 };
+      if (a.version !== d.version)
+        throw new HttpError(
+          409,
+          "Dataset changed; read the current version and reconcile.",
+        );
+      const names = new Set(
+        d.entries.map(
+          (e: any) =>
+            e.kind + ":" + e.name.normalize("NFKC").trim().toLowerCase(),
+        ),
+      );
+      for (const e of added) {
+        const key =
+          e.kind + ":" + e.name.normalize("NFKC").trim().toLowerCase();
+        if (names.has(key))
+          throw new HttpError(
+            409,
+            "Possible duplicate name; review before adding.",
+          );
+        names.add(key);
+      }
+      const result = await saveDraftInTransaction(db, d.user_id, {
+        id: d.id,
+        version: d.version,
+        name: d.name,
+        entries: [...d.entries, ...added],
+      });
+      return { ...result, added: added.length };
+    }
     if (name === "dataset.save") {
       const a = z
         .strictObject({
           version: z.number().int().positive(),
           name: z.string().trim().min(1).max(200),
-          entries: z.array(draftEntrySchema).max(20),
+          entries: z.array(draftEntrySchema).max(600),
         })
         .parse(raw);
       for (const e of a.entries) {
@@ -387,7 +446,8 @@ export async function datasetAgent(bearer: string, name: string, raw: unknown) {
       return {
         schemaVersion: datasetVersion,
         entry: z.toJSONSchema(draftEntrySchema),
-        maxEntries: 20,
+        maxEntries: 600,
+        maxAppendEntries: 20,
         instructions:
           "Read before saving. Preserve stable entry IDs; organizationId references another entry. Save with the current version. Human approval is required to share or publish. CRM records are read-only source snapshots; do not silently overwrite conflicts. Training eligibility requires human review.",
       };

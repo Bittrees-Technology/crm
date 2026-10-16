@@ -48,8 +48,8 @@ export default function DatasetPanel({ draft, targets, reload }: Props) {
       <summary>Dataset, agent connection & sharing</summary>
       <p>
         Keep working in this private dataset. Connect one local agent, or export
-        the data for your own tools. Each batch holds up to 20 people and
-        organizations, or projects.
+        the data for your own tools. Private datasets hold up to 600 entries.
+        Submit up to 20 people and organizations at a time for approval.
       </p>
       {error && (
         <p className="error" role="alert">
