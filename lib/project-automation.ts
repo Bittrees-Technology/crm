@@ -383,18 +383,16 @@ export async function projectAgent(
       )
     ).rows;
     return {
-      tasks: rows
-        .slice(0, 500)
-        .map((r) => ({
-          id: r.id,
-          version: r.version,
-          updatedAt: r.updated_at,
-          name: r.data.name,
-          description: r.data.description,
-          mode: r.data.category,
-          status: r.data.status,
-          dueDate: r.data.dueDate,
-        })),
+      tasks: rows.slice(0, 500).map((r) => ({
+        id: r.id,
+        version: r.version,
+        updatedAt: r.updated_at,
+        name: r.data.name,
+        description: r.data.description,
+        mode: r.data.category,
+        status: r.data.status,
+        dueDate: r.data.dueDate,
+      })),
       truncated: rows.length > 500,
       checkedAt: new Date().toISOString(),
     };
@@ -419,7 +417,7 @@ export async function projectAgent(
         403,
         "Only your connected project's AI tasks can be edited.",
       );
-    return saveRecordInTransaction(db, d.user_id, p.workspace_id, {
+    const saved = await saveRecordInTransaction(db, d.user_id, p.workspace_id, {
       operationId: a.operationId,
       id: a.taskId,
       kind: "tasks",
@@ -433,6 +431,7 @@ export async function projectAgent(
         dueDate: a.dueDate,
       }),
     });
+    return { id: saved.id, version: saved.version };
   }
   if (name === "tasks.create") {
     const a = taskInput.parse(raw);
