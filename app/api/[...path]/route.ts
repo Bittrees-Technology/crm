@@ -1,3 +1,4 @@
+import { projectOptions, configureProject } from "@/lib/project-automation";
 import * as datasets from "@/lib/datasets";
 import { datasetMcp } from "@/lib/dataset-mcp";
 import { cookie as sharedCookie } from "../../../shared/sso/client.mjs";
@@ -205,7 +206,8 @@ async function handle(req: NextRequest) {
       if (!bearer) throw new HttpError(401, "Dataset connection required.");
       await rateLimit("dataset:" + hash(bearer), 40);
       const raw = await req.text();
-      if (Buffer.byteLength(raw) > 2_000_000) throw new HttpError(413, "Dataset too large.");
+      if (Buffer.byteLength(raw) > 2_000_000)
+        throw new HttpError(413, "Dataset too large.");
       const result = await datasetMcp(
         bearer,
         JSON.parse(raw || "{}"),
@@ -377,6 +379,15 @@ async function handle(req: NextRequest) {
           req.nextUrl.searchParams.get("workspace") || "",
         ),
       );
+    if (path === "datasets/projects/permissions" && req.method === "GET")
+      return json(
+        await projectOptions(
+          user.id,
+          new URL(req.url).searchParams.get("id") || "",
+        ),
+      );
+    if (path === "datasets/projects/permissions" && req.method === "POST")
+      return json(await configureProject(user.id, body));
     if (path === "datasets/connect" && req.method === "POST")
       return json(await datasets.datasetConnect(user.id, body));
     if (path === "datasets/import" && req.method === "POST")

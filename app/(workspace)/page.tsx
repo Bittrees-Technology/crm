@@ -1256,8 +1256,8 @@ useSharedSignIn(me?.user?.id);
         </nav>
         <div className="sidebar-bottom">
           {me.features?.leads && (
-            <a className="nav-item" href="/connect/ai/leads">
-              Lead research
+            <a className="nav-item" href="/connect/ai/projects">
+              Local AI
             </a>
           )}
           <button
