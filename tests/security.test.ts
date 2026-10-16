@@ -3591,7 +3591,8 @@ test("Dataset MCP scopes reads and writes, exports training, and shares immutabl
     { jsonrpc: "2.0", id: 1, method: "tools/list" },
     null,
   );
-  assert.equal(rpc.result.tools.length, 11);
+  assert.equal(rpc.result.tools.length, 14);
+  assert(rpc.result.tools.some((t: any) => t.name === "qualification.context"));
   await assert.rejects(() =>
     mcp.datasetMcp(
       "a".repeat(64),
@@ -4249,4 +4250,161 @@ test("CRM polling has a separate bounded budget from research/task mutations", a
     datasetOperationLimit(token, call("unknown.read")),
     /Too many attempts/,
   );
+});
+
+test("qualification permission syncs labels only, rejects conflicts and preserves private data", async () => {
+  const ds = await import("../lib/datasets");
+  const drafts = await import("../lib/lead-drafts");
+  const { configureProject } = await import("../lib/project-automation");
+  const project = await saveRecord(owner, workspace, {
+    kind: "projects",
+    data: { name: "Qualification fixture" },
+  });
+  const id = randomUUID(),
+    org = randomUUID(),
+    person = randomUUID();
+  await drafts.saveDraft(owner, {
+    id,
+    name: "Qualification dataset",
+    version: 0,
+    entries: [],
+  });
+  const c = await ds.datasetConnect(owner, { id });
+  const call = (name: string, args: any) =>
+    ds.datasetAgent(c.token!, name, args) as Promise<any>;
+  const grant = {
+    datasetId: id,
+    projectId: project.id,
+    autoLeads: true,
+    tasks: false,
+  };
+  await configureProject(owner, grant);
+  await call("dataset.append", {
+    version: 1,
+    entries: [
+      {
+        id: org,
+        kind: "organizations",
+        name: "Qualification unique org",
+        category: "Qualification fixture | Needs research",
+      },
+      {
+        id: person,
+        kind: "people",
+        name: "Qualification unique person",
+        organizationId: org,
+        category: "Qualification fixture | Priority research",
+        description: "Private short summary",
+        research: { training: "excluded" },
+      },
+    ],
+  });
+  await assert.rejects(
+    call("qualification.context", { projectId: project.id }),
+    /capability/,
+  );
+  await configureProject(owner, { ...grant, qualification: true });
+  let ctx = await call("qualification.context", { projectId: project.id });
+  assert.equal(ctx.entries.length, 2);
+  const p = ctx.entries.find((x: any) => x.entry.id === person);
+  let stored = (
+    await pool().query("SELECT * FROM records WHERE id=$1", [p.record.id])
+  ).rows[0];
+  await saveRecord(owner, workspace, {
+    id: stored.id,
+    kind: "people",
+    version: stored.version,
+    data: {
+      ...stored.data,
+      category: "Original",
+      description: "Long shared provenance. ".repeat(40),
+    },
+    visibilityIds: [owner],
+    privateNote: { content: "Never expose this", version: 0 },
+  });
+  ctx = await call("qualification.context", { projectId: project.id });
+  assert(!JSON.stringify(ctx).includes("Never expose"));
+  const args = {
+    projectId: project.id,
+    datasetVersion: ctx.datasetVersion,
+    entries: [{ entryId: person, recordVersion: p.record.version }],
+  };
+  await assert.rejects(call("qualification.sync", args), /CRM record changed/);
+  args.entries[0]!.recordVersion = ctx.entries.find(
+    (x: any) => x.entry.id === person,
+  ).record.version;
+  stored = (
+    await pool().query("SELECT * FROM records WHERE id=$1", [p.record.id])
+  ).rows[0];
+  const synced = await call("qualification.sync", args);
+  const after = (
+    await pool().query("SELECT * FROM records WHERE id=$1", [p.record.id])
+  ).rows[0];
+  assert.deepEqual(after.data, {
+    ...stored.data,
+    category: "Qualification fixture | Priority research",
+  });
+  assert.deepEqual(after.visibility_ids, stored.visibility_ids);
+  assert.equal(
+    (await call("qualification.sync", args)).receipts[0].unchanged,
+    true,
+  );
+  await assert.rejects(
+    call("qualification.sync", { ...args, datasetVersion: 1 }),
+    /Dataset changed/,
+  );
+  await assert.rejects(
+    call("qualification.sync", {
+      ...args,
+      entries: [{ entryId: randomUUID(), recordVersion: 1 }],
+    }),
+    /not mapped/,
+  );
+  const { qualificationGates } = await import("../lib/qualification-model");
+  const q = {
+    status: "Needs research",
+    reviewedAt: new Date().toISOString(),
+    summary: "Mandate remains unverified",
+    gates: Object.fromEntries(
+      qualificationGates.map((k) => [
+        k,
+        { status: "unknown", evidence: "", url: "" },
+      ]),
+    ),
+    sources: [
+      {
+        url: "https://bittrees.org/",
+        retrievedAt: new Date().toISOString(),
+        quote: "Synthetic public source evidence",
+      },
+    ],
+  };
+  const enrich = {
+    projectId: project.id,
+    datasetVersion: ctx.datasetVersion,
+    entryId: person,
+    recordVersion: synced.receipts[0].version,
+    qualification: q,
+  };
+  await assert.rejects(
+    call("qualification.enrich", {
+      ...enrich,
+      qualification: { ...q, status: "Qualified" },
+    }),
+  );
+  const saved = await call("qualification.enrich", enrich);
+  assert.equal(saved.datasetVersion, ctx.datasetVersion + 1);
+  const retry = await call("qualification.enrich", enrich);
+  assert.equal(retry.datasetVersion, saved.datasetVersion);
+  const draft = await drafts.getDraft(owner, id);
+  assert.equal(
+    draft.entries.find((e: any) => e.id === person).research.training,
+    "excluded",
+  );
+  await configureProject(owner, { ...grant, qualification: false });
+  await assert.rejects(
+    call("qualification.context", { projectId: project.id }),
+    /capability/,
+  );
+  await ds.datasetConnect(owner, { id, revoke: true });
 });

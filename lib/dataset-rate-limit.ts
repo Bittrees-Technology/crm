@@ -3,6 +3,7 @@ import { hash, rateLimit } from "./auth";
 const reads = new Set([
   "dataset.schema",
   "dataset.read",
+  "qualification.context",
   "projects.list",
   "project.read",
   "tasks.list",

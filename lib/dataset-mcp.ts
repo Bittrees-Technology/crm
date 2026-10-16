@@ -1,3 +1,4 @@
+import { qualificationTools } from "./qualification";
 import { projectTools } from "./project-automation";
 import { z } from "zod";
 import { draftEntrySchema } from "./lead-drafts";
@@ -6,6 +7,7 @@ import { HttpError } from "./model";
 const versions = ["2025-11-25", "2025-06-18", "2025-03-26"];
 export const datasetTools = [
   ...projectTools,
+  ...qualificationTools,
   {
     name: "dataset.append",
     description:

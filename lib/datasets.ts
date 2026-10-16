@@ -1,3 +1,4 @@
+import { qualificationAgent } from "./qualification";
 import { autoAddLeads, projectAgent } from "./project-automation";
 import { randomUUID, createHash } from "node:crypto";
 import { z } from "zod";
@@ -349,6 +350,8 @@ export async function datasetShare(user: string, raw: any) {
 export async function datasetAgent(bearer: string, name: string, raw: unknown) {
   return transaction(async (db) => {
     const d = await credential(db, bearer);
+    if (name.startsWith("qualification."))
+      return qualificationAgent(db, d, name, raw);
     if (
       name.startsWith("projects.") ||
       name.startsWith("project.") ||

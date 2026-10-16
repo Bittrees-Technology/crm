@@ -111,7 +111,7 @@ export async function projectOptions(user: string, id: string) {
     ).rows;
     const permissions = (
       await db.query(
-        "SELECT p.project_id,p.auto_leads,p.tasks,p.expires_at FROM dataset_project_permissions p JOIN dataset_connections c ON c.draft_id=p.draft_id AND c.token_hash=p.token_hash WHERE p.draft_id=$1 AND p.user_id=$2 AND p.expires_at>now() AND c.expires_at>now()",
+        "SELECT p.project_id,p.auto_leads,p.tasks,p.qualification,p.expires_at FROM dataset_project_permissions p JOIN dataset_connections c ON c.draft_id=p.draft_id AND c.token_hash=p.token_hash WHERE p.draft_id=$1 AND p.user_id=$2 AND p.expires_at>now() AND c.expires_at>now()",
         [id, user],
       )
     ).rows;
@@ -125,12 +125,13 @@ export async function configureProject(user: string, raw: unknown) {
       projectId: uuid,
       autoLeads: z.boolean(),
       tasks: z.boolean(),
+      qualification: z.boolean().default(false),
       expiresInDays: z.number().int().min(1).max(30).default(30),
     })
     .parse(raw);
   return transaction(async (db) => {
     await ownerDataset(db, user, a.datasetId);
-    if (!a.autoLeads && !a.tasks) {
+    if (!a.autoLeads && !a.tasks && !a.qualification) {
       await db.query(
         "DELETE FROM dataset_project_permissions WHERE draft_id=$1 AND project_id=$2",
         [a.datasetId, a.projectId],
@@ -171,7 +172,7 @@ export async function configureProject(user: string, raw: unknown) {
         "A dataset can automatically add leads to one project. Disable its previous lead destination first; task access may cover multiple projects.",
       );
     await db.query(
-      "INSERT INTO dataset_project_permissions(draft_id,project_id,workspace_id,user_id,token_hash,auto_leads,tasks,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,LEAST($8,now()+($9*interval '1 day'))) ON CONFLICT(draft_id,project_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,auto_leads=EXCLUDED.auto_leads,tasks=EXCLUDED.tasks,expires_at=EXCLUDED.expires_at",
+      "INSERT INTO dataset_project_permissions(draft_id,project_id,workspace_id,user_id,token_hash,auto_leads,tasks,qualification,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$10,LEAST($8,now()+($9*interval '1 day'))) ON CONFLICT(draft_id,project_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,auto_leads=EXCLUDED.auto_leads,tasks=EXCLUDED.tasks,qualification=EXCLUDED.qualification,expires_at=EXCLUDED.expires_at",
       [
         a.datasetId,
         a.projectId,
@@ -182,6 +183,7 @@ export async function configureProject(user: string, raw: unknown) {
         a.tasks,
         c.expires_at,
         a.expiresInDays,
+        a.qualification,
       ],
     );
     await db.query(
@@ -194,6 +196,7 @@ export async function configureProject(user: string, raw: unknown) {
           datasetId: a.datasetId,
           autoLeads: a.autoLeads,
           tasks: a.tasks,
+          qualification: a.qualification,
         }),
       ],
     );
@@ -209,11 +212,11 @@ async function grants(db: PoolClient, d: any) {
   ).rows;
   return rows;
 }
-async function permission(
+export async function permission(
   db: PoolClient,
   d: any,
   projectId: string,
-  kind: "tasks" | "auto_leads",
+  kind: "tasks" | "auto_leads" | "qualification",
 ) {
   const p = (await grants(db, d)).find(
     (p) => p.project_id === projectId && p[kind],
@@ -345,6 +348,7 @@ export async function projectAgent(
         workspaceId: p.workspace_id,
         autoLeads: p.auto_leads,
         tasks: p.tasks,
+        qualification: p.qualification,
         expiresAt: p.expires_at,
       })),
     };

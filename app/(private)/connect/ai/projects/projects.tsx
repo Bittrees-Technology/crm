@@ -195,7 +195,10 @@ export default function ProjectConnections() {
 }
 function ProjectPermission({ dataset, project, permission, busy, save }: any) {
   const [leads, setLeads] = useState(permission?.auto_leads || false),
-    [tasks, setTasks] = useState(permission?.tasks || false);
+    [tasks, setTasks] = useState(permission?.tasks || false),
+    [qualification, setQualification] = useState(
+      permission?.qualification || false,
+    );
   return (
     <fieldset disabled={busy}>
       <legend>
@@ -217,15 +220,29 @@ function ProjectPermission({ dataset, project, permission, busy, save }: any) {
         />
         Allow local AI task creation, project reading and draft/review work
       </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={qualification}
+          onChange={(e) => setQualification(e.target.checked)}
+        />
+        Allow sourced qualification research and label-only updates for linked
+        people and organizations
+      </label>
+      <p>
+        Qualification updates preserve descriptions, contact details,
+        organization links and sharing. They do not establish investor
+        eligibility or interest.
+      </p>
       {permission && (
         <p>Expires {new Date(permission.expires_at).toLocaleString()}</p>
       )}
       <button
         onClick={() => {
           if (
-            (leads || tasks) &&
+            (leads || tasks || qualification) &&
             !confirm(
-              `Allow this connection to ${leads ? "add new people and organizations automatically; " : ""}${tasks ? "read project records and create/complete AI draft or review tasks; " : ""}in ${project.name} for up to 30 days?`,
+              `Allow this connection to ${leads ? "add new people and organizations automatically; " : ""}${tasks ? "read project records and create/complete AI draft or review tasks; " : ""}${qualification ? "research qualifications and update only qualification labels on mapped project records; " : ""}in ${project.name} for up to 30 days?`,
             )
           )
             return;
@@ -234,6 +251,7 @@ function ProjectPermission({ dataset, project, permission, busy, save }: any) {
             projectId: project.id,
             autoLeads: leads,
             tasks,
+            qualification,
             expiresInDays: 30,
           });
         }}
