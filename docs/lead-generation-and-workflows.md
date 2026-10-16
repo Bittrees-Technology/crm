@@ -86,3 +86,7 @@ A read-only production integrity check found no broken person/organization/proje
 Validation covers 65 automated checks, full browser/accessibility workflows, exact owner approval of linked people/organizations/tasks, retry reconciliation, identity/workspace merge regressions, production build, public SEO assets, and a synthetic transfer benchmark. Live release verification uses disposable wallet accounts and cleans up their data. External AI-client applications, recipient email inbox delivery, and the other Bittrees products' own consumers are outside this CRM-side test boundary.
 
 Standing research assignments have no daily batch limit. They retain a maximum of ten batches awaiting review, along with assignment permissions, source-domain restrictions, revocation checks and idempotent retries.
+
+## Connected local AI task changes
+
+Dataset MCP adds `tasks.list` and `tasks.update` alongside creation, claiming and completion. The current project task permission is required on every call. Listing and editing cover the connection owner's AI draft/review tasks only. Updates require task ID, current version and operation ID, and preserve project, owner, sharing and links. Fields are name, description, AI draft/review mode, due date and Open/Done status. CRM rejects stale updates and changed claimed tasks; clients retain drafts and reuse operation IDs for exact retries.

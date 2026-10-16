@@ -3591,7 +3591,7 @@ test("Dataset MCP scopes reads and writes, exports training, and shares immutabl
     { jsonrpc: "2.0", id: 1, method: "tools/list" },
     null,
   );
-  assert.equal(rpc.result.tools.length, 9);
+  assert.equal(rpc.result.tools.length, 11);
   await assert.rejects(() =>
     mcp.datasetMcp(
       "a".repeat(64),
@@ -4085,6 +4085,39 @@ test("explicit project permissions gate automatic leads and versioned local AI t
       })
     ).id,
     task.id,
+  );
+  const listed = await call("tasks.list", { projectId: project.id });
+  assert.equal(listed.tasks[0].id, task.id);
+  const change = {
+    projectId: project.id,
+    taskId: task.id,
+    version: task.version,
+    operationId: randomUUID(),
+    name: "Updated qualification questions",
+    description: "Updated owner instructions",
+    mode: "AI review",
+    status: "Open",
+    dueDate: "2026-12-01",
+  };
+  const updated = await call("tasks.update", change);
+  assert.equal(updated.version, task.version + 1);
+  assert.equal(updated.data.ownerId, owner);
+  assert.equal(updated.data.projectId, project.id);
+  assert.equal((await call("tasks.update", change)).version, updated.version);
+  await assert.rejects(() =>
+    call("tasks.update", {
+      ...change,
+      operationId: randomUUID(),
+      name: "Stale overwrite",
+    }),
+  );
+  await assert.rejects(() =>
+    call("tasks.update", {
+      ...change,
+      projectId: unrelated.id,
+      version: updated.version,
+      operationId: randomUUID(),
+    }),
   );
   const runId = randomUUID();
   const claimed = await call("tasks.claim", { projectId: project.id, runId });

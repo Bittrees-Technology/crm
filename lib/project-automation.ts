@@ -19,6 +19,11 @@ const taskInput = z.strictObject({
   mode: z.enum(["AI draft", "AI review"]),
   dueDate: z.union([z.iso.date(), z.literal("")]).default(""),
 });
+const taskUpdate = taskInput.extend({
+  taskId: uuid,
+  version: z.number().int().positive(),
+  status: z.enum(["Open", "Done"]),
+});
 export const projectTools = [
   {
     name: "projects.list",
@@ -43,6 +48,20 @@ export const projectTools = [
     description:
       "Create a task assigned to the connection owner in a connected project. AI draft/review tasks may be claimed by the local worker. No messaging, deletion or access changes.",
     inputSchema: z.toJSONSchema(taskInput),
+    annotations: { readOnlyHint: false, idempotentHint: true },
+  },
+  {
+    name: "tasks.list",
+    description:
+      "Read this owner's AI draft/review tasks in a connected project, including current versions. CRM is the source of truth.",
+    inputSchema: z.toJSONSchema(z.strictObject({ projectId: uuid })),
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "tasks.update",
+    description:
+      "Update an owned AI draft/review task using its current version. Preserves assignment, sharing and links; rejects stale edits. Reuse operationId for an exact retry.",
+    inputSchema: z.toJSONSchema(taskUpdate),
     annotations: { readOnlyHint: false, idempotentHint: true },
   },
   {
@@ -353,6 +372,67 @@ export async function projectAgent(
       ),
       truncated: rows.length > 100,
     };
+  }
+  if (name === "tasks.list") {
+    z.strictObject({ projectId: uuid }).parse(raw);
+    const ids = await accessIds(db, d.user_id, p.workspace_id);
+    const rows = (
+      await db.query(
+        "SELECT id,kind,data,version,updated_at FROM records WHERE workspace_id=$1 AND data->>'projectId'=$2 AND data->>'ownerId'=$3 AND kind='tasks' AND archived_at IS NULL AND data->>'category' IN ('AI draft','AI review') AND ($4::uuid[] IS NULL OR id=ANY($4)) ORDER BY updated_at DESC,id LIMIT 501",
+        [p.workspace_id, projectId, d.user_id, ids],
+      )
+    ).rows;
+    return {
+      tasks: rows
+        .slice(0, 500)
+        .map((r) => ({
+          id: r.id,
+          version: r.version,
+          updatedAt: r.updated_at,
+          name: r.data.name,
+          description: r.data.description,
+          mode: r.data.category,
+          status: r.data.status,
+          dueDate: r.data.dueDate,
+        })),
+      truncated: rows.length > 500,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+  if (name === "tasks.update") {
+    const a = taskUpdate.parse(raw);
+    await checkRecordAccess(db, d.user_id, p.workspace_id, a.taskId);
+    const task = (
+      await db.query(
+        "SELECT * FROM records WHERE id=$1 AND workspace_id=$2 AND archived_at IS NULL FOR UPDATE",
+        [a.taskId, p.workspace_id],
+      )
+    ).rows[0];
+    if (
+      !task ||
+      task.kind !== "tasks" ||
+      task.data.projectId !== projectId ||
+      task.data.ownerId !== d.user_id ||
+      !["AI draft", "AI review"].includes(task.data.category)
+    )
+      throw new HttpError(
+        403,
+        "Only your connected project's AI tasks can be edited.",
+      );
+    return saveRecordInTransaction(db, d.user_id, p.workspace_id, {
+      operationId: a.operationId,
+      id: a.taskId,
+      kind: "tasks",
+      version: a.version,
+      data: recordSchema.parse({
+        ...task.data,
+        name: a.name,
+        description: a.description,
+        category: a.mode,
+        status: a.status,
+        dueDate: a.dueDate,
+      }),
+    });
   }
   if (name === "tasks.create") {
     const a = taskInput.parse(raw);
