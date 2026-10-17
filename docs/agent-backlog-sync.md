@@ -65,3 +65,8 @@ of completion/scheduling, source edit conflicts and revocation. Production
 activation additionally needs the enrolled MCP actor, a bound CRM source
 connection and owner-approved per-site mappings. Never pass CRM credentials or
 routes as model-controlled tool arguments.
+
+Migration verified on isolated production-copy branch `br-fragrant-smoke-bakr00i5`
+on October 17, 2026: repeatable migration, existing CRM records unchanged,
+runtime table permissions present, and zero backlog grants enabled. The branch
+expires October 20. Application environment files were not changed.

@@ -3591,7 +3591,7 @@ test("Dataset MCP scopes reads and writes, exports training, and shares immutabl
     { jsonrpc: "2.0", id: 1, method: "tools/list" },
     null,
   );
-  assert.equal(rpc.result.tools.length, 15);
+  assert.equal(rpc.result.tools.length, 17);
   assert(rpc.result.tools.some((t: any) => t.name === "tasks.inventory" && t.annotations.readOnlyHint));
   assert(rpc.result.tools.some((t: any) => t.name === "qualification.context"));
   await assert.rejects(() =>
