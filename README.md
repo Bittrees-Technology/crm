@@ -254,3 +254,11 @@ Workspace loading uses revision-checked record pages. Routine saves update the r
 See [the lead-generation and workflows guide](docs/lead-generation-and-workflows.md) for guided remote MCP setup, private research lists with later owner review, the optional local adapter, project-scoped researcher assignments, person/organization links, categories and owner-only publication approval, archive/restore, synced views, CSV mapping and timezone-aware follow-ups. Apply the additive `scripts/migrate-workflows.ts` migration before deploying this release. Lead research requires its own `CRM_LEADS_ENABLED=true` flag.
 
 Dataset MCP keeps separate per-connection ten-minute budgets: 160 read/discovery calls and 40 mutation/unknown calls, with a 240-request inbound ceiling before body parsing. Task polling cannot spend the save budget. All source authentication, project grants, versions and exact-retry checks still apply; these budgets grant no additional access.
+
+### Index correction intake
+
+`POST /api/integrations/index/corrections` accepts a bounded Index report using `INDEX_CORRECTIONS_SECRET`. The server chooses the destination using `INDEX_CORRECTIONS_WORKSPACE_ID`, `INDEX_CORRECTIONS_PROJECT_ID`, and `INDEX_CORRECTIONS_OWNER_ID`; `INDEX_CORRECTIONS_SITES` is the allowed slug/name map. Apply `scripts/migrate-index-corrections.ts` under the schema owner and grant the runtime role SELECT/INSERT/UPDATE on the new outbox table. No app roles are granted by intake.
+
+The transaction creates an assigned private task and durable delivery record. `/api/cron/index-corrections` uses the existing `CRON_SECRET` to retry the fixed Workflow endpoint every five minutes with `INDEX_CORRECTIONS_WORKFLOW_SECRET`. Repeated receipt IDs cannot duplicate or alter accepted reports. New reports are bounded to five per client per hour and 100 total per day. Destination membership and project access are checked again for delivery; archived or reassigned tasks are not dispatched. Workflow failures leave the CRM task and outbox intact. Publication is a separate human-approved process.
+
+The database integration test runs only with `INDEX_CORRECTIONS_TEST=1` against a disposable branch; ordinary test runs skip it.
