@@ -9,7 +9,7 @@
       "transport": "mcp",
       "endpoint": "https://crm.bittrees.org/api/integrations/datasets/mcp",
       "verification": "source-inspected",
-      "source": "https://github.com/Bittrees-Technology/crm/blob/9e24caf5e8948af58ce6588646f52fac5761abfd/lib/project-automation.ts",
+      "source": "https://github.com/Bittrees-Technology/crm/blob/ab14fc9b89a6c6445159d8bbbbf0df724895b0b7/lib/project-automation.ts",
       "operations": {
         "read": [
           "projects.list",
@@ -18,7 +18,8 @@
           "tasks.list",
           "dataset.read",
           "qualification.context",
-          "dataset.schema"
+          "dataset.schema",
+          "tasks.import_source_status"
         ],
         "create": [
           "tasks.create",
@@ -37,10 +38,11 @@
           "qualification.enrich"
         ],
         "sync": [
-          "qualification.sync"
+          "qualification.sync",
+          "tasks.import_source"
         ]
       },
-      "boundary": "Dataset and current project grants required. Inventory reads owner-assigned ordinary and AI tasks directly linked to a connected project, with pagination and eligibility reasons. Claim/finish cover AI draft/review tasks only. Unassigned supplier confirmations need separate preparation. Completion saves a note and finishes only the claimed task."
+      "boundary": "Dataset and current project grants required. Inventory reads owner-assigned ordinary and AI tasks directly linked to a connected project, with pagination and eligibility reasons. Claim/finish cover AI draft/review tasks only. Unassigned supplier confirmations need separate preparation. Completion saves a note and finishes only the claimed task. Ordinary Agent backlog import requires a separately approved per-project source-site mapping and a current owner connection. Preserves CRM completion, assignment and scheduling; conflicts on edits and version changes. No deletions or authority grants."
     },
     {
       "projectId": "crm",
@@ -59,22 +61,6 @@
         ]
       },
       "boundary": "Requires an existing owner-bound managed source connection, selected project and current source authority. Preview/status do not approve or publish. Never pass source tokens through tool arguments. Execution additionally requires the existing managed sources:execute grant and current source policy; exceptions remain held."
-    },
-    {
-      "projectId": "crm",
-      "transport": "mcp",
-      "endpoint": "https://crm.bittrees.org/api/integrations/datasets/mcp",
-      "verification": "source-inspected",
-      "source": "https://github.com/Bittrees-Technology/crm/blob/df8f8e8/lib/backlog-import.ts",
-      "operations": {
-        "read": [
-          "tasks.import_source_status"
-        ],
-        "sync": [
-          "tasks.import_source"
-        ]
-      },
-      "boundary": "Ordinary Agent backlog import requires a separately approved per-project source-site mapping and a current owner connection. Preserves CRM completion, assignment and scheduling; conflicts on edits and version changes. No deletions or authority grants."
     }
   ]
 }
