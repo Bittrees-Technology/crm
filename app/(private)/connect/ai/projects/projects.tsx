@@ -1,4 +1,5 @@
 "use client";
+import { backlogSources } from "../../../../../lib/backlog-sources";
 import { SupplierPreparation } from "./supplier-preparation";
 import { useEffect, useState } from "react";
 import { api } from "../leads/lead-api";
@@ -195,6 +196,9 @@ export default function ProjectConnections() {
   );
 }
 function ProjectPermission({ dataset, project, permission, busy, save }: any) {
+  const [backlogSite, setBacklogSite] = useState(
+    permission?.backlog_source_project || "",
+  );
   const [leads, setLeads] = useState(permission?.auto_leads || false),
     [tasks, setTasks] = useState(permission?.tasks || false),
     [qualification, setQualification] = useState(
@@ -238,13 +242,32 @@ function ProjectPermission({ dataset, project, permission, busy, save }: any) {
       {permission && (
         <p>Expires {new Date(permission.expires_at).toLocaleString()}</p>
       )}
+      <label>
+        Sync Agent backlog for this site
+        <select
+          value={backlogSite}
+          onChange={(e) => setBacklogSite(e.target.value)}
+        >
+          <option value="">Off</option>
+          {Object.entries(backlogSources).map(([id, site]) => (
+            <option key={id} value={id}>
+              {site.name} — {site.url}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p>
+        This separately allows ordinary backlog imports into this project. CRM
+        assignments, comments, due dates and completion stay unchanged on
+        updates. Conflicting edits require review.
+      </p>
       <SupplierPreparation project={project} />
       <button
         onClick={() => {
           if (
-            (leads || tasks || qualification) &&
+            (leads || tasks || qualification || backlogSite) &&
             !confirm(
-              `Allow this connection to ${leads ? "add new people and organizations automatically; " : ""}${tasks ? "read project records and create/complete AI draft or review tasks; " : ""}${qualification ? "research qualifications and update only qualification labels on mapped project records; " : ""}in ${project.name} for up to 30 days?`,
+              `Allow this connection to ${leads ? "add new people and organizations automatically; " : ""}${tasks ? "read project records and create/complete AI draft or review tasks; " : ""}${qualification ? "research qualifications and update only qualification labels on mapped project records; " : ""}${backlogSite ? `import the ${backlogSite} Agent backlog; ` : ""}in ${project.name} for up to 30 days?`,
             )
           )
             return;
@@ -254,6 +277,7 @@ function ProjectPermission({ dataset, project, permission, busy, save }: any) {
             autoLeads: leads,
             tasks,
             qualification,
+            backlogSourceProjectId: backlogSite,
             expiresInDays: 30,
           });
         }}
