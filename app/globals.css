@@ -2478,3 +2478,20 @@ td,
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+.record-loading {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 28px;
+}
+.record-loading > svg {
+  flex-shrink: 0;
+  color: var(--green);
+  margin-top: 3px;
+}
+.record-loading p {
+  margin-top: 8px;
+  max-width: 60ch;
+  line-height: 1.65;
+}

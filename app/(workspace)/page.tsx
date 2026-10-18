@@ -1293,11 +1293,11 @@ export default function App() {
                 <span>{labels[p]}</span>
                 {p === "tasks" && (
                   <small>
-                    {
-                      records.filter(
-                        (r) => r.kind === "tasks" && r.data.status === "Open",
-                      ).length
-                    }
+                    {loadedCount !== null
+                      ? "…"
+                      : records.filter(
+                          (r) => r.kind === "tasks" && r.data.status === "Open",
+                        ).length}
                   </small>
                 )}
               </button>
@@ -1324,7 +1324,9 @@ export default function App() {
             </span>
             <div>
               <strong>{me.user.name}</strong>
-              <small>{snapshot.role}</small>
+              <small>
+                {loadedCount !== null ? "Loading access…" : snapshot.role}
+              </small>
             </div>
             <button
               className="icon-button"
@@ -1490,7 +1492,22 @@ export default function App() {
         )}
         <main className="content">
           <SharedProfileCard sessionRevision={demo ? null : me?.user?.id} />
-          {page === "today" ? (
+          {loadedCount !== null && !snapshot.records.length ? (
+            <section
+              className="panel record-loading"
+              aria-busy="true"
+              aria-label="Loading workspace records"
+            >
+              <LoaderCircle className="spin" size={24} />
+              <div>
+                <h2>Loading records…</h2>
+                <p className="muted">
+                  Fetching your workspace records and relationships. Counts
+                  appear when loading is complete.
+                </p>
+              </div>
+            </section>
+          ) : page === "today" ? (
             <>
               <div className="page-heading">
                 <div>
@@ -2166,12 +2183,12 @@ export default function App() {
                   <h1>
                     {labels[page]}
                     <span className="heading-count">
-                      {
-                        (filter === "archived"
-                          ? snapshot.records.filter((r) => !!r.archived_at)
-                          : records
-                        ).filter((r) => r.kind === page).length
-                      }
+                      {loadedCount !== null
+                        ? "Loading…"
+                        : (filter === "archived"
+                            ? snapshot.records.filter((r) => !!r.archived_at)
+                            : records
+                          ).filter((r) => r.kind === page).length}
                     </span>
                   </h1>
                   <p>
@@ -3482,14 +3499,6 @@ function RecordEditor({
               {error}
             </div>
           )}
-          {record && (
-            <RelationshipTimeline
-              workspace={workspace}
-              record={record}
-              records={records}
-              demo={demo}
-            />
-          )}
           {record && onOpen && (
             <RelatedRecords
               record={record}
@@ -3499,6 +3508,14 @@ function RecordEditor({
                 if (!dirty || window.confirm("Discard your unsaved changes?"))
                   onOpen(related);
               }}
+            />
+          )}
+          {record && (
+            <RelationshipTimeline
+              workspace={workspace}
+              record={record}
+              records={records}
+              demo={demo}
             />
           )}
           {record && (
