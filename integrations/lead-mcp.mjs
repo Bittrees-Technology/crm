@@ -28,7 +28,7 @@ export const tools = [
   {
     name: "leads.preview",
     description:
-      "Submit one immutable batch of up to 20 sourced people, organizations and explicitly permitted follow-up tasks for review in CRM. Does not import, contact, or merge records. Retry with the same operationId and identical candidates after an uncertain response.",
+      "Submit one immutable batch of sourced people, organizations and explicitly permitted follow-up tasks for review in CRM. Does not import, contact, or merge records. Retry with the same operationId and identical candidates after an uncertain response.",
     inputSchema: {
       type: "object",
       required: ["operationId", "candidates"],
@@ -38,7 +38,6 @@ export const tools = [
         candidates: {
           type: "array",
           minItems: 1,
-          maxItems: 20,
           items: {
             type: "object",
             additionalProperties: false,
@@ -72,13 +71,11 @@ export const tools = [
               contactIndex: {
                 type: "integer",
                 minimum: 0,
-                maximum: 19,
                 description: "For tasks: index of a person in this batch.",
               },
               organizationIndex: {
                 type: "integer",
                 minimum: 0,
-                maximum: 19,
                 description:
                   "For people: zero-based index of an organization in this same batch. Omit for independent investors.",
               },

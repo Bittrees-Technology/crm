@@ -408,6 +408,15 @@ async function handle(req: NextRequest) {
         await leadDrafts.getDraft(
           user.id,
           req.nextUrl.searchParams.get("id") || "",
+          req.nextUrl.searchParams.has("pageSize")
+            ? {
+                offset: Number(req.nextUrl.searchParams.get("offset") || 0),
+                pageSize: Number(req.nextUrl.searchParams.get("pageSize")),
+                ...(req.nextUrl.searchParams.has("version")
+                  ? { version: Number(req.nextUrl.searchParams.get("version")) }
+                  : {}),
+              }
+            : undefined,
         ),
       );
     if (path === "leads/draft" && req.method === "POST")

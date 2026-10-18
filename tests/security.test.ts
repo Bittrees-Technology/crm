@@ -3591,7 +3591,7 @@ test("Dataset MCP scopes reads and writes, exports training, and shares immutabl
     { jsonrpc: "2.0", id: 1, method: "tools/list" },
     null,
   );
-  assert.equal(rpc.result.tools.length, 17);
+  assert.equal(rpc.result.tools.length, 18);
   assert(rpc.result.tools.some((t: any) => t.name === "tasks.inventory" && t.annotations.readOnlyHint));
   assert(rpc.result.tools.some((t: any) => t.name === "qualification.context"));
   await assert.rejects(() =>
@@ -4617,4 +4617,305 @@ test("supplier preparation requires reviewed sources, preserves parents, and can
  await saveRecord(owner,workspace,{id:parent.id,version:parent.version,kind:'tasks',data:{...parent.data,description:'Changed terms'}});
  await assert.rejects(()=>prepareSupplier(owner,workspace,body),/current open/);
  await assert.rejects(()=>call('tasks.claim',{projectId:project.id,runId}),/changed/);
+});
+
+test("portfolio counts do not cap lists, dataset entries, append batches or owner-reviewed publication", async () => {
+  const ds = await import("../lib/datasets"),
+    drafts = await import("../lib/lead-drafts"),
+    leads = await import("../lib/leads");
+  const login = await walletLogin(),
+    user = (await currentUser(request(cookiePair(login.result.cookie))))!.id;
+  const w = (
+    await pool().query("SELECT workspace_id FROM members WHERE user_id=$1", [
+      user,
+    ])
+  ).rows[0].workspace_id;
+  await pool().query(
+    "INSERT INTO lead_drafts(id,user_id,name) SELECT id,$2,'Synthetic retained research' FROM unnest($1::uuid[]) t(id)",
+    [Array.from({ length: 100 }, () => randomUUID()), user],
+  );
+  const id = randomUUID(),
+    org = randomUUID();
+  const people = Array.from({ length: 600 }, (_, i) => ({
+    id: randomUUID(),
+    kind: "people",
+    name: `Synthetic portfolio person ${i}`,
+    organizationId: org,
+  }));
+  await drafts.saveDraft(user, {
+    id,
+    version: 0,
+    name: "Synthetic large portfolio",
+    entries: [
+      ...people,
+      { id: org, kind: "organizations", name: "Synthetic portfolio firm" },
+    ],
+  });
+  const connection = await ds.datasetConnect(user, { id });
+  const metadata: any = await ds.datasetAgent(
+    connection.token!,
+    "dataset.schema",
+    {},
+  );
+  assert.equal(metadata.maxEntries, null);
+  assert.equal(metadata.maxAppendEntries, null);
+  const appended = Array.from({ length: 25 }, (_, i) => ({
+    id: randomUUID(),
+    kind: "people",
+    name: `Synthetic additional person ${i}`,
+  }));
+  await ds.datasetAgent(connection.token!, "dataset.append", {
+    version: 1,
+    entries: appended,
+  });
+  const data: any = await ds.datasetAgent(
+    connection.token!,
+    "dataset.read",
+    {},
+  );
+  assert.equal(data.entries.length, 626);
+  assert.deepEqual(data.crm, []);
+  assert.deepEqual(data.links, []);
+  const saved: any = await ds.datasetAgent(connection.token!, "dataset.save", {
+    version: data.version,
+    name: data.name,
+    entries: data.entries,
+  });
+  const project = await saveRecord(user, w, {
+    kind: "projects",
+    data: { name: "Synthetic portfolio review" },
+  });
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT count(*)::int AS count FROM records WHERE workspace_id=$1",
+        [w],
+      )
+    ).rows[0].count,
+    1,
+  );
+  const input = {
+    id,
+    version: saved.version,
+    operationId: randomUUID(),
+    entryIds: data.entries.map((e: any) => e.id),
+    workspaceId: w,
+    projectId: project.id,
+    ownerId: user,
+  };
+  const shared = await ds.datasetShare(user, input),
+    preview = await leads.review(user, shared.reviewId);
+  assert.equal(preview.candidates.length, 626);
+  assert.equal(preview.candidates[0].organizationIndex, 600);
+  const decision = {
+    reviewId: shared.reviewId,
+    digest: preview.digest,
+    accept: data.entries.map((_: any, i: number) => i),
+  };
+  await assert.rejects(
+    () => leads.approve(other, decision),
+    /owner|access|unavailable/i,
+  );
+  await assert.rejects(
+    () => leads.approve(user, { ...decision, accept: [626] }),
+    /matches|import/i,
+  );
+  await assert.rejects(
+    () => leads.approve(user, { ...decision, accept: [0] }),
+    /linked organization/i,
+  );
+  const result = await leads.approve(user, decision);
+  assert.equal(result.accepted, 626);
+  const person = (
+    await pool().query("SELECT data FROM records WHERE id=$1", [
+      result.recordIds[0],
+    ])
+  ).rows[0];
+  assert.equal(person.data.organizationId, result.recordIds[600]);
+  assert.deepEqual(await leads.approve(user, decision), result);
+  const second = await ds.datasetShare(user, {
+    ...input,
+    operationId: randomUUID(),
+  });
+  const duplicates = await leads.review(user, second.reviewId);
+  assert.equal(duplicates.matches.length, 626);
+  assert(duplicates.matches.every((matches: any[]) => matches.length === 1));
+  await assert.rejects(
+    () =>
+      leads.approve(user, {
+        reviewId: second.reviewId,
+        digest: duplicates.digest,
+        accept: [0, 600],
+      }),
+    /matches|import/i,
+  );
+  const reused = await leads.approve(user, {
+    reviewId: second.reviewId,
+    digest: duplicates.digest,
+    accept: [600],
+    reuse: { "600": result.recordIds[600] },
+  });
+  assert.deepEqual(reused.recordIds, [result.recordIds[600]]);
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT count(*)::int AS count FROM lead_drafts WHERE user_id=$1",
+        [user],
+      )
+    ).rows[0].count,
+    103,
+  );
+});
+
+test("large datasets load in consistent pages and accept atomic small changes without exposing other lists", async () => {
+  const ds = await import("../lib/datasets"),
+    drafts = await import("../lib/lead-drafts");
+  const login = await walletLogin(),
+    user = (await currentUser(request(cookiePair(login.result.cookie))))!.id,
+    id = randomUUID();
+  const org = randomUUID(),
+    source = {
+      url: "https://bittrees.org/research",
+      retrievedAt: new Date().toISOString(),
+      claim: "c".repeat(500),
+      usage: "Public synthetic fixture",
+    };
+  const entries = Array.from({ length: 2000 }, (_, i) => ({
+    id: i === 0 ? org : randomUUID(),
+    kind: i === 0 ? "organizations" : "people",
+    name: `Synthetic paged profile ${i}`,
+    description: "d".repeat(500),
+    ...(i ? { organizationId: org } : {}),
+    research: {
+      sources: [source, source, source],
+      relevance: "r".repeat(500),
+      uncertainties: "u".repeat(500),
+      verification: "unverified",
+      training: "pending",
+    },
+  }));
+  await drafts.saveDraft(user, {
+    id,
+    name: "Synthetic multi-megabyte research",
+    version: 0,
+    entries,
+  });
+  const c = await ds.datasetConnect(user, { id });
+  await assert.rejects(
+    () => ds.datasetAgent(c.token!, "dataset.read", {}),
+    /pages|pageSize/,
+  );
+  const first: any = await ds.datasetAgent(c.token!, "dataset.read", {
+    pageSize: 100,
+  });
+  assert.equal(first.entries.length, 100);
+  assert.equal(first.pagination.totalEntries, 2000);
+  assert.equal(first.pagination.nextOffset, 100);
+  assert.deepEqual(first.crm, []);
+  const second: any = await ds.datasetAgent(c.token!, "dataset.read", {
+    pageSize: 100,
+    offset: 100,
+    pageRevision: first.revision,
+  });
+  assert.equal(second.entries.length, 100);
+  assert.equal(second.entries[0].name, "Synthetic paged profile 100");
+  const changed = {
+      ...first.entries[1],
+      description: "Reviewed synthetic correction",
+    },
+    patch = { version: 1, name: first.name, changes: [changed], removeIds: [] };
+  const result: any = await ds.datasetAgent(c.token!, "dataset.patch", patch);
+  assert.equal(result.version, 2);
+  assert.deepEqual(
+    await ds.datasetAgent(c.token!, "dataset.patch", patch),
+    result,
+  );
+  await assert.rejects(
+    () =>
+      ds.datasetAgent(c.token!, "dataset.read", {
+        pageSize: 100,
+        offset: 100,
+        pageRevision: first.revision,
+      }),
+    /changed/,
+  );
+  await assert.rejects(
+    () => drafts.getDraft(user, id, { pageSize: 100, offset: 100, version: 1 }),
+    /changed/,
+  );
+  await assert.rejects(
+    () => drafts.getDraft(other, id, { pageSize: 100, offset: 0 }),
+    /not found/,
+  );
+  await assert.rejects(
+    () =>
+      ds.datasetAgent(c.token!, "dataset.patch", {
+        version: 2,
+        name: first.name,
+        changes: [
+          {
+            ...changed,
+            research: { ...changed.research, training: "eligible" },
+          },
+        ],
+      }),
+    /training/,
+  );
+  await assert.rejects(
+    () =>
+      ds.datasetAgent(c.token!, "dataset.patch", {
+        version: 2,
+        name: first.name,
+        changes: [],
+        removeIds: [org],
+      }),
+    /organization/,
+  );
+  const reordered = entries.map((e) => e.id).reverse();
+  await assert.rejects(
+    () =>
+      ds.datasetAgent(c.token!, "dataset.patch", {
+        version: 2,
+        name: first.name,
+        changes: [],
+        entryOrder: [org],
+      }),
+    /every resulting entry/,
+  );
+  await ds.datasetAgent(c.token!, "dataset.patch", {
+    version: 2,
+    name: first.name,
+    changes: [],
+    entryOrder: reordered,
+  });
+  assert.equal(
+    (await drafts.getDraft(user, id, { offset: 0, pageSize: 100 })).entries[0]
+      .id,
+    reordered[0],
+  );
+  const copy = randomUUID();
+  await drafts.saveDraft(user, {
+    id: copy,
+    name: "Synthetic server-side copy",
+    version: 0,
+    copyFrom: id,
+    copyVersion: 3,
+  });
+  const copied: any = await drafts.getDraft(user, copy, {
+    offset: 0,
+    pageSize: 100,
+  });
+  assert.equal(copied.pagination.totalEntries, 2000);
+  assert.equal(copied.entries[0].id, reordered[0]);
+  await assert.rejects(
+    () =>
+      drafts.saveDraft(other, {
+        id: randomUUID(),
+        name: "Not authorized",
+        version: 0,
+        copyFrom: id,
+        copyVersion: 3,
+      }),
+    /not found/,
+  );
 });

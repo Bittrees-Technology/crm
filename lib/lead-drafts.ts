@@ -28,6 +28,14 @@ export const draftEntrySchema = z.strictObject({
   research: researchSchema.optional(),
 });
 export type DraftEntry = z.infer<typeof draftEntrySchema>;
+export const draftPatchSchema = z.strictObject({
+  id: z.uuid(),
+  version: z.number().int().positive(),
+  name: z.string().trim().min(1).max(200),
+  changes: z.array(draftEntrySchema),
+  removeIds: z.array(z.uuid()).default([]),
+  entryOrder: z.array(z.uuid()).optional(),
+});
 function enabled() {
   if (process.env.CRM_LEADS_ENABLED !== "true")
     throw new HttpError(404, "Not found.");
@@ -44,7 +52,7 @@ export async function listDrafts(user: string) {
     ).rows;
   });
 }
-export async function getDraft(user: string, id: string) {
+export async function getDraft(user: string, id: string, page?: unknown) {
   enabled();
   z.uuid().parse(id);
   return transaction(async (db) => {
@@ -56,11 +64,115 @@ export async function getDraft(user: string, id: string) {
       )
     ).rows[0];
     if (!row) throw new HttpError(404, "Private list not found.");
+    if (page !== undefined) {
+      const a = z
+        .strictObject({
+          offset: z.number().int().nonnegative(),
+          pageSize: z.number().int().min(1).max(100),
+          version: z.number().int().positive().optional(),
+        })
+        .parse(page);
+      if (a.version !== undefined && a.version !== row.version)
+        throw new HttpError(
+          409,
+          "The list changed while loading. Read it again.",
+        );
+      const totalEntries = row.entries.length;
+      return {
+        ...row,
+        entries: row.entries.slice(a.offset, a.offset + a.pageSize),
+        pagination: {
+          totalEntries,
+          nextOffset:
+            a.offset + a.pageSize < totalEntries ? a.offset + a.pageSize : null,
+        },
+      };
+    }
     return row;
   });
 }
 export async function saveDraft(user: string, raw: unknown) {
+  if (raw && typeof raw === "object" && "changes" in raw)
+    return transaction((db) => patchDraftInTransaction(db, user, raw));
+  if (raw && typeof raw === "object" && "copyFrom" in raw)
+    return transaction(async (db) => {
+      const a = z
+        .strictObject({
+          id: z.uuid(),
+          name: z.string().trim().min(1).max(200),
+          version: z.literal(0),
+          copyFrom: z.uuid(),
+          copyVersion: z.number().int().positive(),
+        })
+        .parse(raw);
+      await db.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [user]);
+      await lockActiveAccount(db, user);
+      const source = (
+        await db.query(
+          "SELECT entries,version FROM lead_drafts WHERE id=$1 AND user_id=$2 FOR UPDATE",
+          [a.copyFrom, user],
+        )
+      ).rows[0];
+      if (!source) throw new HttpError(404, "Private list not found.");
+      if (source.version !== a.copyVersion)
+        throw new HttpError(409, "The list changed. Reload before copying.");
+      return saveDraftInTransaction(db, user, {
+        id: a.id,
+        name: a.name,
+        version: 0,
+        entries: source.entries,
+      });
+    });
   return transaction((db) => saveDraftInTransaction(db, user, raw));
+}
+export async function patchDraftInTransaction(
+  db: PoolClient,
+  user: string,
+  raw: unknown,
+) {
+  enabled();
+  const a = draftPatchSchema.parse(raw);
+  await db.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [user]);
+  await lockActiveAccount(db, user);
+  const prior = (
+    await db.query(
+      "SELECT * FROM lead_drafts WHERE id=$1 AND user_id=$2 FOR UPDATE",
+      [a.id, user],
+    )
+  ).rows[0];
+  if (!prior) throw new HttpError(404, "Private list not found.");
+  const changes = new Map(a.changes.map((e) => [e.id, e])),
+    removed = new Set(a.removeIds);
+  if (
+    changes.size !== a.changes.length ||
+    removed.size !== a.removeIds.length ||
+    a.removeIds.some((id) => changes.has(id))
+  )
+    throw new HttpError(400, "Choose distinct entry changes and removals.");
+  const existing = new Set<string>(prior.entries.map((e: DraftEntry) => e.id));
+  let entries = prior.entries
+    .filter((e: DraftEntry) => !removed.has(e.id))
+    .map((e: DraftEntry) => changes.get(e.id) || e);
+  entries = entries.concat(a.changes.filter((e) => !existing.has(e.id)));
+  if (a.entryOrder) {
+    const byId = new Map(entries.map((e: DraftEntry) => [e.id, e]));
+    if (
+      a.entryOrder.length !== entries.length ||
+      new Set(a.entryOrder).size !== entries.length ||
+      a.entryOrder.some((id) => !byId.has(id))
+    )
+      throw new HttpError(
+        400,
+        "Entry order must include every resulting entry exactly once.",
+      );
+    entries = a.entryOrder.map((id) => byId.get(id)!);
+  }
+  return saveDraftInTransaction(db, user, {
+    id: a.id,
+    version: a.version,
+    name: a.name,
+    entries,
+  });
 }
 export async function saveDraftInTransaction(
   db: PoolClient,
@@ -73,7 +185,7 @@ export async function saveDraftInTransaction(
       id: z.uuid(),
       name: z.string().trim().min(1).max(200),
       version: z.number().int().min(0),
-      entries: z.array(draftEntrySchema).max(600),
+      entries: z.array(draftEntrySchema),
     })
     .parse(raw);
   if (new Set(input.entries.map((e) => e.id)).size !== input.entries.length)
@@ -118,19 +230,6 @@ export async function saveDraftInTransaction(
       throw new HttpError(
         409,
         "This list changed in another tab. Reload it before saving.",
-      );
-    if (
-      !prior &&
-      (
-        await db.query(
-          "SELECT count(*)::int AS count FROM lead_drafts WHERE user_id=$1",
-          [user],
-        )
-      ).rows[0].count >= 100
-    )
-      throw new HttpError(
-        409,
-        "You have reached 100 lists. Remove an unused private list first.",
       );
     // Editing content invalidates a prior human training decision.
     for (const e of input.entries) {
@@ -269,11 +368,7 @@ export async function shareDraftInTransaction(
         throw new HttpError(409, "This list has already been shared.");
       return { reviewId: receipt.id };
     }
-    const entries = z
-      .array(draftEntrySchema)
-      .min(1)
-      .max(20)
-      .parse(draft.entries);
+    const entries = z.array(draftEntrySchema).min(1).parse(draft.entries);
     if (entries.some((e) => e.kind === "projects"))
       throw new HttpError(
         400,
@@ -314,6 +409,7 @@ export async function shareDraftInTransaction(
           ...briefSchema.parse({
             target: draft.name,
             sourceDomains: ["bittrees.org"],
+            maxResults: entries.length,
             freshnessDays: 365,
           }),
           sourceDomains: [
