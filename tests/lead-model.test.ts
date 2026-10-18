@@ -124,3 +124,41 @@ test("Task proposals require explicit assignment scope and valid linked contacts
     /contact/,
   );
 });
+
+test("owners choose larger research targets without changing an existing brief's allowance", () => {
+  const brief = briefSchema.parse({
+    target: "Investors",
+    sourceDomains: ["bittrees.org"],
+    maxResults: 2000,
+  });
+  const base = candidateSchema.parse({
+    researchMethod: "manual",
+    name: "Firm",
+    website: "",
+    summary: "Research",
+    relevance: "Research",
+    uncertainties: "Unconfirmed",
+    fit: "medium",
+    evidence: "unconfirmed",
+    sources: [],
+  });
+  const batch = Array.from({ length: 625 }, (_, i) => ({
+    ...base,
+    kind: "people" as const,
+    name: `Person ${i}`,
+    organizationIndex: 625,
+  }));
+  const linked = [...batch, base];
+  validateCandidates(brief, linked);
+  assert.throws(
+    () => validateCandidates({ ...brief, maxResults: 20 }, linked),
+    /Too many/,
+  );
+  assert.throws(
+    () =>
+      validateCandidates(brief, [
+        { ...base, kind: "people", organizationIndex: 626 },
+      ]),
+    /Link people/,
+  );
+});

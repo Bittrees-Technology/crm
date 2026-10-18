@@ -32,7 +32,7 @@ export const briefSchema = z.strictObject({
     )
     .min(1)
     .max(20),
-  maxResults: z.number().int().min(1).max(20).default(20),
+  maxResults: z.number().int().positive().default(20),
   freshnessDays: z.number().int().min(1).max(365).default(30),
 });
 export const candidateSchema = z.strictObject({
@@ -41,8 +41,8 @@ export const candidateSchema = z.strictObject({
   category: z.string().trim().max(200).default("Investor"),
   title: z.string().trim().max(200).default(""),
   email: z.union([z.email(), z.literal("")]).default(""),
-  contactIndex: z.number().int().min(0).max(19).optional(),
-  organizationIndex: z.number().int().min(0).max(19).optional(),
+  contactIndex: z.number().int().nonnegative().optional(),
+  organizationIndex: z.number().int().nonnegative().optional(),
   name: z.string().trim().min(1).max(200),
   website: z.union([publicUrl, z.literal("")]),
   summary: line,

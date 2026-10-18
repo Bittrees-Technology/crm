@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import type { DraftEntry } from "@/lib/lead-drafts";
 import DatasetPanel from "./dataset-panel";
-import { api } from "./lead-api";
+import { api, readDraft } from "./lead-api";
 type Draft = {
   id: string;
   name: string;
@@ -46,17 +46,28 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
     setProject("");
     setOwner("");
     const [d, t] = await Promise.all([
-      api("leads/draft?id=" + id),
+      readDraft(id),
       api("leads/share-targets"),
     ]);
     setDraft(d);
     setTargets(t);
   }
   async function save(d: Draft) {
+    const baseline =
+      draft?.id === d.id ? new Map(draft.entries.map((e) => [e.id, e])) : null;
     const result = await api("leads/draft", {
       id: d.id,
       name: d.name,
-      entries: d.entries,
+      ...(baseline
+        ? {
+            changes: d.entries.filter(
+              (e) => JSON.stringify(e) !== JSON.stringify(baseline.get(e.id)),
+            ),
+            removeIds: draft!.entries
+              .filter((e) => !d.entries.some((x) => x.id === e.id))
+              .map((e) => e.id),
+          }
+        : { entries: d.entries }),
       version: d.version,
     });
     const updated = { ...d, version: result.version };
@@ -199,28 +210,28 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
             </button>{" "}
             <button
               className="button"
-              disabled={draft.entries.length >= 600 || !!entry}
+              disabled={!!entry}
               onClick={() => add("people")}
             >
               Add person to list
             </button>{" "}
             <button
               className="button"
-              disabled={draft.entries.length >= 600 || !!entry}
+              disabled={!!entry}
               onClick={() => add("organizations")}
             >
               Add organization to list
             </button>
             <button
               className="button"
-              disabled={draft.entries.length >= 600 || !!entry}
+              disabled={!!entry}
               onClick={() => add("projects")}
             >
               Add project to list
             </button>
             <p>
-              {draft.entries.length}/600 entries. Save each entry before
-              sharing.
+              {draft.entries.length.toLocaleString()} entries. Save each entry
+              before sharing.
             </p>
           </fieldset>
           {entry && (
@@ -427,21 +438,8 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
             </article>
           ))}
           {!draft.shared_search_id && (
-            <fieldset
-              disabled={
-                busy ||
-                !!entry ||
-                !draft.entries.length ||
-                draft.entries.length > 20
-              }
-            >
+            <fieldset disabled={busy || !!entry || !draft.entries.length}>
               <legend>Share when ready</legend>
-              {draft.entries.length > 20 && (
-                <p>
-                  Use “Submit selected people and organizations” above to review
-                  up to 20 entries at a time.
-                </p>
-              )}
               <p>
                 Choose where this list belongs and who should approve it.
                 Sharing freezes this list; the owner receives a review copy and
@@ -555,7 +553,13 @@ export default function PrivateLists({ onShared }: { onShared: () => void }) {
                   version: 0,
                   shared_search_id: null,
                 };
-                await save(copy);
+                await api("leads/draft", {
+                  id: copy.id,
+                  name: copy.name,
+                  version: 0,
+                  copyFrom: draft.id,
+                  copyVersion: draft.version,
+                });
                 await open(copy.id);
               })
             }

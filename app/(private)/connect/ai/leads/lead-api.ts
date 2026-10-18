@@ -13,3 +13,30 @@ export async function api(
   if (!r.ok) throw Error(value.error || "Request failed. Try again.");
   return value;
 }
+
+export async function readDraft(id: string) {
+  const first = await api("leads/draft?id=" + id + "&pageSize=100&offset=0");
+  const entries = [...first.entries];
+  let offset = first.pagination.nextOffset;
+  while (offset !== null) {
+    const page = await api(
+      `leads/draft?id=${id}&pageSize=100&offset=${offset}&version=${first.version}`,
+    );
+    if (
+      page.id !== first.id ||
+      page.version !== first.version ||
+      page.pagination.totalEntries !== first.pagination.totalEntries ||
+      (page.pagination.nextOffset !== null &&
+        page.pagination.nextOffset <= offset)
+    )
+      throw Error("The list changed while loading. Read it again.");
+    entries.push(...page.entries);
+    offset = page.pagination.nextOffset;
+  }
+  if (
+    entries.length !== first.pagination.totalEntries ||
+    new Set(entries.map((e) => e.id)).size !== entries.length
+  )
+    throw Error("The list did not load completely. Read it again.");
+  return { ...first, entries };
+}

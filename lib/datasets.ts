@@ -16,6 +16,8 @@ import {
   draftEntrySchema,
   saveDraftInTransaction,
   shareDraftInTransaction,
+  patchDraftInTransaction,
+  draftPatchSchema,
 } from "./lead-drafts";
 import { datasetVersion, trainingRows } from "./dataset-model";
 const uuid = z.uuid();
@@ -124,7 +126,12 @@ async function crmRows(db: PoolClient, user: string, links: any[]) {
   }
   return result;
 }
-async function read(db: PoolClient, d: any, known?: string) {
+async function read(
+  db: PoolClient,
+  d: any,
+  known?: string,
+  page?: { pageSize: number; offset: number; pageRevision?: string },
+) {
   const links = (
     await db.query(
       "SELECT entry_id,record_id,workspace_id FROM dataset_record_links WHERE draft_id=$1",
@@ -192,9 +199,49 @@ async function read(db: PoolClient, d: any, known?: string) {
   const revision = createHash("sha256")
     .update(JSON.stringify(content))
     .digest("hex");
-  return known === revision
-    ? { unchanged: true, revision }
-    : { ...content, revision };
+  if (page?.pageRevision && page.pageRevision !== revision)
+    throw new HttpError(
+      409,
+      "Dataset or source access changed while loading. Read it again.",
+    );
+  if (known === revision && !page?.offset) return { unchanged: true, revision };
+  if (page) {
+    let count = Math.min(
+      page.pageSize,
+      Math.max(0, d.entries.length - page.offset),
+    );
+    while (true) {
+      const entries = d.entries.slice(page.offset, page.offset + count),
+        ids = new Set(entries.map((e: any) => e.id));
+      const pageLinks = content.links.filter((l) => ids.has(l.entryId)),
+        sourceIds = new Set(pageLinks.map((l) => l.recordId));
+      const result = {
+        ...content,
+        revision,
+        entries,
+        links: pageLinks,
+        crm: current.filter((r) => sourceIds.has(r.id)),
+        submissions: mapped.map((s) => ({
+          ...s,
+          mappings: s.mappings.filter((m: any) => ids.has(m.entryId)),
+        })),
+        pagination: {
+          offset: page.offset,
+          totalEntries: d.entries.length,
+          nextOffset:
+            page.offset + count < d.entries.length ? page.offset + count : null,
+        },
+      };
+      if (Buffer.byteLength(JSON.stringify(result)) <= 1_500_000) return result;
+      if (count <= 1)
+        throw new HttpError(
+          413,
+          "This entry and its linked sources exceed the response size. Reduce the linked source content before reading it.",
+        );
+      count = Math.max(1, Math.floor(count / 2));
+    }
+  }
+  return { ...content, revision };
 }
 export async function datasetRead(user: string, id: string, training = false) {
   return transaction(async (db) => {
@@ -221,7 +268,7 @@ export async function datasetImport(user: string, raw: unknown) {
       id: uuid,
       version: z.number().int().positive(),
       workspaceId: uuid,
-      recordIds: z.array(uuid).min(1).max(20),
+      recordIds: z.array(uuid).min(1),
     })
     .parse(raw);
   return transaction(async (db) => {
@@ -293,7 +340,7 @@ async function submit(db: PoolClient, d: any, raw: unknown) {
     .strictObject({
       operationId: uuid,
       version: z.number().int().positive(),
-      entryIds: z.array(uuid).min(1).max(20),
+      entryIds: z.array(uuid).min(1),
       workspaceId: uuid,
       projectId: uuid,
       ownerId: uuid,
@@ -365,15 +412,43 @@ export async function datasetAgent(bearer: string, name: string, raw: unknown) {
             .string()
             .regex(/^[a-f0-9]{64}$/)
             .optional(),
+          pageSize: z.number().int().min(1).max(100).optional(),
+          offset: z.number().int().nonnegative().default(0),
+          pageRevision: z
+            .string()
+            .regex(/^[a-f0-9]{64}$/)
+            .optional(),
         })
         .parse(raw);
-      return read(db, d, a.revision);
+      if (a.offset && (!a.pageSize || !a.pageRevision))
+        throw new HttpError(
+          400,
+          "Subsequent pages require pageSize and pageRevision.",
+        );
+      const result = await read(
+        db,
+        d,
+        a.revision,
+        a.pageSize
+          ? {
+              pageSize: a.pageSize,
+              offset: a.offset,
+              pageRevision: a.pageRevision,
+            }
+          : undefined,
+      );
+      if (!a.pageSize && Buffer.byteLength(JSON.stringify(result)) > 1_500_000)
+        throw new HttpError(
+          413,
+          "Read this dataset in pages using pageSize, offset and pageRevision.",
+        );
+      return result;
     }
     if (name === "dataset.append") {
       const a = z
         .strictObject({
           version: z.number().int().positive(),
-          entries: z.array(draftEntrySchema).min(1).max(20),
+          entries: z.array(draftEntrySchema).min(1),
         })
         .parse(raw);
       if (new Set(a.entries.map((e) => e.id)).size !== a.entries.length)
@@ -429,15 +504,27 @@ export async function datasetAgent(bearer: string, name: string, raw: unknown) {
       const crm = await autoAddLeads(db, d, added);
       return { ...result, added: added.length, crm };
     }
-    if (name === "dataset.save") {
+    if (name === "dataset.save" || name === "dataset.patch") {
       const a = z
         .strictObject({
           version: z.number().int().positive(),
           name: z.string().trim().min(1).max(200),
-          entries: z.array(draftEntrySchema).max(600),
+          entries: z.array(draftEntrySchema),
         })
-        .parse(raw);
-      for (const e of a.entries) {
+        .parse(
+          name === "dataset.patch"
+            ? {
+                version: (raw as any)?.version,
+                name: (raw as any)?.name,
+                entries: [],
+              }
+            : raw,
+        );
+      const patch =
+        name === "dataset.patch"
+          ? draftPatchSchema.omit({ id: true }).parse(raw)
+          : null;
+      for (const e of patch?.changes || a.entries) {
         const prior = d.entries.find((p: any) => p.id === e.id);
         // Training permission is a human decision, not a label an agent may grant itself.
         if (
@@ -450,6 +537,8 @@ export async function datasetAgent(bearer: string, name: string, raw: unknown) {
             "Changed research needs human training eligibility review. Set training to pending.",
           );
       }
+      if (patch)
+        return patchDraftInTransaction(db, d.user_id, { ...patch, id: d.id });
       return saveDraftInTransaction(db, d.user_id, { ...a, id: d.id });
     }
     if (name === "dataset.schema") {
@@ -457,8 +546,10 @@ export async function datasetAgent(bearer: string, name: string, raw: unknown) {
       return {
         schemaVersion: datasetVersion,
         entry: z.toJSONSchema(draftEntrySchema),
-        maxEntries: 600,
-        maxAppendEntries: 20,
+        maxEntries: null,
+        maxAppendEntries: null,
+        readPageSize: 100,
+        incrementalUpdates: true,
         instructions:
           "Read before saving. Preserve stable entry IDs; organizationId references another entry. Save with the current version. Automatic CRM additions require explicit project permission; otherwise human approval is required to share or publish. CRM records are read-only source snapshots; do not silently overwrite conflicts. Training eligibility requires human review.",
       };
@@ -589,7 +680,6 @@ const projectSelection = z.strictObject({
   entryIds: z
     .array(uuid)
     .min(1)
-    .max(20)
     .refine((a) => new Set(a).size === a.length),
 });
 async function projectPreview(

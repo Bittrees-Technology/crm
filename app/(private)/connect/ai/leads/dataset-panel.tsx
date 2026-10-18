@@ -48,8 +48,8 @@ export default function DatasetPanel({ draft, targets, reload }: Props) {
       <summary>Dataset, agent connection & sharing</summary>
       <p>
         Keep working in this private dataset. Connect one local agent, or export
-        the data for your own tools. Private datasets hold up to 600 entries.
-        Submit up to 20 people and organizations at a time for approval.
+        the data for your own tools. Submit selected people and organizations
+        together for owner approval.
       </p>
       {error && (
         <p className="error" role="alert">
@@ -326,6 +326,22 @@ export default function DatasetPanel({ draft, targets, reload }: Props) {
           project for its owner’s approval. A project invitation is needed
           before another workspace appears here.
         </p>
+        <button
+          type="button"
+          onClick={() =>
+            setSelected(
+              draft.entries
+                .filter((e) => e.kind !== "projects")
+                .map((e) => e.id),
+            )
+          }
+        >
+          Select all people and organizations
+        </button>{" "}
+        <button type="button" onClick={() => setSelected([])}>
+          Clear selection
+        </button>
+        <p>{selected.length.toLocaleString()} selected</p>
         {draft.entries
           .filter((e) => e.kind !== "projects")
           .map((e) => (

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import type { Candidate } from "@/lib/lead-model";
+import { publishableCandidates } from "@/lib/lead-selection";
 import { api } from "./lead-api";
 import McpSetup from "./mcp-setup";
 import PrivateLists from "./private-lists";
@@ -262,7 +263,6 @@ export default function Leads() {
                   <input
                     type="number"
                     min={1}
-                    max={20}
                     value={limit}
                     onChange={(e) => setLimit(Number(e.target.value))}
                   />
@@ -319,6 +319,30 @@ export default function Leads() {
           </p>
           <fieldset disabled={busy || !!review.decision || !review.canApprove}>
             <legend>Select people and organizations to publish</legend>
+            <button
+              type="button"
+              onClick={() =>
+                setAccept(
+                  publishableCandidates(
+                    review.candidates,
+                    review.matches,
+                    reuse,
+                  ),
+                )
+              }
+            >
+              Select all available candidates
+            </button>{" "}
+            <button
+              type="button"
+              onClick={() => {
+                setAccept([]);
+                setReuse({});
+              }}
+            >
+              Clear selection
+            </button>
+            <p>{accept.length.toLocaleString()} selected</p>
             {review.candidates.map((c, i) => (
               <article key={i} className="integration-card">
                 <label className="checkbox-label">

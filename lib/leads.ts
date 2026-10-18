@@ -249,10 +249,10 @@ async function duplicates(
   workspace: string,
   candidates: Candidate[],
 ) {
-  // Owner-only scope: bounded organization projection, never descriptions or private notes.
+  // Owner-only matching projection, never descriptions or private notes.
   const rows = (
     await db.query(
-      "SELECT id,kind,version,archived_at,data->>'email' AS email,data->>'name' AS name,data->>'website' AS website,data->>'communication' AS communication FROM records WHERE workspace_id=$1 AND kind IN ('organizations','people','tasks') AND (lower(trim(data->>'name'))=ANY($2::text[]) OR (kind='organizations' AND regexp_replace(substring(lower(data->>'website') from '^https?://([^/:?#]+)'), '^www\\.', '')=ANY($3::text[])) OR lower(data->>'email')=ANY($4::text[])) ORDER BY id LIMIT 201",
+      "SELECT id,kind,version,archived_at,data->>'email' AS email,data->>'name' AS name,data->>'website' AS website,data->>'communication' AS communication FROM records WHERE workspace_id=$1 AND kind IN ('organizations','people','tasks') AND (lower(trim(data->>'name'))=ANY($2::text[]) OR (kind='organizations' AND regexp_replace(substring(lower(data->>'website') from '^https?://([^/:?#]+)'), '^www\\.', '')=ANY($3::text[])) OR lower(data->>'email')=ANY($4::text[])) ORDER BY id",
       [
         workspace,
         candidates.map((c) => c.name.toLowerCase()),
@@ -261,8 +261,6 @@ async function duplicates(
       ],
     )
   ).rows;
-  if (rows.length > 200)
-    throw new HttpError(409, "Too many potential matches. Narrow the search.");
   return candidates.map((c) =>
     rows
       .filter(
@@ -309,7 +307,7 @@ export async function prepare(bearer: string, raw: unknown) {
   const input = z
     .strictObject({
       operationId: z.uuid(),
-      candidates: z.array(candidateSchema).min(1).max(20),
+      candidates: z.array(candidateSchema).min(1),
     })
     .parse(raw);
   if (input.candidates.some((c) => c.researchMethod !== "agent"))
@@ -455,9 +453,12 @@ async function approveInTransaction(db: PoolClient, user: string, raw: unknown) 
       reviewId: z.uuid(),
       digest: z.string().regex(/^[a-f0-9]{64}$/),
       reuse: z
-        .record(z.string().regex(/^(?:[0-9]|1[0-9])$/), z.uuid())
+        .record(
+          z.string().regex(/^(?:0|[1-9]\d*)$/).refine((s) => Number.isSafeInteger(Number(s))),
+          z.uuid(),
+        )
         .default({}),
-      accept: z.array(z.number().int().min(0).max(19)).max(20),
+      accept: z.array(z.number().int().nonnegative()),
       reason: z
         .enum(["not_relevant", "insufficient_evidence", "duplicate", "other"])
         .default("other"),

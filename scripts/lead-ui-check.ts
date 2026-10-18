@@ -223,14 +223,34 @@ export async function checkInvestorAssignment(
   );
   await owner.goto(origin + preview.reviewPath);
   await owner
-    .getByRole("checkbox", { name: "Browser investor firm", exact: true })
-    .check();
+    .getByRole("button", {
+      name: "Select all available candidates",
+      exact: true,
+    })
+    .click();
+  for (const name of [
+    "Browser investor firm",
+    "Browser investor partner",
+    "Browser follow-up task",
+  ])
+    await expect(
+      owner.getByRole("checkbox", { name, exact: true }),
+    ).toBeChecked();
   await owner
-    .getByRole("checkbox", { name: "Browser investor partner", exact: true })
-    .check();
+    .getByRole("button", { name: "Clear selection", exact: true })
+    .click();
+  await expect(
+    owner.getByRole("checkbox", {
+      name: "Browser investor partner",
+      exact: true,
+    }),
+  ).not.toBeChecked();
   await owner
-    .getByRole("checkbox", { name: "Browser follow-up task", exact: true })
-    .check();
+    .getByRole("button", {
+      name: "Select all available candidates",
+      exact: true,
+    })
+    .click();
   await accessibility(owner, "Investor person, organization and task approval");
   await owner.screenshot({
     path: "/tmp/crm-investor-review.png",
@@ -351,14 +371,39 @@ export async function checkInvestorAssignment(
       (l: any) => l.id === privateList.id,
     ),
   );
-  const panel = researcher
-    .locator("details")
-    .filter({
-      has: researcher.getByText("Dataset, agent connection & sharing", {
-        exact: true,
-      }),
-    });
+  const panel = researcher.locator("details").filter({
+    has: researcher.getByText("Dataset, agent connection & sharing", {
+      exact: true,
+    }),
+  });
   await panel.locator("summary").click();
+  await panel
+    .getByRole("button", {
+      name: "Select all people and organizations",
+      exact: true,
+    })
+    .click();
+  await expect(
+    panel.getByRole("checkbox", {
+      name: "Manual browser firm (organizations)",
+      exact: true,
+    }),
+  ).toBeChecked();
+  await expect(
+    panel.getByRole("checkbox", {
+      name: "Manual browser partner (people)",
+      exact: true,
+    }),
+  ).toBeChecked();
+  await panel
+    .getByRole("button", { name: "Clear selection", exact: true })
+    .click();
+  await expect(
+    panel.getByRole("checkbox", {
+      name: "Manual browser partner (people)",
+      exact: true,
+    }),
+  ).not.toBeChecked();
   await panel
     .getByLabel("Training eligibility for Manual browser firm", { exact: true })
     .selectOption("eligible");
