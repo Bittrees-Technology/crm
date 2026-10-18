@@ -1,3 +1,4 @@
+import { backlogConsent } from "@/lib/backlog-consent";
 import { supplierInventory, prepareSupplier } from "@/lib/supplier-preparation";
 import { investorProfile } from "@/lib/investor-profile";
 import { projectOptions, configureProject } from "@/lib/project-automation";
@@ -386,6 +387,8 @@ async function handle(req: NextRequest) {
           req.nextUrl.searchParams.get("workspace") || "",
         ),
       );
+    if (path === "datasets/backlog/consent" && req.method === "POST")
+      return json(await backlogConsent(user.id, body));
     if (path === "datasets/projects/permissions" && req.method === "GET")
       return json(
         await projectOptions(

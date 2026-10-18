@@ -1,4 +1,5 @@
 "use client";
+import { BacklogConsent } from "./backlog-consent";
 import { backlogSources } from "../../../../../lib/backlog-sources";
 import { SupplierPreparation } from "./supplier-preparation";
 import { useEffect, useState } from "react";
@@ -52,6 +53,7 @@ export default function ProjectConnections() {
         </p>
       )}
       {message && <p role="status">{message}</p>}
+      <BacklogConsent />
       <section className="integration-card">
         <h2>Connection</h2>
         <fieldset disabled={busy}>

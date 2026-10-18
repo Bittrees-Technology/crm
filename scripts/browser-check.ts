@@ -1,3 +1,4 @@
+import { checkBacklogConsent } from "./backlog-consent-ui-check";
 import { checkProjectImport } from "./project-import-ui-check";
 import { checkLeads, checkInvestorAssignment } from "./lead-ui-check";
 import { checkAiConsent } from "./ai-consent-check";
@@ -217,6 +218,7 @@ try {
   ).toBeVisible();
   await accessibility(page, "Settings");
   await checkAiConsent(page, api, first, origin);
+  await checkBacklogConsent(page, origin);
   await checkLeads(page, api, first, origin, accessibility);
   await checkProjectImport(page, api, first, origin, accessibility);
   await checkWorkflows(page, api, first, origin, accessibility);

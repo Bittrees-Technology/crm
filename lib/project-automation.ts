@@ -182,6 +182,17 @@ export async function configureProject(user: string, raw: unknown) {
       );
       return { revoked: true };
     }
+    if (
+      (
+        await db.query("SELECT 1 FROM crm_backlog_consents WHERE draft_id=$1", [
+          a.datasetId,
+        ])
+      ).rowCount
+    )
+      throw new HttpError(
+        409,
+        "Dedicated backlog consent cannot be extended or changed. Revoke access instead.",
+      );
     const p = (
       await db.query(
         "SELECT * FROM records WHERE id=$1 AND kind='projects' AND archived_at IS NULL",

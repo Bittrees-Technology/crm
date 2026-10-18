@@ -73,6 +73,17 @@ export async function datasetConnect(user: string, raw: unknown) {
       ]);
       return { revoked: true };
     }
+    if (
+      (
+        await db.query("SELECT 1 FROM crm_backlog_consents WHERE draft_id=$1", [
+          d.id,
+        ])
+      ).rowCount
+    )
+      throw new HttpError(
+        409,
+        "Dedicated backlog connections cannot be rotated or renewed.",
+      );
     if (d.shared_search_id)
       throw new HttpError(
         409,

@@ -1,4 +1,6 @@
-export const projectAutomationSchema = `
+import { backlogConsentSchema } from "./backlog-consent-schema";
+export const projectAutomationSchema =
+  `
 CREATE TABLE IF NOT EXISTS dataset_project_permissions(
  draft_id uuid NOT NULL REFERENCES lead_drafts(id) ON DELETE CASCADE,
  project_id uuid NOT NULL REFERENCES records(id) ON DELETE CASCADE,
@@ -24,4 +26,4 @@ CREATE TABLE IF NOT EXISTS crm_source_task_receipts(
  owner_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id uuid NOT NULL REFERENCES records(id) ON DELETE CASCADE,
  operation_id uuid NOT NULL, payload_hash text NOT NULL, result jsonb NOT NULL,
  PRIMARY KEY(owner_id,project_id,operation_id));
-`;
+` + backlogConsentSchema;

@@ -14,7 +14,7 @@ try {
   await db.query("SET LOCAL ROLE crm_production_owner");
   await db.query(projectAutomationSchema);
   await db.query(
-    "GRANT SELECT,INSERT,UPDATE,DELETE ON dataset_project_permissions,project_ai_runs,crm_source_tasks,crm_source_task_receipts TO crm_production",
+    "GRANT SELECT,INSERT,UPDATE,DELETE ON dataset_project_permissions,project_ai_runs,crm_source_tasks,crm_source_task_receipts,crm_backlog_consents TO crm_production",
   );
   await db.query("COMMIT");
   const r = await db.query(
