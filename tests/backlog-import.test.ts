@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { pool, schema, transaction } from "../lib/db";
-import { configureProject, projectAgent } from "../lib/project-automation";
+import {
+  configureProject,
+  projectAgent,
+  projectOptions,
+} from "../lib/project-automation";
 import { backlogImportInput } from "../lib/backlog-import";
 const owner = randomUUID(),
   workspace = randomUUID(),
@@ -97,6 +101,7 @@ test("backlog import requires a separate grant and exact reviewed site mapping",
     autoLeads: false,
     tasks: false,
     backlogSourceProjectId: "agent",
+    expiresAt: new Date(Date.now() + 3500000).toISOString(),
   });
   await assert.rejects(
     call("tasks.import_source", {
@@ -217,5 +222,33 @@ test("revocation blocks both reads and writes without changing tasks", async () 
   await assert.rejects(
     call("tasks.import_source", { ...base, operationId: randomUUID() }),
     { status: 403 },
+  );
+});
+
+test("backlog consent requires bounded absolute expiry and preserves mapping on reload", async () => {
+  const input = {
+    datasetId: dataset,
+    projectId: project,
+    autoLeads: false,
+    tasks: false,
+    backlogSourceProjectId: "agent",
+  };
+  await assert.rejects(configureProject(owner, input), { status: 400 });
+  for (const delta of [-1000, 3601000])
+    await assert.rejects(
+      configureProject(owner, {
+        ...input,
+        expiresAt: new Date(Date.now() + delta).toISOString(),
+      }),
+      { status: 400 },
+    );
+  const expiresAt = new Date(Date.now() + 1800000).toISOString();
+  await configureProject(owner, { ...input, expiresAt });
+  await configureProject(owner, { ...input, expiresAt });
+  const options = await projectOptions(owner, dataset);
+  assert.equal(options.permissions[0].backlog_source_project, "agent");
+  assert.equal(
+    new Date(options.permissions[0].expires_at).toISOString(),
+    expiresAt,
   );
 });

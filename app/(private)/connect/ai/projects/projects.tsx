@@ -1,4 +1,5 @@
 "use client";
+import { BacklogConsent } from "./backlog-consent";
 import { backlogSources } from "../../../../../lib/backlog-sources";
 import { SupplierPreparation } from "./supplier-preparation";
 import { useEffect, useState } from "react";
@@ -52,6 +53,7 @@ export default function ProjectConnections() {
         </p>
       )}
       {message && <p role="status">{message}</p>}
+      <BacklogConsent />
       <section className="integration-card">
         <h2>Connection</h2>
         <fieldset disabled={busy}>
@@ -199,6 +201,13 @@ function ProjectPermission({ dataset, project, permission, busy, save }: any) {
   const [backlogSite, setBacklogSite] = useState(
     permission?.backlog_source_project || "",
   );
+  const [expiry, setExpiry] = useState(
+    permission?.expires_at ? new Date(permission.expires_at).toISOString() : "",
+  );
+  const validExpiry =
+    Number.isFinite(Date.parse(expiry)) &&
+    Date.parse(expiry) > Date.now() &&
+    Date.parse(expiry) <= Date.now() + 3600000;
   const [leads, setLeads] = useState(permission?.auto_leads || false),
     [tasks, setTasks] = useState(permission?.tasks || false),
     [qualification, setQualification] = useState(
@@ -261,13 +270,30 @@ function ProjectPermission({ dataset, project, permission, busy, save }: any) {
         assignments, comments, due dates and completion stay unchanged on
         updates. Conflicting edits require review.
       </p>
+      {backlogSite && (
+        <label>
+          Exact activation expiry (UTC)
+          <input
+            aria-label="Exact activation expiry (UTC)"
+            value={expiry}
+            onChange={(e) => setExpiry(e.target.value)}
+            placeholder="YYYY-MM-DDTHH:mm:ss.sssZ"
+          />
+          <span>
+            After native activation, enter the expiry shown in its verified
+            receipt. Access ends at this time, at most one hour from now. Saving
+            again does not start another hour.
+          </span>
+        </label>
+      )}
       <SupplierPreparation project={project} />
       <button
+        disabled={Boolean(backlogSite) && !validExpiry}
         onClick={() => {
           if (
             (leads || tasks || qualification || backlogSite) &&
             !confirm(
-              `Allow this connection to ${leads ? "add new people and organizations automatically; " : ""}${tasks ? "read project records and create/complete AI draft or review tasks; " : ""}${qualification ? "research qualifications and update only qualification labels on mapped project records; " : ""}${backlogSite ? `import the ${backlogSite} Agent backlog; ` : ""}in ${project.name} for up to 30 days?`,
+              `Allow this connection to ${leads ? "add new people and organizations automatically; " : ""}${tasks ? "read project records and create/complete AI draft or review tasks; " : ""}${qualification ? "research qualifications and update only qualification labels on mapped project records; " : ""}${backlogSite ? `import the ${backlogSite} Agent backlog; ` : ""}in ${project.name} ${backlogSite ? `until ${expiry}` : "for up to 30 days"}?`,
             )
           )
             return;
@@ -278,7 +304,9 @@ function ProjectPermission({ dataset, project, permission, busy, save }: any) {
             tasks,
             qualification,
             backlogSourceProjectId: backlogSite,
-            expiresInDays: 30,
+            ...(backlogSite
+              ? { expiresAt: new Date(expiry).toISOString() }
+              : { expiresInDays: 30 }),
           });
         }}
       >

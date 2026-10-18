@@ -131,7 +131,7 @@ export async function projectOptions(user: string, id: string) {
     ).rows;
     const permissions = (
       await db.query(
-        "SELECT p.project_id,p.auto_leads,p.tasks,p.qualification,p.expires_at FROM dataset_project_permissions p JOIN dataset_connections c ON c.draft_id=p.draft_id AND c.token_hash=p.token_hash WHERE p.draft_id=$1 AND p.user_id=$2 AND p.expires_at>now() AND c.expires_at>now()",
+        "SELECT p.project_id,p.auto_leads,p.tasks,p.qualification,p.backlog_source_project,p.expires_at FROM dataset_project_permissions p JOIN dataset_connections c ON c.draft_id=p.draft_id AND c.token_hash=p.token_hash WHERE p.draft_id=$1 AND p.user_id=$2 AND p.expires_at>now() AND c.expires_at>now()",
         [id, user],
       )
     ).rows;
@@ -151,8 +151,23 @@ export async function configureProject(user: string, raw: unknown) {
         .refine((v) => v === "" || Object.hasOwn(backlogSources, v))
         .default(""),
       expiresInDays: z.number().int().min(1).max(30).default(30),
+      expiresAt: z.iso.datetime().optional(),
     })
     .parse(raw);
+  if (a.backlogSourceProjectId && !a.expiresAt)
+    throw new HttpError(
+      400,
+      "Backlog access requires the exact activation expiry.",
+    );
+  if (
+    a.expiresAt &&
+    (Date.parse(a.expiresAt) <= Date.now() ||
+      Date.parse(a.expiresAt) > Date.now() + 3600000)
+  )
+    throw new HttpError(
+      400,
+      "Expiry must be in the future and no more than one hour away.",
+    );
   return transaction(async (db) => {
     await ownerDataset(db, user, a.datasetId);
     if (
@@ -167,6 +182,17 @@ export async function configureProject(user: string, raw: unknown) {
       );
       return { revoked: true };
     }
+    if (
+      (
+        await db.query("SELECT 1 FROM crm_backlog_consents WHERE draft_id=$1", [
+          a.datasetId,
+        ])
+      ).rowCount
+    )
+      throw new HttpError(
+        409,
+        "Dedicated backlog consent cannot be extended or changed. Revoke access instead.",
+      );
     const p = (
       await db.query(
         "SELECT * FROM records WHERE id=$1 AND kind='projects' AND archived_at IS NULL",
@@ -201,7 +227,7 @@ export async function configureProject(user: string, raw: unknown) {
         "A dataset can automatically add leads to one project. Disable its previous lead destination first; task access may cover multiple projects.",
       );
     await db.query(
-      "INSERT INTO dataset_project_permissions(draft_id,project_id,workspace_id,user_id,token_hash,auto_leads,tasks,qualification,backlog_source_project,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$10,$11,LEAST($8,now()+($9*interval '1 day'))) ON CONFLICT(draft_id,project_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,auto_leads=EXCLUDED.auto_leads,tasks=EXCLUDED.tasks,qualification=EXCLUDED.qualification,backlog_source_project=EXCLUDED.backlog_source_project,expires_at=EXCLUDED.expires_at",
+      "INSERT INTO dataset_project_permissions(draft_id,project_id,workspace_id,user_id,token_hash,auto_leads,tasks,qualification,backlog_source_project,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$10,$11,LEAST($8,COALESCE($12::timestamptz,now()+($9*interval '1 day')))) ON CONFLICT(draft_id,project_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,auto_leads=EXCLUDED.auto_leads,tasks=EXCLUDED.tasks,qualification=EXCLUDED.qualification,backlog_source_project=EXCLUDED.backlog_source_project,expires_at=EXCLUDED.expires_at",
       [
         a.datasetId,
         a.projectId,
@@ -214,6 +240,7 @@ export async function configureProject(user: string, raw: unknown) {
         a.expiresInDays,
         a.qualification,
         a.backlogSourceProjectId || null,
+        a.expiresAt || null,
       ],
     );
     await db.query(
