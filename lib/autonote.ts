@@ -183,24 +183,30 @@ export async function publish(bearer: string, input: unknown) {
         name: a.text.slice(0, 200),
       })),
     ];
+    // The workspace/grant locks above serialize publication. Read only this
+    // request's bounded receipt set; replay still checks each record's access.
+    const receipts = new Map<string, string>(
+      (
+        await db.query(
+          "SELECT item_id,record_id FROM autonote_receipts WHERE user_id=$1 AND workspace_id=$2 AND target_id=$3 AND meeting_id=$4 AND item_id=ANY($5::text[])",
+          [
+            g.user_id,
+            g.workspace_id,
+            g.target_id,
+            d.meetingId,
+            items.map((item) => item.id),
+          ],
+        )
+      ).rows.map((row) => [row.item_id, row.record_id]),
+    );
     const output = [];
     for (const item of items) {
-      const receipt = (
-        await db.query(
-          "SELECT record_id FROM autonote_receipts WHERE user_id=$1 AND workspace_id=$2 AND target_id=$3 AND meeting_id=$4 AND item_id=$5",
-          [g.user_id, g.workspace_id, g.target_id, d.meetingId, item.id],
-        )
-      ).rows[0];
+      const receipt = receipts.get(item.id);
       if (receipt) {
-        await checkRecordAccess(
-          db,
-          g.user_id,
-          g.workspace_id,
-          receipt.record_id,
-        );
+        await checkRecordAccess(db, g.user_id, g.workspace_id, receipt);
         output.push({
           itemId: item.id,
-          recordId: receipt.record_id,
+          recordId: receipt,
           existing: true,
         });
         continue;
