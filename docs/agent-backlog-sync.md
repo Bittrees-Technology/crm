@@ -9,6 +9,13 @@ mutation and authorization. No tasks are imported by deploying this code.
 In `/connect/ai/projects`, an owner chooses an existing connection and CRM project,
 then selects the matching site in **Sync Agent backlog for this site**. This is a
 separate grant, default Off. Existing AI-task grants do not authorize imports.
+Backlog grants require an absolute UTC `expiresAt`, in the future and at most
+one hour away. Finalize consent after native activation using the exact expiry
+from its verified Roles receipt; repeated saves retain that timestamp. CRM caps
+the grant at the connection expiry as well. MCP separately enforces the signed
+lease expiry. This input does not itself verify a Roles receipt or activate a
+lease. No source token should be copied into chat or the native runner.
+
 The same expiry, connection token, account, workspace ownership, project access
 and revocation checks apply on every import and status lookup. Shared sign-in
 and public feed visibility do not grant this permission.
