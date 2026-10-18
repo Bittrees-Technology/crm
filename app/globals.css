@@ -2160,3 +2160,321 @@ td,
 .investor-research ul { margin: 0; padding-left: 20px; line-height: 1.7; }
 .investor-research details p { margin-top: 12px; overflow-wrap: anywhere; }
 .investor-research summary { cursor: pointer; }
+
+/* Record views share one inset, including read-only profiles and relationships. */
+.record-body {
+  padding: 24px 28px;
+  min-width: 0;
+}
+.record-body > * + * {
+  margin-top: 24px;
+}
+.record-body > .profile-toolbar {
+  margin-top: 0;
+  margin-bottom: 20px;
+}
+.record-body > .editor-fields {
+  padding: 0;
+  min-width: 0;
+}
+.record-body > .modal-error {
+  margin-left: 0;
+  margin-right: 0;
+}
+.record-body > .record-meta {
+  padding: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.record-body > .relationship-timeline {
+  padding: 24px 0 0;
+}
+.record-body > .sharing-panel {
+  margin-left: 0;
+  margin-right: 0;
+}
+.record-section {
+  min-width: 0;
+}
+.record-section + .record-section {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+.record-section > h3 {
+  margin-bottom: 16px;
+  line-height: 1.4;
+}
+.record-profile {
+  margin: 0;
+  gap: 20px 28px;
+}
+.record-profile > div,
+.form-grid > * {
+  min-width: 0;
+}
+.record-profile dt {
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.record-profile dd {
+  font-size: 15px;
+  line-height: 1.6;
+}
+.record-profile .text-button {
+  padding: 0;
+  font-size: inherit;
+  text-align: left;
+  justify-content: flex-start;
+  overflow-wrap: anywhere;
+}
+.record-prose {
+  max-width: 70ch;
+  font-size: 15px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+.record-prose p {
+  white-space: pre-wrap;
+}
+.record-prose p + p {
+  margin-top: 1em;
+}
+.record-prose a,
+.record-profile a {
+  color: var(--green-dark);
+  text-underline-offset: 3px;
+}
+.record-body .profile-text {
+  font-size: 15px;
+  line-height: 1.75;
+  max-width: 70ch;
+}
+.record-body .shared-content-help {
+  line-height: 1.65;
+}
+.record-body .sharing-panel > p {
+  margin-top: 12px;
+}
+.record-form > .modal-actions {
+  flex-wrap: wrap;
+  z-index: 2;
+}
+.related-record-groups > details {
+  border-bottom: 1px solid var(--line);
+}
+.related-record-groups summary {
+  cursor: pointer;
+  padding: 14px 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.related-count {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+.related-record-groups ul {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 12px;
+  display: grid;
+  gap: 4px;
+}
+.related-record-link {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 12px;
+  text-align: left;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  overflow-wrap: anywhere;
+}
+.related-record-link:hover {
+  background: var(--soft);
+}
+.related-record-link strong {
+  color: var(--green-dark);
+  font-size: 14px;
+  font-weight: 600;
+}
+.related-record-link span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.records-table {
+  white-space: normal;
+  font-size: 14px;
+}
+.records-table td {
+  padding: 18px 20px;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.records-table th {
+  font-size: 13px;
+}
+.records-table .record-link {
+  max-width: 340px;
+  width: 100%;
+  align-items: flex-start;
+}
+.records-table .record-link > span:last-child {
+  min-width: 0;
+}
+.records-table .avatar {
+  flex-shrink: 0;
+}
+.records-table .record-link strong {
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+.records-table .record-link small {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.records-table .owner-cell {
+  font-size: 13px;
+  align-items: flex-start;
+}
+.records-table .record-contact {
+  display: grid;
+  gap: 6px;
+  max-width: 240px;
+}
+.records-table .record-contact a {
+  color: var(--green-dark);
+  text-underline-offset: 3px;
+}
+.records-table .record-contact > a:last-child:not(:first-child) {
+  font-size: 13px;
+}
+.records-table .record-relation {
+  text-align: left;
+  justify-content: flex-start;
+  padding: 0;
+  line-height: 1.5;
+}
+.records-table .truncate {
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+@media (max-width: 1200px) {
+  .records-panel {
+    background: transparent;
+    border: 0;
+    overflow: visible;
+  }
+  .records-table,
+  .records-table tbody {
+    display: block;
+    width: 100%;
+  }
+  .records-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .records-table tbody {
+    display: grid;
+    gap: 16px;
+  }
+  .records-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px 24px;
+    padding: 20px;
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+  }
+  .records-table td,
+  .records-table tr:last-child td {
+    display: block;
+    min-width: 0;
+    border: 0;
+    padding: 0;
+  }
+  .records-table td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .records-table .record-identity,
+  .records-table .record-actions {
+    grid-column: 1/-1;
+  }
+  .records-table .record-identity {
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .records-table .record-identity::before,
+  .records-table .record-actions::before {
+    display: none;
+  }
+  .records-table .record-link,
+  .records-table .record-contact {
+    max-width: none;
+  }
+  .records-table .record-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .records-table .record-actions .quick-actions {
+    flex-wrap: wrap;
+  }
+  .records-table .record-actions > .icon-button {
+    background: var(--soft);
+    min-height: 36px;
+    min-width: 36px;
+  }
+}
+@media (max-width: 600px) {
+  .record-body {
+    padding: 20px 18px;
+  }
+  .record-profile,
+  .record-body .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .record-section + .record-section {
+    padding-top: 20px;
+    margin-top: 20px;
+  }
+  .records-table tbody tr {
+    gap: 16px;
+    padding: 18px;
+  }
+  .records-table td[data-label="Contact"],
+  .records-table td[data-label="Organization"],
+  .records-table td[data-label="Related project"],
+  .records-table td[data-label="Context"],
+  .records-table td[data-label="Type"] {
+    grid-column: 1/-1;
+  }
+}
+
+.records-table .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
