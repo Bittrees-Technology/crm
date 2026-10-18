@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { checkRecordReadability } from "./record-readability-check";
 import { expect, type Page } from "@playwright/test";
 import { pool, transaction } from "../lib/db";
 import { formatAmount } from "../lib/currencies";
@@ -44,6 +45,22 @@ export async function checkWorkflows(
         { exact: true },
       )
       .fill("UX " + singular);
+    if (kind === "organizations")
+      await dialog
+        .getByLabel("Email address", { exact: true })
+        .fill("ux-organization@example.com");
+    if (kind === "people" || kind === "tasks")
+      await dialog
+        .getByLabel("Organization", { exact: true })
+        .selectOption({ label: "UX organization" });
+    if (kind === "tasks") {
+      await dialog
+        .getByLabel("Contact", { exact: true })
+        .selectOption({ label: "UX person" });
+      await dialog
+        .getByLabel("Project", { exact: true })
+        .selectOption({ label: "UX project" });
+    }
     if (kind === "people") {
       await dialog
         .getByLabel("Email address", { exact: true })
@@ -86,7 +103,14 @@ export async function checkWorkflows(
       .getByLabel(kind === "notes" ? "Note" : "Description / context", {
         exact: true,
       })
-      .fill("UX workflow check");
+      .fill(
+        kind === "people"
+          ? "UX workflow check\n\nPublic source: https://example.com/public-evidence.\nUnverified: current availability needs confirmation. " +
+              "Detailed public research context with a long organization reference. ".repeat(
+                15,
+              )
+          : "UX workflow check",
+      );
     await checkAccessibility(page, kind + " editor");
     await dialog.getByRole("button", { name: "Save record" }).click();
     await expect(dialog).not.toBeVisible();
@@ -104,6 +128,7 @@ export async function checkWorkflows(
   assert.ok(
     (await api(page, "me")).opportunityTypes.includes("UX custom type"),
   );
+  await checkRecordReadability(page, origin, checkAccessibility);
   await page.goto(origin + "/?view=opportunities");
   await page
     .getByRole("button", { name: "Add opportunity in Proposal", exact: true })
@@ -463,7 +488,19 @@ export async function checkWorkflows(
       .archived_at,
     null,
   );
-  for (const r of (await api(page, base)).records)
+  // Remove synthetic leaves before parents now that the fixture includes relationships.
+  const deletionOrder = [
+    "notes",
+    "tasks",
+    "opportunities",
+    "people",
+    "organizations",
+    "projects",
+  ];
+  for (const r of (await api(page, base)).records.sort(
+    (a: any, b: any) =>
+      deletionOrder.indexOf(a.kind) - deletionOrder.indexOf(b.kind),
+  ))
     await api(
       page,
       base + "/records",
