@@ -18,7 +18,7 @@ try {
   );
   await db.query("COMMIT");
   const r = await db.query(
-    "SELECT to_regclass('dataset_project_permissions') IS NOT NULL AND to_regclass('project_ai_runs') IS NOT NULL AND to_regclass('crm_source_tasks') IS NOT NULL AND to_regclass('crm_source_task_receipts') IS NOT NULL AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='dataset_project_permissions' AND column_name='backlog_source_project') AS ready",
+    "SELECT to_regclass('dataset_project_permissions') IS NOT NULL AND to_regclass('project_ai_runs') IS NOT NULL AND to_regclass('crm_source_tasks') IS NOT NULL AND to_regclass('crm_source_task_receipts') IS NOT NULL AND to_regclass('crm_backlog_consents') IS NOT NULL AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='dataset_project_permissions' AND column_name='backlog_source_project') AS ready",
   );
   console.log(
     JSON.stringify({ migration: "project-automation", ready: r.rows[0].ready }),
