@@ -14,7 +14,13 @@ export async function checkRecordReadability(
   const pattern = "**/api/workspaces/*?paged=1*";
   await page.route(pattern, async (route) => {
     await held;
-    await route.continue();
+    try {
+      await route.continue();
+    } catch (error) {
+      // Development Strict Mode cancels the first mount's request.
+      // A cancelled request needs no response; live requests must still succeed.
+      if (!route.request().failure()) throw error;
+    }
   });
   try {
     await page.goto(origin + "/?view=people");
@@ -32,11 +38,11 @@ export async function checkRecordReadability(
     ).toHaveCount(0);
   } finally {
     release();
-    await page.unroute(pattern);
   }
   await expect(
     page.locator(".records-table .record-link").first(),
   ).toBeVisible();
+  await page.unroute(pattern);
 
   for (const width of [1440, 900, 390]) {
     await page.setViewportSize({ width, height: 950 });
