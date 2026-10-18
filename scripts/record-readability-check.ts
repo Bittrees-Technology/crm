@@ -7,6 +7,37 @@ export async function checkRecordReadability(
   accessibility: (page: Page, label: string) => Promise<void>,
 ) {
   const initialViewport = page.viewportSize()!;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const pattern = "**/api/workspaces/*?paged=1*";
+  await page.route(pattern, async (route) => {
+    await held;
+    await route.continue();
+  });
+  try {
+    await page.goto(origin + "/?view=people");
+    await expect(
+      page.getByRole("heading", { name: "Loading records…", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", {
+        name: "A fresh start for people",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "People 0", exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    release();
+    await page.unroute(pattern);
+  }
+  await expect(
+    page.locator(".records-table .record-link").first(),
+  ).toBeVisible();
+
   for (const width of [1440, 900, 390]) {
     await page.setViewportSize({ width, height: 950 });
     for (const [kind, name] of [
@@ -50,6 +81,13 @@ export async function checkRecordReadability(
       await expect(
         dialog.getByLabel("Record profile", { exact: true }),
       ).toBeVisible();
+      const sectionOrder = await dialog
+        .locator(".related-record-groups,.relationship-timeline")
+        .evaluateAll((items) => items.map((item) => item.className));
+      assert(
+        sectionOrder[0].includes("related-record-groups"),
+        "Related records must appear before potentially long history",
+      );
       const dimensions = await dialog.locator(".record-body").evaluate((e) => {
         const body = e.getBoundingClientRect(),
           profile = e
