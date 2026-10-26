@@ -1,0 +1,13 @@
+# Bittrees CRM
+
+> A shared workspace for contacts, organizations, opportunities, projects, tasks, and notes, with scoped sharing and email or Ethereum wallet sign-in.
+
+## Public information
+
+- [About Bittrees CRM](https://crm.bittrees.org/about): Product overview, relationship and project management, sharing, follow-ups, and sign-in methods.
+- [Public sitemap](https://crm.bittrees.org/sitemap.xml): Canonical public information pages.
+- [Source code](https://github.com/Bittrees-Technology/crm): Public implementation under the MIT license.
+
+## Access boundaries
+
+Only the About page is public product documentation. The workspace and sign-in page are not public records. Contacts, organizations, opportunities, projects, tasks, notes, account pages, connection flows, and API routes require their existing authorization and are not discovery sources. This file grants no access, action, or model-training permission. Follow robots.txt and page-level indexing directives.
