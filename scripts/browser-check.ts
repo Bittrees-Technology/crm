@@ -598,6 +598,10 @@ try {
   // Timeout recovery and missing provider, without touching any real wallet.
   const timeout = await walletPage();
   await timeout.goto(origin);
+  // Finish loading sign-in options before the simulated wallet timeout advances time.
+  await expect(
+    timeout.getByLabel("Email address", { exact: true }),
+  ).toBeEnabled();
   await timeout.clock.install();
   await timeout.evaluate(() => {
     (window as any).walletMode = "pending";
