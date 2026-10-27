@@ -1,3 +1,4 @@
+import {issueSessionProof,readSessionProof} from '../shared/sso/session-proof.mjs';
 import {
   createHash,
   createHmac,
@@ -15,6 +16,7 @@ export const hash = (v: string) => createHash("sha256").update(v).digest("hex");
 export const token = () => randomBytes(32).toString("hex");
 export const cookieName =
   process.env.NODE_ENV === "production" ? "__Host-crm-session" : "crm-session";
+export const authenticationCookieName = process.env.NODE_ENV === 'production' ? '__Host-crm-authentication' : 'crm-authentication';
 const challengeCookie =
   process.env.NODE_ENV === "production"
     ? "__Host-crm-challenge"
@@ -53,6 +55,13 @@ export async function currentUser(req: Request, required = true) {
   if (!rows[0] && required)
     throw new HttpError(401, "Please sign in to continue.");
   return rows[0] as { id: string; name: string } | undefined;
+}
+// A linked wallet is not evidence that this session authenticated that wallet.
+export async function currentAuthentication(req:Request){
+ const user=await currentUser(req,false);if(!user)return null;
+ const proof=readSessionProof(cookie(req,authenticationCookieName),{clientId:'crm',session:cookie(req,cookieName),secret:process.env.AUTH_SECRET});if(!proof)return null;
+ const found=await pool().query('SELECT 1 FROM identities WHERE user_id=$1 AND kind=$2 AND value=$3 AND verified_at IS NOT NULL LIMIT 1',[user.id,proof.kind,proof.identity]);
+ return found.rows.length?proof:null;
 }
 export async function rateLimit(key: string, max = 20) {
   const { rows } = await pool().query(
@@ -200,6 +209,7 @@ export async function verifyChallenge(
   body: { id: string; proof: string; recover?: boolean },
 ) {
   checkOrigin(req);
+  if(!process.env.AUTH_SECRET||process.env.AUTH_SECRET.length<32)throw new HttpError(503,"Session authentication signing is unavailable.");
   const browser = cookie(req, challengeCookie),
     activeUser = await currentUser(req, false);
   const sessionToken = token();
@@ -329,7 +339,7 @@ export async function verifyChallenge(
     await db.query("DELETE FROM sessions WHERE hash=$1", [
       hash(cookie(req, cookieName)),
     ]);
-    return { userId };
+    return { userId,authenticationIdentity:c.value as string,authenticatedAt:Date.now() };
   });
   if (result.error) throw new HttpError(400, result.error);
   if (result.recovery || result.reauthenticated)
@@ -342,5 +352,6 @@ export async function verifyChallenge(
   return {
     body: { ok: true },
     cookie: setCookie(cookieName, sessionToken, 604800),
+    authenticationCookie:setCookie(authenticationCookieName,issueSessionProof({clientId:'crm',session:sessionToken,identity:result.authenticationIdentity!,authTime:result.authenticatedAt!},process.env.AUTH_SECRET),604800),
   };
 }
