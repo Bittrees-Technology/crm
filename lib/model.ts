@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { organizationStandingSchema } from "./organization-standing-model";
 import { currencyCodes, validAmount } from "./currencies";
 export const kinds = [
   "people",
@@ -35,6 +36,7 @@ export const recordSchema = z
       .union([z.url({ protocol: /^https?$/ }), z.literal("")])
       .default(""),
     category: short,
+    organizationStanding: organizationStandingSchema.optional(),
     investorFit: z
       .enum(["Promising fit", "Needs research", "Low fit"])
       .optional(),

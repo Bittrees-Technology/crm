@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { checkStandingImport } from "./standing-ui-check";
 import { checkRecordReadability } from "./record-readability-check";
 import { expect, type Page } from "@playwright/test";
 import { pool, transaction } from "../lib/db";
@@ -129,6 +130,7 @@ export async function checkWorkflows(
     (await api(page, "me")).opportunityTypes.includes("UX custom type"),
   );
   await checkRecordReadability(page, origin, checkAccessibility);
+  await checkStandingImport(page, api, me, origin, checkAccessibility);
   await page.goto(origin + "/?view=opportunities");
   await page
     .getByRole("button", { name: "Add opportunity in Proposal", exact: true })

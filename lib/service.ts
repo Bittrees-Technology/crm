@@ -1,4 +1,4 @@
-import { trustedSupplierData, withoutSupplierMetadata } from "./supplier-research";
+import { supplierSignature, trustedSupplierData, withoutSupplierMetadata } from "./supplier-research";
 import { getAddress } from "ethers";
 import {
   accessIds,
@@ -226,6 +226,10 @@ export async function saveRecordInTransaction(
         ).rows[0]?.data
       : undefined;
     const submitted = (input as any)?.data || {};
+    if (submitted.organizationStanding !== undefined && supplierSignature(submitted.organizationStanding) !== supplierSignature(previous?.organizationStanding ?? null))
+      throw new HttpError(403, "Organization standing requires the owner review import.");
+    // Older clients may omit the field; ordinary edits must preserve the review.
+    if (previous?.organizationStanding) body.data.organizationStanding = previous.organizationStanding;
     for (const key of ["supplierResearch", "supplierPreparation", "sourceTaskIds"]) {
       if (submitted[key] !== undefined && JSON.stringify(submitted[key]) !== JSON.stringify(previous?.[key]))
         throw new HttpError(403, "Supplier research sources and parent links require owner preparation.");
@@ -377,6 +381,8 @@ export async function importRecords(userId: string, w: string, input: unknown) {
       rows: z.array(recordSchema).min(1).max(500),
     })
     .parse(input);
+  if (body.rows.some((r) => r.organizationStanding !== undefined))
+    throw new HttpError(403, "Organization standing requires the owner review import.");
   return transaction(async (db) => {
     await membership(w, userId, true, false, db);
     await db.query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE", [w]);

@@ -27,6 +27,10 @@ export const viewSchema = z.strictObject({
     "research",
   ]),
   board: z.boolean(),
+  standingTier: z.enum(["all", "A", "B", "C", "P", "U", "none"]).optional(),
+  standingSort: z
+    .enum(["default", "standing", "confidence", "queue", "name"])
+    .optional(),
 });
 export async function views(user: string, workspace: string, raw?: unknown) {
   return transaction(async (db) => {

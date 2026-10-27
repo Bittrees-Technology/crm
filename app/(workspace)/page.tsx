@@ -1,5 +1,7 @@
 "use client";
 import { RecordProfile, RelatedRecords } from "../components/record-profile";
+import { StandingImport } from "../components/standing-import";
+import { standingFor, standingOrder } from "@/lib/organization-standing-model";
 import { InvestorResearch } from "../components/investor-research";
 import {SharedProfileCard} from "../../shared/sso/SharedProfileCard.jsx";
 import {useSharedSignIn} from "../../shared/sso/useSharedSignIn.jsx";
@@ -95,6 +97,8 @@ type SavedView = {
   search: string;
   filter: string;
   board: boolean;
+  standingTier?: string;
+  standingSort?: string;
 };
 type Member = {
   id: string;
@@ -654,6 +658,9 @@ export default function App() {
     } | null>(null),
     [linking, setLinking] = useState(false),
     [importing, setImporting] = useState(false),
+    [standingImport, setStandingImport] = useState(false),
+    [standingSort, setStandingSort] = useState("default"),
+    [standingTier, setStandingTier] = useState("all"),
     [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [inviteKind, setInviteKind] = useState<"email" | "wallet">("email");
   const [inviteScope, setInviteScope] = useState<string[] | null>(null);
@@ -726,6 +733,8 @@ export default function App() {
       search,
       filter,
       board,
+      standingTier,
+      standingSort,
     };
     await action(async () => {
       const next = demo
@@ -1081,6 +1090,15 @@ export default function App() {
         r.data.status !== "Done" &&
         !(r.kind === "opportunities" && ["Won", "Lost"].includes(r.data.stage)),
     );
+  if (["people", "organizations"].includes(page)) {
+    if (standingTier !== "all") visible = visible.filter((r) => (standingFor(r, records)?.assessment.tier || "none") === standingTier);
+    if (standingSort !== "default") visible = [...visible].sort((a, b) => {
+      const x = standingFor(a, records)?.assessment, y = standingFor(b, records)?.assessment;
+      return (standingSort === "standing" ? standingOrder(x?.tier) - standingOrder(y?.tier)
+        : standingSort === "confidence" ? (x?.confidence === "Medium" ? 0 : x ? 1 : 2) - (y?.confidence === "Medium" ? 0 : y ? 1 : 2)
+        : standingSort === "queue" ? (x?.reviewQueue || "~").localeCompare(y?.reviewQueue || "~") : 0) || a.data.name.localeCompare(b.data.name);
+    });
+  }
   async function save(
     kind: Kind,
     data: RecordData,
@@ -2254,6 +2272,14 @@ export default function App() {
                     <option value="due">Follow-ups due</option>
                   )}
                 </select>
+                {["people", "organizations"].includes(page) && <>
+                  <select aria-label="Standing tier" value={standingTier} onChange={(e) => setStandingTier(e.target.value)}>
+                    <option value="all">All standing tiers</option><option value="A">A · Leading / high visibility</option><option value="B">B · Established / institutional</option><option value="C">C · Active / developing evidence</option><option value="P">P · Separate platform route</option><option value="U">U · Insufficient evidence</option><option value="none">Not assessed</option>
+                  </select>
+                  <select aria-label="Sort investor research" value={standingSort} onChange={(e) => setStandingSort(e.target.value)}>
+                    <option value="default">Default order</option><option value="standing">Organization standing</option><option value="confidence">Evidence confidence</option><option value="queue">Review queue</option><option value="name">Name</option>
+                  </select>
+                </>}
                 {savedViews.some((v) => v.page === page) && (
                   <select
                     data-insights="saved-views"
@@ -2266,6 +2292,8 @@ export default function App() {
                       if (v) {
                         setSearch(v.search);
                         setFilter(v.filter);
+                        setStandingTier(v.standingTier || "all");
+                        setStandingSort(v.standingSort || "default");
                         setBoard(v.board);
                       }
                     }}
@@ -2352,13 +2380,14 @@ export default function App() {
                       Import CSV
                     </button>
                   )}
+                {page === "organizations" && snapshot.role === "owner" && !demo && <button className="button subtle" onClick={() => setStandingImport(true)}>Review standing file</button>}
                 <button
                   className="button subtle"
                   title="Export this view as CSV"
                   onClick={() =>
                     download(
                       Papa.unparse(
-                        visible.map((r) => ({ id: r.id, ...r.data })),
+                        visible.map((r) => { const a = standingFor(r, records)?.assessment; return { id: r.id, ...r.data, organizationStanding: a ? JSON.stringify(a) : "", standingTier: a?.tier || "", standingConfidence: a?.confidence || "", standingReviewQueue: a?.reviewQueue || "" }; }),
                         { escapeFormulae: true },
                       ),
                       `bittrees-${page}.csv`,
@@ -2370,6 +2399,7 @@ export default function App() {
                   <span className="hide-mobile">Export</span>
                 </button>
               </div>
+              {standingImport && page === "organizations" && snapshot.role === "owner" && !demo && <StandingImport key={workspace} workspace={workspace} api={api} onClose={() => setStandingImport(false)} onSaved={async (message) => { await refresh(); setStandingImport(false); notify(message); }} />}
               {page === "opportunities" && board && filter !== "archived" ? (
                 <div className="board">
                   {stages.map((stage, i) => {
@@ -2525,6 +2555,7 @@ export default function App() {
                                       "Incomplete"}
                                   </small>
                                 )}
+                                {standingFor(r, records) && <small>{r.kind === "people" ? "Organization standing" : "Standing"}: {standingFor(r, records)!.assessment.tier} · {standingFor(r, records)!.assessment.confidence} confidence · provisional</small>}
                                 {r.data.title && <small>{r.data.title}</small>}
                               </span>
                             </button>
