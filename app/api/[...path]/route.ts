@@ -22,6 +22,7 @@ import {
   checkOrigin,
   cookie,
   cookieName,
+  authenticationCookieName,
   currentUser,
   hash,
   rateLimit,
@@ -268,7 +269,9 @@ async function handle(req: NextRequest) {
             })
             .parse(body),
         );
-        return json(result.body, 200, { "Set-Cookie": result.cookie });
+        const response=json(result.body,200,{"Set-Cookie":result.cookie});
+        if('authenticationCookie' in result&&typeof result.authenticationCookie==='string')response.headers.append('Set-Cookie',result.authenticationCookie);
+        return response;
       }
       if (path === "auth/verify") {
         const result = await verifyChallenge(
@@ -281,7 +284,9 @@ async function handle(req: NextRequest) {
             })
             .parse(body),
         );
-        return json(result.body, 200, { "Set-Cookie": result.cookie });
+        const response=json(result.body,200,{"Set-Cookie":result.cookie});
+        if('authenticationCookie' in result&&typeof result.authenticationCookie==='string')response.headers.append('Set-Cookie',result.authenticationCookie);
+        return response;
       }
       if (path === "auth/recover") {
         const input = z
@@ -291,7 +296,9 @@ async function handle(req: NextRequest) {
           })
           .parse(body);
         const result = await completeRecovery(req, input.token);
-        return json(result.body, 200, { "Set-Cookie": result.cookie });
+        const response=json(result.body,200,{"Set-Cookie":result.cookie});
+        if('authenticationCookie' in result&&typeof result.authenticationCookie==='string')response.headers.append('Set-Cookie',result.authenticationCookie);
+        return response;
       }
       if (path === "auth/logout") {
         await pool().query("DELETE FROM sessions WHERE hash=$1", [
