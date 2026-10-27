@@ -25,13 +25,13 @@ BEGIN
  RETURN NULL;
 END $$;
 DO $$ BEGIN
- IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='crm_records_revision') THEN
+ IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='crm_records_revision' AND tgrelid='records'::regclass) THEN
   CREATE TRIGGER crm_records_revision AFTER INSERT OR UPDATE OR DELETE ON records FOR EACH ROW EXECUTE FUNCTION crm_bump_read_revision();
  END IF;
- IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='crm_members_revision') THEN
+ IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='crm_members_revision' AND tgrelid='members'::regclass) THEN
   CREATE TRIGGER crm_members_revision AFTER INSERT OR UPDATE OR DELETE ON members FOR EACH ROW EXECUTE FUNCTION crm_bump_read_revision();
  END IF;
- IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='crm_audit_revision') THEN
+ IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='crm_audit_revision' AND tgrelid='audit'::regclass) THEN
   CREATE TRIGGER crm_audit_revision AFTER INSERT OR UPDATE OR DELETE ON audit FOR EACH ROW EXECUTE FUNCTION crm_bump_read_revision();
  END IF;
 END $$;

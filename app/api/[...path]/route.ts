@@ -1,4 +1,5 @@
 import { backlogConsent } from "@/lib/backlog-consent";
+import { reviewOrganizationStanding } from "@/lib/organization-standing";
 import { supplierInventory, prepareSupplier } from "@/lib/supplier-preparation";
 import { investorProfile } from "@/lib/investor-profile";
 import { projectOptions, configureProject } from "@/lib/project-automation";
@@ -646,6 +647,8 @@ async function handle(req: NextRequest) {
             z.number().int().positive().parse(body.version),
           ),
         );
+      if (resource === "organization-standing" && req.method === "POST")
+        return json(await reviewOrganizationStanding(user.id, w, body));
       if (resource === "import" && req.method === "POST")
         return json(await importRecords(user.id, w, body));
       if (resource === "access" && req.method === "GET")
