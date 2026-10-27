@@ -113,6 +113,8 @@ test("owner-only preview, identities, stale conflict, atomic 617-row preservatio
     reviewOrganizationStanding(stranger, workspace, { upload }),
     /not found/,
   );
+  const revision = (await pool().query("SELECT read_revision FROM workspaces WHERE id=$1", [workspace])).rows[0].read_revision;
+  assert(Number(revision) > 0, "The isolated schema must have its own revision triggers even when other schemas already have namesake triggers");
   const p = await reviewOrganizationStanding(owner, workspace, { upload });
   assert.equal(p.matched, 617);
   assert.equal(p.changed, 617);
