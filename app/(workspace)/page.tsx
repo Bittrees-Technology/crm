@@ -623,7 +623,7 @@ export default function App() {
       members: [],
       audit: [],
     });
-  useSharedSignIn(me?.user?.id);
+  useSharedSignIn(me?.user?.id, !loading);
   const loadingRequest = useRef<AbortController | null>(null);
   const [loadedCount, setLoadedCount] = useState<number | null>(null);
   const quickOperations = useRef(new Map<string, string>());
