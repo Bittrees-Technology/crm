@@ -40,7 +40,8 @@ Signed request IDs have an atomic, independently committed one-use claim. An
 authority-read failure cannot make the accepted request reusable. Each accepted
 request removes at most 100 replay claims expired for over one minute; freshness
 validation already rejects their reuse. Authority reads follow CRM's user then
-workspace lock order, use bounded lock/statement timeouts and never lock member
+identity then workspace lock order (with an explicit exact-identity recheck
+after the user lock), use bounded lock/statement timeouts and never lock member
 rows while waiting for epoch updates. Responses expire no later than the signed
 request and within five seconds.
 

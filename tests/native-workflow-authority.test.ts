@@ -4,7 +4,7 @@ import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import pg from "pg";
 import { pool, schema } from "../lib/db";
 import { nativeWorkflowSchema } from "../lib/native-workflow-schema";
-import { nativeWorkflowAuthority } from "../lib/native-workflow-authority";
+import { currentNativeWorkflowScopes, nativeWorkflowAuthority } from "../lib/native-workflow-authority";
 import { canonical } from "../shared/signed-action.mjs";
 import { PERSONAL_WORKFLOW_ENDPOINT } from "../shared/personal-workflow-authority.mjs";
 import { nativeWorkflowEndpoint, nativeWorkflowRequestMessage, verifyNativeWorkflowDecision } from "../shared/native-workflow-authority.mjs";
@@ -147,4 +147,48 @@ test("trigger uses its installed schema even when a temporary workspaces table s
     assert.notEqual(after, before);
     assert.equal((await db.query("SELECT count(*)::int AS n FROM workspaces")).rows[0].n, 0);
   } finally { await db.end(); }
+});
+test("direct identity deletion/rebinding between user lookup and identity recheck cannot produce old account scopes", async () => {
+  for (const mutation of ["delete", "rebind"]) {
+    const f = await fixture("owner"), target = await fixture("viewer"), old = (await scopes(f.identity))[0].id;
+    const db = new pg.Client({ connectionString: process.env.DATABASE_URL }); await db.connect(); await db.query("BEGIN");
+    let release!: () => void, started!: () => void;
+    const gate = new Promise<void>(r => release = r), entered = new Promise<void>(r => started = r);
+    const pending = currentNativeWorkflowScopes({ query: async (sql: any, values: any) => {
+      const result = await db.query(sql, values);
+      if (String(sql).startsWith("SELECT u.id")) { started(); await gate; }
+      return result;
+    } } as any, f.identity, env, Date.now() + 5000);
+    try {
+      await entered;
+      if (mutation === "delete") await pool().query("DELETE FROM identities WHERE value=$1", [f.identity.value]);
+      else await pool().query("UPDATE identities SET user_id=$1 WHERE value=$2", [target.user, f.identity.value]);
+      release(); assert.deepEqual(await pending, []); await db.query("COMMIT");
+      assert.equal((await scopes(f.identity, "execute", old)).length, 0);
+    } finally { release(); await pending.catch(() => {}); await db.query("ROLLBACK"); await db.end(); }
+  }
+});
+test("locked identity prevents concurrent direct revocation/rebind through the authority snapshot", async () => {
+  for (const mutation of ["DELETE FROM identities WHERE value=$1", "UPDATE identities SET user_id=$2 WHERE value=$1"]) {
+    const f = await fixture(), target = await fixture(), db = new pg.Client({ connectionString: process.env.DATABASE_URL }), admin = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await db.connect(); await admin.connect(); await db.query("BEGIN");
+    let release!: () => void, started!: () => void;
+    const gate = new Promise<void>(r => release = r), entered = new Promise<void>(r => started = r);
+    const pending = currentNativeWorkflowScopes({ query: async (sql: any, values: any) => {
+      const result = await db.query(sql, values);
+      if (String(sql).startsWith("SELECT verified_at,extract")) { started(); await gate; }
+      return result;
+    } } as any, f.identity, env, Date.now() + 5000);
+    try {
+      await entered; await admin.query("SET lock_timeout='200ms'");
+      await assert.rejects(admin.query(mutation, mutation.includes("$2") ? [f.identity.value, target.user] : [f.identity.value]), (error: any) => error.code === "55P03");
+      release(); assert.equal((await pending).length, 1); await db.query("COMMIT");
+      await admin.query("DELETE FROM identities WHERE value=$1", [f.identity.value]); assert.deepEqual(await scopes(f.identity), []);
+    } finally { release(); await pending.catch(() => {}); await db.query("ROLLBACK"); await db.end(); await admin.end(); }
+  }
+});
+test("identity verification generation preserves PostgreSQL microsecond precision", async () => {
+  const f = await fixture(), old = (await scopes(f.identity))[0].id;
+  await pool().query("UPDATE identities SET verified_at=verified_at+interval '1 microsecond' WHERE value=$1", [f.identity.value]);
+  assert.notEqual((await scopes(f.identity))[0].id, old);
 });
