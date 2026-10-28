@@ -1,4 +1,5 @@
 import { invitesSchema } from "./invites-schema";
+import { nativeWorkflowSchema } from "./native-workflow-schema";
 import { workflowSchema } from "./workflow-schema";
 import { leadsSchema } from "./leads-schema";
 import { performanceSchema } from "./performance-schema";
@@ -66,4 +67,5 @@ CREATE TABLE IF NOT EXISTS record_private_notes(record_id uuid NOT NULL REFERENC
   aiSchema +
   performanceSchema +
   leadsSchema +
-  workflowSchema;
+  workflowSchema +
+  nativeWorkflowSchema;
