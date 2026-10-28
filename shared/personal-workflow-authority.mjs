@@ -39,7 +39,8 @@ export function verifyPersonalWorkflowDecision(envelope,request,pem,now=Date.now
  for(const s of d.scopes){
   if(!exact(s,['id','project','roleId','name','expiresAt','provenance'])||!/^scope:[a-f0-9]{64}$/.test(s.id)||s.project!==request.project||!text(s.roleId)||!text(s.name,120)||
    !Number.isSafeInteger(s.expiresAt)||s.expiresAt<=now||s.expiresAt>d.expiresAt||!Array.isArray(s.provenance)||!s.provenance.length||s.provenance.length>100||
-   s.provenance.some(p=>!exact(p,['source','action','resource'])||!['policy','delegation','ethereum-registry','gov-council','research-credential'].includes(p.source)||!text(p.action)||!text(p.resource)))fail();
+   s.provenance.some(p=>!exact(p,['source','action','resource'])||!['policy','delegation','ethereum-registry','gov-council','research-credential','native-app'].includes(p.source)||!text(p.action)||!text(p.resource)||
+    p.source==='native-app'&&(p.action!=='workflow.personal.qualify'||!['crm','autonote'].includes(s.project)||!/^native\.(crm|autonote)\.workspace\.(owner|editor|viewer)$/.test(s.roleId)||!s.roleId.startsWith('native.'+s.project+'.')||!/^workspace:[a-zA-Z0-9][a-zA-Z0-9._:-]{15,63}:membership:[a-zA-Z0-9][a-zA-Z0-9._:-]{15,63}:restrictions:[a-f0-9]{64}$/.test(p.resource))))fail();
  }
  if((!d.authoritative&&(d.allowed||d.scopes.length))||d.allowed!==(d.authoritative&&d.scopes.length>0)||
   (d.allowed?d.reason!=='current-role':d.reason==='current-role')||d.allowed&&(!d.policyDigest||!d.scopes.length)||
