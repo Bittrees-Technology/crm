@@ -18,10 +18,18 @@ export async function currentNativeWorkflowScopes(db: Pick<PoolClient, "query">,
   if (!secret || secret.length < 32) throw Error("Authority unavailable");
   const opaque = (kind: string, value: unknown) => createHmac("sha256", secret).update(canonical(["crm-native-workflow-v1", kind, value])).digest("hex");
   const user = (await db.query(
-    "SELECT u.id,i.verified_at FROM identities i JOIN users u ON u.id=i.user_id WHERE i.kind=$1 AND i.value=$2 AND i.verified_at IS NOT NULL AND u.merged_into IS NULL FOR SHARE OF u",
+    "SELECT u.id FROM identities i JOIN users u ON u.id=i.user_id WHERE i.kind=$1 AND i.value=$2 AND i.verified_at IS NOT NULL AND u.merged_into IS NULL FOR SHARE OF u",
     [identity.kind === "wallet" ? "ethereum" : "email", identity.value],
   )).rows[0];
   if (!user) return [];
+  // Lock the user first, then recheck and lock the exact identity. Locking only
+  // the user does not stop a direct child-row DELETE/rebind. Separate queries
+  // avoid relying on the executor's join row-lock order during account recovery.
+  const verifiedIdentity = (await db.query(
+    "SELECT verified_at,extract(epoch FROM verified_at)::text AS identity_generation FROM identities WHERE kind=$1 AND value=$2 AND user_id=$3 AND verified_at IS NOT NULL FOR SHARE",
+    [identity.kind === "wallet" ? "ethereum" : "email", identity.value, user.id],
+  )).rows[0];
+  if (!verifiedIdentity) return [];
   // Match CRM's user -> workspace lock order. Do not lock member rows after
   // workspace rows: direct member updates may be waiting in the epoch trigger.
   const workspaces = (await db.query(
@@ -42,7 +50,7 @@ export async function currentNativeWorkflowScopes(db: Pick<PoolClient, "query">,
     const restrictionsDigest = createHash("sha256").update(canonical({ scope_ids: row.scope_ids === null ? null : [...row.scope_ids].sort() })).digest("hex");
     const scope = {
       resourceId: opaque("workspace", row.workspace_id),
-      membershipId: opaque("membership", [identity, user.id, String(user.verified_at), row.authority_generation, workspace.authority_generation]),
+      membershipId: opaque("membership", [identity, user.id, verifiedIdentity.identity_generation, row.authority_generation, workspace.authority_generation]),
       roleId: "workspace." + row.role,
       restrictionsDigest,
       expiresAt,
