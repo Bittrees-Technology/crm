@@ -1,5 +1,6 @@
 "use client";
 import { RecordProfile, RelatedRecords } from "../components/record-profile";
+import { ContactResearchImport } from "../components/contact-research";
 import { StandingImport } from "../components/standing-import";
 import { standingFor, standingOrder } from "@/lib/organization-standing-model";
 import { InvestorResearch } from "../components/investor-research";
@@ -659,6 +660,7 @@ export default function App() {
     [linking, setLinking] = useState(false),
     [importing, setImporting] = useState(false),
     [standingImport, setStandingImport] = useState(false),
+    [contactImport, setContactImport] = useState(false),
     [standingSort, setStandingSort] = useState("default"),
     [standingTier, setStandingTier] = useState("all"),
     [creatingWorkspace, setCreatingWorkspace] = useState(false);
@@ -2380,6 +2382,7 @@ export default function App() {
                       Import CSV
                     </button>
                   )}
+                {page === "people" && snapshot.role === "owner" && !demo && <button className="button subtle" onClick={() => setContactImport(true)}>Review contact file</button>}
                 {page === "organizations" && snapshot.role === "owner" && !demo && <button className="button subtle" onClick={() => setStandingImport(true)}>Review standing file</button>}
                 <button
                   className="button subtle"
@@ -2387,7 +2390,7 @@ export default function App() {
                   onClick={() =>
                     download(
                       Papa.unparse(
-                        visible.map((r) => { const a = standingFor(r, records)?.assessment; return { id: r.id, ...r.data, organizationStanding: a ? JSON.stringify(a) : "", standingTier: a?.tier || "", standingConfidence: a?.confidence || "", standingReviewQueue: a?.reviewQueue || "" }; }),
+                        visible.map((r) => { const a = standingFor(r, records)?.assessment; return { id: r.id, ...r.data, publicContacts: r.data.publicContacts ? JSON.stringify(r.data.publicContacts) : "", organizationStanding: a ? JSON.stringify(a) : "", standingTier: a?.tier || "", standingConfidence: a?.confidence || "", standingReviewQueue: a?.reviewQueue || "" }; }),
                         { escapeFormulae: true },
                       ),
                       `bittrees-${page}.csv`,
@@ -2399,6 +2402,7 @@ export default function App() {
                   <span className="hide-mobile">Export</span>
                 </button>
               </div>
+              {contactImport && page === "people" && snapshot.role === "owner" && !demo && <ContactResearchImport key={workspace} workspace={workspace} api={api} onClose={() => setContactImport(false)} onSaved={async (message) => { await refresh(); setContactImport(false); notify(message); }} />}
               {standingImport && page === "organizations" && snapshot.role === "owner" && !demo && <StandingImport key={workspace} workspace={workspace} api={api} onClose={() => setStandingImport(false)} onSaved={async (message) => { await refresh(); setStandingImport(false); notify(message); }} />}
               {page === "opportunities" && board && filter !== "archived" ? (
                 <div className="board">

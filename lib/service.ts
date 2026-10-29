@@ -226,6 +226,9 @@ export async function saveRecordInTransaction(
         ).rows[0]?.data
       : undefined;
     const submitted = (input as any)?.data || {};
+    if (submitted.publicContacts !== undefined && supplierSignature(submitted.publicContacts) !== supplierSignature(previous?.publicContacts ?? []))
+      throw new HttpError(403, "Public contact evidence requires the owner review import.");
+    if (previous?.publicContacts) body.data.publicContacts = previous.publicContacts;
     if (submitted.organizationStanding !== undefined && supplierSignature(submitted.organizationStanding) !== supplierSignature(previous?.organizationStanding ?? null))
       throw new HttpError(403, "Organization standing requires the owner review import.");
     // Older clients may omit the field; ordinary edits must preserve the review.
@@ -381,6 +384,8 @@ export async function importRecords(userId: string, w: string, input: unknown) {
       rows: z.array(recordSchema).min(1).max(500),
     })
     .parse(input);
+  if (body.rows.some((r) => r.publicContacts !== undefined))
+    throw new HttpError(403, "Public contact evidence requires the owner review import.");
   if (body.rows.some((r) => r.organizationStanding !== undefined))
     throw new HttpError(403, "Organization standing requires the owner review import.");
   return transaction(async (db) => {

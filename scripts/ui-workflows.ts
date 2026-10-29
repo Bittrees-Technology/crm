@@ -1,3 +1,4 @@
+import { checkContactResearch } from "./contact-research-ui-check";
 import assert from "node:assert/strict";
 import { checkStandingImport } from "./standing-ui-check";
 import { checkRecordReadability } from "./record-readability-check";
@@ -131,6 +132,7 @@ export async function checkWorkflows(
   );
   await checkRecordReadability(page, origin, checkAccessibility);
   await checkStandingImport(page, api, me, origin, checkAccessibility);
+  await checkContactResearch(page, api, me, origin, checkAccessibility);
   await page.goto(origin + "/?view=opportunities");
   await page
     .getByRole("button", { name: "Add opportunity in Proposal", exact: true })
