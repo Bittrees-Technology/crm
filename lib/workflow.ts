@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { contactAvailabilityValues } from "./contact-availability";
 import { transaction } from "./db";
 import { membership } from "./service";
 import { checkRecordAccess, accessIds, redactRecord } from "./access";
@@ -27,6 +28,7 @@ export const viewSchema = z.strictObject({
     "research",
   ]),
   board: z.boolean(),
+  contactAvailability: z.enum(contactAvailabilityValues).optional(),
   standingTier: z.enum(["all", "A", "B", "C", "P", "U", "none"]).optional(),
   standingSort: z
     .enum(["default", "standing", "confidence", "queue", "name"])

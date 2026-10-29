@@ -1,3 +1,4 @@
+import { checkContactAvailability } from "./contact-availability-ui-check";
 import { checkContactResearch } from "./contact-research-ui-check";
 import assert from "node:assert/strict";
 import { checkStandingImport } from "./standing-ui-check";
@@ -564,6 +565,7 @@ export async function checkWorkflows(
     null,
   );
   await checkContactResearch(page, api, me, origin, checkAccessibility);
+  await checkContactAvailability(page, api, me, origin, checkAccessibility);
   // Remove synthetic leaves before parents now that the fixture includes relationships.
   const deletionOrder = [
     "notes",
