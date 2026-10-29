@@ -1,4 +1,10 @@
 "use client";
+import {
+  contactFields,
+  matchesContactAvailability,
+  normalizeContactAvailability,
+  type ContactAvailability,
+} from "@/lib/contact-availability";
 import { ContactMethodsEditor } from "../components/contact-methods";
 import { RecordProfile, RelatedRecords } from "../components/record-profile";
 import { ContactResearchImport } from "../components/contact-research";
@@ -99,6 +105,7 @@ type SavedView = {
   search: string;
   filter: string;
   board: boolean;
+  contactAvailability?: ContactAvailability;
   standingTier?: string;
   standingSort?: string;
 };
@@ -636,6 +643,7 @@ export default function App() {
   const [page, setPage] = useState<Page>("today"),
     [search, setSearch] = useState(""),
     [filter, setFilter] = useState("all"),
+    [contactAvailability, setContactAvailability] = useState<ContactAvailability>("all"),
     [board, setBoard] = useState(true),
     [mobile, setMobile] = useState(false),
     [busy, setBusy] = useState(false),
@@ -736,6 +744,7 @@ export default function App() {
       search,
       filter,
       board,
+      contactAvailability,
       standingTier,
       standingSort,
     };
@@ -1071,6 +1080,7 @@ export default function App() {
     (r) =>
       r.kind === "opportunities" && !["Won", "Lost"].includes(r.data.stage),
   );
+  const contactFilterActive = ["people", "organizations"].includes(page) && contactAvailability !== "all";
   let visible = (
     filter === "archived"
       ? snapshot.records.filter((r) => !!r.archived_at)
@@ -1080,6 +1090,8 @@ export default function App() {
       r.kind === page &&
       JSON.stringify(r.data).toLowerCase().includes(search.toLowerCase()),
   );
+  if (contactFilterActive)
+    visible = visible.filter((r) => matchesContactAvailability(r.data, contactAvailability));
   if (filter === "promising") visible = visible.filter((r) => r.data.investorFit === "Promising fit");
   if (filter === "verified") visible = visible.filter((r) => r.data.investorVerification === "Fully verified");
   if (filter === "research") visible = visible.filter((r) => r.data.investorVerification === "Incomplete");
@@ -2276,6 +2288,25 @@ export default function App() {
                   )}
                 </select>
                 {["people", "organizations"].includes(page) && <>
+                  <select
+                    aria-label="Contact availability"
+                    value={contactAvailability}
+                    onChange={(e) => setContactAvailability(normalizeContactAvailability(e.target.value))}
+                  >
+                    <option value="all">Contact info: all</option>
+                    <optgroup label="Has information">
+                      {Object.entries(contactFields).map(([field, label]) => (
+                        <option key={field} value={`has:${field}`}>Has {label}</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Missing information">
+                      {Object.entries(contactFields).map(([field, label]) => (
+                        <option key={field} value={`missing:${field}`}>
+                          {field === "any" ? "No contact info" : field === "social" ? "No social profiles" : `Missing ${label}`}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </select>
                   <select aria-label="Standing tier" value={standingTier} onChange={(e) => setStandingTier(e.target.value)}>
                     <option value="all">All standing tiers</option><option value="A">A · Leading / high visibility</option><option value="B">B · Established / institutional</option><option value="C">C · Active / developing evidence</option><option value="P">P · Separate platform route</option><option value="U">U · Insufficient evidence</option><option value="none">Not assessed</option>
                   </select>
@@ -2295,6 +2326,7 @@ export default function App() {
                       if (v) {
                         setSearch(v.search);
                         setFilter(v.filter);
+                        setContactAvailability(normalizeContactAvailability(v.contactAvailability));
                         setStandingTier(v.standingTier || "all");
                         setStandingSort(v.standingSort || "default");
                         setBoard(v.board);
@@ -2403,6 +2435,11 @@ export default function App() {
                   <span className="hide-mobile">Export</span>
                 </button>
               </div>
+              {contactFilterActive && loadedCount === null && (
+                <p className="muted small" role="status">
+                  {visible.length.toLocaleString()} matching {visible.length === 1 ? "record" : "records"}
+                </p>
+              )}
               {contactImport && page === "people" && snapshot.role === "owner" && !demo && <ContactResearchImport key={workspace} workspace={workspace} api={api} onClose={() => setContactImport(false)} onSaved={async (message) => { await refresh(); setContactImport(false); notify(message); }} />}
               {standingImport && page === "organizations" && snapshot.role === "owner" && !demo && <StandingImport key={workspace} workspace={workspace} api={api} onClose={() => setStandingImport(false)} onSaved={async (message) => { await refresh(); setStandingImport(false); notify(message); }} />}
               {page === "opportunities" && board && filter !== "archived" ? (
@@ -2725,12 +2762,12 @@ export default function App() {
                 <section className="panel">
                   <Empty
                     title={
-                      search || filter !== "all"
+                      search || filter !== "all" || contactFilterActive
                         ? "No matching records"
                         : `A fresh start for ${labels[page].toLowerCase()}`
                     }
                     text={
-                      search || filter !== "all"
+                      search || filter !== "all" || contactFilterActive
                         ? "Try another search or change your filter."
                         : "No records yet. Add a record to get started."
                     }
@@ -2739,7 +2776,7 @@ export default function App() {
                         ? () => setEditing({ kind: page as Kind })
                         : undefined
                     }
-                    label="Add your first record"
+                    label={contactFilterActive ? "Add record" : "Add your first record"}
                   />
                 </section>
               )}
