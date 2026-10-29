@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { contactMethodSchema } from "./contact-methods";
 import { organizationStandingSchema } from "./organization-standing-model";
 import { currencyCodes, validAmount } from "./currencies";
 export const kinds = [
@@ -35,6 +36,7 @@ export const recordSchema = z
     website: z
       .union([z.url({ protocol: /^https?$/ }), z.literal("")])
       .default(""),
+    contactMethods: z.array(contactMethodSchema).max(20).optional(),
     category: short,
     organizationStanding: organizationStandingSchema.optional(),
     investorFit: z
