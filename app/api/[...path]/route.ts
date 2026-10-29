@@ -1,3 +1,4 @@
+import { reviewPeopleContacts } from "@/lib/contact-research";
 import { backlogConsent } from "@/lib/backlog-consent";
 import { reviewOrganizationStanding } from "@/lib/organization-standing";
 import { supplierInventory, prepareSupplier } from "@/lib/supplier-preparation";
@@ -654,6 +655,8 @@ async function handle(req: NextRequest) {
             z.number().int().positive().parse(body.version),
           ),
         );
+      if (resource === "people-contact-research" && req.method === "POST")
+        return json(await reviewPeopleContacts(user.id, w, body));
       if (resource === "organization-standing" && req.method === "POST")
         return json(await reviewOrganizationStanding(user.id, w, body));
       if (resource === "import" && req.method === "POST")

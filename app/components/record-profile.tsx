@@ -1,4 +1,5 @@
 import { ContactMethodsProfile } from "./contact-methods";
+import { PublicContacts } from "./contact-research";
 import { OrganizationStandingProfile } from "./organization-standing";
 import type { ReactNode } from "react";
 import type { CrmRecord, Kind, RecordData } from "@/lib/model";
@@ -184,7 +185,14 @@ export function RecordProfile({
   }
   return (
     <section aria-label="Record profile" className="record-profile-sections">
-      <OrganizationStandingProfile record={record} records={records} onOpen={onOpen} />
+      {record.kind === "people" && (
+        <PublicContacts contacts={data.publicContacts || []} />
+      )}
+      <OrganizationStandingProfile
+        record={record}
+        records={records}
+        onOpen={onOpen}
+      />
       {groups.map(([title, fields]) => {
         const present = fields.filter(
           ([key]) => data[key] !== "" && data[key] != null,

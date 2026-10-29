@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { contactMethodSchema } from "./contact-methods";
+import { publicContactSchema } from "./contact-research-model";
 import { organizationStandingSchema } from "./organization-standing-model";
 import { currencyCodes, validAmount } from "./currencies";
 export const kinds = [
@@ -39,6 +40,7 @@ export const recordSchema = z
     contactMethods: z.array(contactMethodSchema).max(20).optional(),
     category: short,
     organizationStanding: organizationStandingSchema.optional(),
+    publicContacts: z.array(publicContactSchema).max(50).optional(),
     investorFit: z
       .enum(["Promising fit", "Needs research", "Low fit"])
       .optional(),
