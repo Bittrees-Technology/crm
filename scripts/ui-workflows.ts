@@ -132,7 +132,6 @@ export async function checkWorkflows(
   );
   await checkRecordReadability(page, origin, checkAccessibility);
   await checkStandingImport(page, api, me, origin, checkAccessibility);
-  await checkContactResearch(page, api, me, origin, checkAccessibility);
   await page.goto(origin + "/?view=opportunities");
   await page
     .getByRole("button", { name: "Add opportunity in Proposal", exact: true })
@@ -492,6 +491,7 @@ export async function checkWorkflows(
       .archived_at,
     null,
   );
+  await checkContactResearch(page, api, me, origin, checkAccessibility);
   // Remove synthetic leaves before parents now that the fixture includes relationships.
   const deletionOrder = [
     "notes",

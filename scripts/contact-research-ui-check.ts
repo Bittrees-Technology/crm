@@ -8,8 +8,17 @@ export async function checkContactResearch(
   accessibility: any,
 ) {
   const base = "workspaces/" + me.workspaces[0].id;
+  await api(page, base + "/records", {
+    kind: "people",
+    data: {
+      name: "Contact review fixture",
+      description: "Synthetic public contact review fixture",
+    },
+  });
   const records = (await api(page, base)).records;
-  const person = records.find((r: any) => r.kind === "people");
+  const person = records.find(
+    (r: any) => r.kind === "people" && r.data.name === "Contact review fixture",
+  );
   const contact = {
     kind: "X",
     value: "https://x.com/synthetic_crm",
