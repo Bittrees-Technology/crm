@@ -78,6 +78,26 @@ export async function checkWorkflows(
         .getByLabel("Email address", { exact: true })
         .fill("ux-contact@example.com");
     }
+    if (kind === "people" || kind === "organizations") {
+      for (const [type, value] of [
+        ["phone", "+1 212 555 0199"],
+        ["linkedin", "https://www.linkedin.com/in/ux-example"],
+        ["x", "https://x.com/ux_example"],
+        ["address", "123 Example St\nNew York, NY 10001"],
+      ]) {
+        await dialog
+          .getByRole("button", { name: "Add contact field", exact: true })
+          .click();
+        const row = dialog.locator(".contact-method-row").last();
+        await row.locator("select").selectOption(type);
+        await row.getByLabel("Label", { exact: false }).fill("Work");
+        await row
+          .locator(
+            ".contact-method-value input, .contact-method-value textarea",
+          )
+          .fill(value);
+      }
+    }
     if (kind === "opportunities") {
       await expect(
         dialog.getByRole("combobox", { name: "Stage", exact: true }),
@@ -121,8 +141,60 @@ export async function checkWorkflows(
       page.getByText("UX " + singular, { exact: true }),
     ).toBeVisible();
   }
-  const records = (await api(page, base)).records;
+  let records = (await api(page, base)).records;
   assert.equal(records.length, 6);
+  for (const kind of ["people", "organizations"]) {
+    assert.equal(
+      records.find((r: any) => r.kind === kind).data.contactMethods.length,
+      4,
+    );
+    await page.goto(origin + "/?view=" + kind);
+    await page
+      .locator(".record-link")
+      .filter({ has: page.getByText("UX " + names[kind], { exact: true }) })
+      .click();
+    const profile = page.getByRole("dialog");
+    await expect(
+      profile.getByRole("link", {
+        name: "https://x.com/ux_example",
+        exact: true,
+      }),
+    ).toHaveAttribute("href", "https://x.com/ux_example");
+    await profile
+      .getByRole("button", { name: "Edit record", exact: true })
+      .click();
+    await expect(profile.locator(".contact-method-row")).toHaveCount(4);
+    await page.setViewportSize({ width: 390, height: 950 });
+    await checkAccessibility(page, kind + " mobile contacts");
+    if (process.env.CRM_CONTACT_SCREENSHOTS === "true")
+      await profile.screenshot({
+        path: `/tmp/crm-contacts-${kind}-mobile.png`,
+      });
+    assert.equal(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+      true,
+    );
+    await page.setViewportSize({ width: 1440, height: 950 });
+    if (process.env.CRM_CONTACT_SCREENSHOTS === "true")
+      await profile.screenshot({
+        path: `/tmp/crm-contacts-${kind}-desktop.png`,
+      });
+    await profile
+      .getByRole("button", { name: "Remove contact field 1", exact: true })
+      .click();
+    await profile
+      .getByRole("button", { name: "Save record", exact: true })
+      .click();
+    await expect(profile).not.toBeVisible();
+    assert.equal(
+      (await api(page, base)).records.find((r: any) => r.kind === kind).data
+        .contactMethods.length,
+      3,
+    );
+  }
+  records = (await api(page, base)).records;
   assert.equal(
     records.find((r: any) => r.kind === "opportunities").data.value,
     "12.50",

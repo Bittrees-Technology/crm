@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { contactMethodSchema } from "./contact-methods";
 import { publicContactSchema } from "./contact-research-model";
 import { organizationStandingSchema } from "./organization-standing-model";
 import { currencyCodes, validAmount } from "./currencies";
@@ -36,6 +37,7 @@ export const recordSchema = z
     website: z
       .union([z.url({ protocol: /^https?$/ }), z.literal("")])
       .default(""),
+    contactMethods: z.array(contactMethodSchema).max(20).optional(),
     category: short,
     organizationStanding: organizationStandingSchema.optional(),
     publicContacts: z.array(publicContactSchema).max(50).optional(),

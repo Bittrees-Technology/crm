@@ -1,3 +1,4 @@
+import { ContactMethodsProfile } from "./contact-methods";
 import { PublicContacts } from "./contact-research";
 import { OrganizationStandingProfile } from "./organization-standing";
 import type { ReactNode } from "react";
@@ -211,6 +212,9 @@ export function RecordProfile({
           </section>
         );
       })}
+      {(kind === "people" || kind === "organizations") && (
+        <ContactMethodsProfile value={data.contactMethods} />
+      )}
       <section className="record-section">
         <h3>{kind === "notes" ? "Note" : "Description / context"}</h3>
         <RecordDescription text={data.description || "No description added."} />

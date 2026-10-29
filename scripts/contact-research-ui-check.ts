@@ -13,6 +13,9 @@ export async function checkContactResearch(
     data: {
       name: "Contact review fixture",
       description: "Synthetic public contact review fixture",
+      contactMethods: [
+        { type: "phone", label: "Work", value: "+1 212 555 0100" },
+      ],
     },
   });
   const records = (await api(page, base)).records;
@@ -91,9 +94,23 @@ export async function checkContactResearch(
     page.getByRole("link", { name: contact.value, exact: true }),
   ).toHaveAttribute("href", contact.value);
   await accessibility(page, "Person sourced social links");
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Close", exact: true })
-    .first()
+  const dialog = page.getByRole("dialog");
+  await dialog
+    .getByRole("button", { name: "Edit record", exact: true })
     .click();
+  await dialog
+    .locator(".contact-method-row")
+    .getByLabel("Phone", { exact: true })
+    .fill("+1 212 555 0199");
+  await dialog
+    .getByRole("button", { name: "Save record", exact: true })
+    .click();
+  await expect(dialog).not.toBeVisible();
+  const edited = (await api(page, base)).records.find(
+    (r: any) => r.id === person.id,
+  );
+  assert.deepEqual(edited.data.publicContacts, [contact]);
+  assert.deepEqual(edited.data.contactMethods, [
+    { type: "phone", label: "Work", value: "+1 212 555 0199" },
+  ]);
 }

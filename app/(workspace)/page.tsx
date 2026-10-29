@@ -1,4 +1,5 @@
 "use client";
+import { ContactMethodsEditor } from "../components/contact-methods";
 import { RecordProfile, RelatedRecords } from "../components/record-profile";
 import { ContactResearchImport } from "../components/contact-research";
 import { StandingImport } from "../components/standing-import";
@@ -2390,7 +2391,7 @@ export default function App() {
                   onClick={() =>
                     download(
                       Papa.unparse(
-                        visible.map((r) => { const a = standingFor(r, records)?.assessment; return { id: r.id, ...r.data, publicContacts: r.data.publicContacts ? JSON.stringify(r.data.publicContacts) : "", organizationStanding: a ? JSON.stringify(a) : "", standingTier: a?.tier || "", standingConfidence: a?.confidence || "", standingReviewQueue: a?.reviewQueue || "" }; }),
+                        visible.map((r) => { const a = standingFor(r, records)?.assessment; return { id: r.id, ...r.data, contactMethods: r.data.contactMethods ? JSON.stringify(r.data.contactMethods) : "", publicContacts: r.data.publicContacts ? JSON.stringify(r.data.publicContacts) : "", organizationStanding: a ? JSON.stringify(a) : "", standingTier: a?.tier || "", standingConfidence: a?.confidence || "", standingReviewQueue: a?.reviewQueue || "" }; }),
                         { escapeFormulae: true },
                       ),
                       `bittrees-${page}.csv`,
@@ -3412,6 +3413,12 @@ function RecordEditor({
                   )}
                 </div>
               </section>
+              {(kind === "people" || kind === "organizations") && (
+                <ContactMethodsEditor
+                  value={data.contactMethods}
+                  onChange={(contactMethods) => setData((current) => ({ ...current, contactMethods }))}
+                />
+              )}
               {kind !== "projects" && (
                 <section className="record-section">
                   <h3>Relationships</h3>

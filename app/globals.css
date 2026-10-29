@@ -2503,3 +2503,68 @@ td,
 .standing-preview { max-height: 420px; overflow: auto; margin: 16px 0; }
 .standing-preview details { padding: 14px; border-bottom: 1px solid var(--border); }
 .standing-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+
+.contact-methods-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.contact-methods-heading p {
+  margin: 4px 0 0;
+}
+.contact-methods-heading button {
+  flex-shrink: 0;
+}
+.contact-method-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr) minmax(
+      180px,
+      2fr
+    ) auto;
+  gap: 12px;
+  align-items: start;
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.contact-method-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.contact-method-row input,
+.contact-method-row select,
+.contact-method-row textarea {
+  width: 100%;
+  min-width: 0;
+}
+.contact-method-remove {
+  margin-top: 30px;
+}
+.contact-method-display {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  .contact-methods-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .contact-method-row {
+    grid-template-columns: 1fr 1fr;
+  }
+  .contact-method-value {
+    grid-column: 1 / -1;
+  }
+  .contact-method-remove {
+    margin-top: 0;
+    justify-self: start;
+  }
+}
+@media (max-width: 400px) {
+  .contact-method-row {
+    grid-template-columns: 1fr;
+  }
+}
