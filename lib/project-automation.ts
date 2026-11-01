@@ -1,4 +1,4 @@
-import { backlogSources } from "./backlog-sources";
+import { backlogSources, historicalBacklogSources } from "./backlog-sources";
 import { backlogTools, importBacklog } from "./backlog-import";
 import {
   validateSupplierTask,
@@ -425,8 +425,8 @@ export async function projectAgent(
         qualification: p.qualification,
         backlogSourceProjectId: p.backlog_source_project || null,
         backlogSourceSiteUrl:
-          backlogSources[
-            p.backlog_source_project as keyof typeof backlogSources
+          historicalBacklogSources[
+            p.backlog_source_project as keyof typeof historicalBacklogSources
           ]?.url || null,
         expiresAt: p.expires_at,
       })),

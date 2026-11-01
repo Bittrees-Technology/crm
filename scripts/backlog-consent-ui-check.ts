@@ -7,7 +7,7 @@ export async function checkBacklogConsent(page: Page, origin: string) {
     operator: "Local Bittrees AI",
     principal: "agent:11111111-1111-4111-8111-111111111111",
     expiresAt: "2099-01-01T01:00:00.000Z",
-    projects: Array.from({ length: 11 }, (_, i) => ({
+    projects: Array.from({ length: 10 }, (_, i) => ({
       sourceProjectId: "site-" + i,
       crmProjectId: "project-" + i,
       name: "Destination " + i,
@@ -40,7 +40,7 @@ export async function checkBacklogConsent(page: Page, origin: string) {
       .getByRole("button", { name: "Review backlog connection", exact: true })
       .click();
     await expect(
-      page.getByText("site-10 → Destination 10", { exact: true }),
+      page.getByText("site-9 → Destination 9", { exact: true }),
     ).toBeVisible();
     const approve = page.getByRole("button", {
       name: "Approve dedicated backlog connection",

@@ -32,10 +32,6 @@ export const backlogSources = {
     name: "CryptoDirectory",
     url: null,
   },
-  "id-agent-control-center": {
-    name: "ID Agents Control Center",
-    url: "https://idacc.bittrees.org",
-  },
   nftfactory: {
     name: "NFTFactory",
     url: "https://nftfactory.org",
@@ -43,5 +39,14 @@ export const backlogSources = {
   tcp: {
     name: "Token Compute Partnership",
     url: "https://tcp.bittrees.org",
+  },
+} as const;
+
+// Historical mappings remain displayable/readable, but cannot authorize new imports.
+export const historicalBacklogSources = {
+  ...backlogSources,
+  "id-agent-control-center": {
+    name: "ID Agents Control Center",
+    url: "https://idacc.bittrees.org",
   },
 } as const;

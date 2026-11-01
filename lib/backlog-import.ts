@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { backlogSources } from "./backlog-sources";
 import type { PoolClient } from "pg";
 import { HttpError, recordSchema } from "./model";
 import { saveRecordInTransaction } from "./service";
@@ -68,6 +69,14 @@ export async function importBacklog(
     throw new HttpError(
       403,
       "This source site is not approved for this project.",
+    );
+  if (
+    name === "tasks.import_source" &&
+    !Object.hasOwn(backlogSources, p.backlog_source_project)
+  )
+    throw new HttpError(
+      403,
+      "This source site is retired; existing imports are retained for review.",
     );
   const keys = [user, p.project_id, a.source, a.sourceId];
   const mapping = (

@@ -42,7 +42,7 @@ const manifestSchema = z.strictObject({
         siteUrl: z.string().url().nullable(),
       }),
     )
-    .length(11),
+    .length(Object.keys(backlogSources).length),
 });
 const configSchema = z.strictObject({
   ownerId: z.uuid(),
@@ -108,11 +108,12 @@ function prepared(raw: unknown) {
   const mappings = config.manifest.mappings;
   if (
     sha(config.manifest) !== config.mappingDigest ||
-    new Set(mappings.map((m) => m.sourceProjectId)).size !== 11 ||
-    new Set(mappings.map((m) => m.crmProjectId)).size !== 11 ||
+    new Set(mappings.map((m) => m.sourceProjectId)).size !==
+      Object.keys(backlogSources).length ||
+    new Set(mappings.map((m) => m.crmProjectId)).size !== mappings.length ||
     mappings.some(
       (m, i) =>
-        !(m.sourceProjectId in backlogSources) ||
+        !Object.hasOwn(backlogSources, m.sourceProjectId) ||
         (backlogSources as any)[m.sourceProjectId].url !== m.siteUrl ||
         (i > 0 && mappings[i - 1].sourceProjectId >= m.sourceProjectId),
     )
@@ -201,7 +202,7 @@ export async function backlogConsent(user: string, raw: unknown) {
         )
       ).rows;
       if (
-        grants.length !== 11 ||
+        grants.length !== config.manifest.mappings.length ||
         config.manifest.mappings.some(
           (m) =>
             !grants.some(

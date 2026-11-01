@@ -252,3 +252,100 @@ test("backlog consent requires bounded absolute expiry and preserves mapping on 
     expiresAt,
   );
 });
+
+test("historical IDACC omissions stay readable and unchanged but cannot receive imports", async () => {
+  const retired = "id-agent-control-center";
+  await pool().query(
+    "UPDATE dataset_project_permissions SET backlog_source_project=$1 WHERE draft_id=$2 AND project_id=$3",
+    [retired, dataset, project],
+  );
+  const taskIds: string[] = [];
+  for (let i = 0; i < 6; i++) {
+    const id = randomUUID(),
+      sourceId = `agent-readiness:${retired}:historical-${i}`;
+    taskIds.push(id);
+    await pool().query(
+      "INSERT INTO records(id,workspace_id,kind,data) VALUES($1,$2,'tasks',$3)",
+      [
+        id,
+        workspace,
+        {
+          name: "Historical omitted task",
+          ownerId: owner,
+          projectId: project,
+          status: "Done",
+          privateNote: "Preserve manual context",
+          sourceId,
+        },
+      ],
+    );
+    await pool().query(
+      "INSERT INTO crm_source_tasks(owner_id,project_id,source,source_id,task_id,content_hash,source_digest,last_fields,source_status,source_priority) VALUES($1,$2,$3,$4,$5,$6,$6,$7,'done','P2')",
+      [
+        owner,
+        project,
+        base.source,
+        sourceId,
+        id,
+        "e".repeat(64),
+        { name: "Historical omitted task" },
+      ],
+    );
+  }
+  const before = (
+    await pool().query(
+      "SELECT id,data,version FROM records WHERE id=ANY($1::uuid[]) ORDER BY id",
+      [taskIds],
+    )
+  ).rows;
+  const listed = await call("projects.list", {});
+  assert.equal(
+    listed.projects[0].backlogSourceSiteUrl,
+    "https://idacc.bittrees.org",
+  );
+  for (let i = 0; i < 6; i++) {
+    const sourceId = `agent-readiness:${retired}:historical-${i}`;
+    const status = await call("tasks.import_source_status", {
+      projectId: project,
+      source: base.source,
+      sourceId,
+    });
+    assert.equal(status.found, true);
+    await assert.rejects(
+      call("tasks.import_source", {
+        ...base,
+        sourceId,
+        sourceUrl: `https://agent.bittrees.org/readiness#historical-${i}`,
+        operationId: randomUUID(),
+      }),
+      { status: 403 },
+    );
+  }
+  await assert.rejects(
+    configureProject(owner, {
+      datasetId: dataset,
+      projectId: project,
+      tasks: false,
+      autoLeads: false,
+      backlogSourceProjectId: retired,
+      expiresAt: new Date(Date.now() + 1800000).toISOString(),
+    }),
+  );
+  assert.deepEqual(
+    (
+      await pool().query(
+        "SELECT id,data,version FROM records WHERE id=ANY($1::uuid[]) ORDER BY id",
+        [taskIds],
+      )
+    ).rows,
+    before,
+  );
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT count(*) FROM crm_source_tasks WHERE source_id LIKE 'agent-readiness:id-agent-control-center:%'",
+      )
+    ).rows[0].count,
+    "6",
+  );
+});

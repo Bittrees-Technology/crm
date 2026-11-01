@@ -124,7 +124,7 @@ after(async () => {
 });
 test("review is read only; invalid signatures and wrong owners cannot consent", async () => {
   const result = await backlogConsent(owner, { leaseReceipt });
-  assert.equal(result.review.projects.length, 11);
+  assert.equal(result.review.projects.length, 10);
   assert.equal(
     (await pool().query("SELECT count(*) FROM dataset_connections")).rows[0]
       .count,
@@ -145,7 +145,94 @@ test("review is read only; invalid signatures and wrong owners cannot consent", 
     { status: 403 },
   );
 });
-test("concurrent consent creates one sealed dedicated connection; exact retry does not renew", async () => {
+test("active consent requires the exact pinned ten-site manifest, not an arbitrary count", async () => {
+  const setConfig = (
+    manifest: any,
+    mappingDigest = createHash("sha256")
+      .update(canonical(manifest))
+      .digest("hex"),
+  ) => {
+    process.env.CRM_BACKLOG_HANDOFF_CONFIG = JSON.stringify({
+      ...config,
+      manifest,
+      mappingDigest,
+    });
+  };
+  const first = manifest.mappings[0];
+  const invalid = [
+    { ...manifest, mappings: manifest.mappings.slice(1) },
+    {
+      ...manifest,
+      mappings: [...manifest.mappings, { ...first, sourceProjectId: "extra" }],
+    },
+    { ...manifest, mappings: [first, first, ...manifest.mappings.slice(2)] },
+    {
+      ...manifest,
+      mappings: manifest.mappings.map((m, i) =>
+        i === 1 ? { ...m, crmProjectId: first.crmProjectId } : m,
+      ),
+    },
+    {
+      ...manifest,
+      mappings: manifest.mappings.map((m, i) =>
+        i === 0
+          ? {
+              ...m,
+              sourceProjectId: "id-agent-control-center",
+              siteUrl: "https://idacc.bittrees.org",
+            }
+          : m,
+      ),
+    },
+    {
+      ...manifest,
+      mappings: manifest.mappings.map((m, i) =>
+        i === 0 ? { ...m, siteUrl: "https://substituted.invalid" } : m,
+      ),
+    },
+  ];
+  try {
+    for (const changed of invalid) {
+      setConfig(changed);
+      await assert.rejects(
+        backlogConsent(owner, { leaseReceipt, confirmed: true }),
+      );
+    }
+    // Substituted destination with an unchanged server-pinned digest is invalid.
+    setConfig(
+      {
+        ...manifest,
+        mappings: manifest.mappings.map((m, i) =>
+          i === 0 ? { ...m, crmProjectId: randomUUID() } : m,
+        ),
+      },
+      mappingDigest,
+    );
+    await assert.rejects(
+      backlogConsent(owner, { leaseReceipt, confirmed: true }),
+    );
+    setConfig(manifest);
+    await assert.rejects(
+      backlogConsent(owner, {
+        leaseReceipt,
+        manifest: invalid[0],
+        confirmed: true,
+      }),
+    );
+    assert.equal(
+      (await pool().query("SELECT count(*) FROM dataset_connections")).rows[0]
+        .count,
+      "0",
+    );
+    assert.equal(
+      (await backlogConsent(owner, { leaseReceipt })).review.projects.length,
+      10,
+    );
+  } finally {
+    process.env.CRM_BACKLOG_HANDOFF_CONFIG = JSON.stringify(config);
+  }
+});
+test("exact ten-site consent imports sixty tasks once; concurrent retry does not renew", async () => {
   const [a, b] = await Promise.all([
     backlogConsent(owner, { leaseReceipt, confirmed: true }),
     backlogConsent(owner, { leaseReceipt, confirmed: true }),
@@ -197,7 +284,7 @@ test("concurrent consent creates one sealed dedicated connection; exact retry do
   const grants = (
     await pool().query("SELECT * FROM dataset_project_permissions")
   ).rows;
-  assert.equal(grants.length, 11);
+  assert.equal(grants.length, 10);
   assert.ok(
     grants.every(
       (g) =>
@@ -219,7 +306,7 @@ test("concurrent consent creates one sealed dedicated connection; exact retry do
       "2025-06-18",
     );
   const listed: any = await call("projects.list", {});
-  assert.equal(JSON.parse(listed.result.content[0].text).projects.length, 11);
+  assert.equal(JSON.parse(listed.result.content[0].text).projects.length, 10);
   for (const m of manifest.mappings)
     for (let i = 0; i < 6; i++) {
       const id = "synthetic-" + i;
@@ -246,7 +333,7 @@ test("concurrent consent creates one sealed dedicated connection; exact retry do
     }
   assert.equal(
     (await pool().query("SELECT count(*) FROM crm_source_tasks")).rows[0].count,
-    "66",
+    "60",
   );
   await pool().query(
     "UPDATE dataset_connections SET expires_at=now()-interval '1 second' WHERE draft_id=$1",
