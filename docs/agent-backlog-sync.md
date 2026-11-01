@@ -1,6 +1,6 @@
 # Agent backlog source import
 
-Agent publishes 66 public tasks across 11 approved sites at
+Agent publishes 60 public tasks across 10 reviewed active sites at
 https://agent.bittrees.org/tasks.json. MCP owns orchestration; CRM owns task
 mutation and authorization. No tasks are imported by deploying this code.
 
@@ -91,7 +91,7 @@ receipt signature is checked against a pinned public key before normalization.
 This is owner-authorized source provisioning, not a live Roles authorization
 decision. MCP must check current Roles authority before every protected effect.
 Source membership, connection expiry and revocation are independently checked
-here. The source token and all eleven grants end at the signed receipt expiry.
+here. The source token and all reviewed grants end at the signed receipt expiry.
 Setup consumes the remaining activation interval. No source grant permits AI
 work, leads, qualification, deletion or renewal.
 
@@ -130,3 +130,16 @@ Apply the additive project-automation migration before deploying this code.
 No production migration, signing/encryption key provisioning, connection or grant
 is implied by a successful local test. Production steps require a verified
 zero-additional-cost path and final owner/native approvals.
+
+## Current scope and historical records
+
+Active consent requires the complete reviewed source-site set in `backlogSources`,
+with exactly one unique existing CRM destination per site, sorted source IDs,
+matching site URLs and the server-pinned manifest digest. The count derives from
+that exact set, never from a browser-provided count. The current scope is 60 tasks
+across ten sites; deployment does not configure or approve this manifest.
+
+IDACC is retired from new imports and source grants. Historical eleven-site
+receipts, mappings and imported tasks remain stored and readable through existing
+authorized status/inventory paths. Missing source tasks never trigger deletion or
+completion, and historical consent cannot be replayed as a new active grant.
