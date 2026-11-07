@@ -1,3 +1,4 @@
+import { workflowAssignmentSource, workflowAssignmentSourceEnabled } from "@/lib/workflow-assignment-source";
 import { reviewPeopleContacts } from "@/lib/contact-research";
 import { backlogConsent } from "@/lib/backlog-consent";
 import { reviewOrganizationStanding } from "@/lib/organization-standing";
@@ -200,6 +201,25 @@ async function handle(req: NextRequest) {
       if (path.endsWith("/status"))
         return json(await leads.agentStatus(bearer, input));
       return json(await leads.prepare(bearer, input));
+    }
+    if (path === "integrations/workflow-assignments") {
+      if (!workflowAssignmentSourceEnabled()) throw new HttpError(404, "Not found.");
+      if (req.method !== "POST") return new Response(null, {status:405,headers:{Allow:"POST","Cache-Control":"no-store"}});
+      if (req.nextUrl.search || req.headers.has("cookie") || req.headers.has("origin"))
+        throw new HttpError(403,"Use the protected workflow source transport.");
+      const bearer=req.headers.get("authorization")?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+      if(!bearer)throw new HttpError(401,"Workflow source connection required.");
+      if(!/^application\/json(?:;\s*charset=utf-8)?$/i.test(req.headers.get("content-type")||"") ||
+        ![null,"identity"].includes(req.headers.get("content-encoding")))throw new HttpError(415,"Use uncompressed JSON.");
+      const reader=req.body?.getReader();if(!reader)throw new HttpError(400,"Workflow source body required.");
+      const chunks:Uint8Array[]=[];let size=0;
+      try{for(;;){const next=await reader.read();if(next.done)break;size+=next.value.byteLength;
+        if(size>24000)throw new HttpError(413,"Workflow source request too large.");chunks.push(next.value);}}
+      finally{await reader.cancel();}
+      let input:unknown;
+      try{input=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(Buffer.concat(chunks)));}
+      catch{throw new HttpError(400,"Invalid workflow source JSON.");}
+      return json(await workflowAssignmentSource(bearer,input,Object.fromEntries(req.headers.entries())));
     }
     if (path === "integrations/datasets/mcp") {
       if (req.headers.get("origin")) checkOrigin(req);
