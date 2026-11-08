@@ -1,5 +1,5 @@
 import { qualificationAgent } from "./qualification";
-import { autoAddLeads, projectAgent } from "./project-automation";
+import { autoAddLeads, projectAgent, permission } from "./project-automation";
 import { randomUUID, createHash } from "node:crypto";
 import { z } from "zod";
 import type { PoolClient } from "pg";
@@ -783,4 +783,33 @@ export async function datasetProjectApprove(user: string, raw: unknown) {
     }
     return { records };
   });
+}
+
+// Native workflow execution is a separate reviewed transport. Reuse the source's
+// actual current owner/connection/project checks; a native proof is not a grant.
+export async function workflowAssignmentDatasetAuthority(
+  db: PoolClient,
+  bearer: string,
+  binding: { ownerId: string; datasetId: string; sourceWorkspace: string },
+  projectId: string,
+) {
+  const d = await credential(db, bearer);
+  if (d.id !== binding.datasetId || d.user_id !== binding.ownerId)
+    throw new HttpError(403, "Workflow source owner or dataset changed.");
+  const p = await permission(db, d, projectId, "tasks");
+  if (p.workspace_id !== binding.sourceWorkspace)
+    throw new HttpError(403, "Workflow source workspace changed.");
+  const row = (
+    await db.query(
+      `SELECT LEAST(p.expires_at,c.expires_at) AS deadline
+       FROM dataset_project_permissions p JOIN dataset_connections c
+       ON c.draft_id=p.draft_id AND c.token_hash=p.token_hash
+       WHERE p.draft_id=$1 AND p.user_id=$2 AND p.project_id=$3
+       AND p.tasks AND p.expires_at>clock_timestamp() AND c.expires_at>clock_timestamp()
+       FOR SHARE OF p,c`,
+      [d.id, d.user_id, projectId],
+    )
+  ).rows[0];
+  if (!row) throw new HttpError(403, "Workflow source consent expired or revoked.");
+  return { deadline: new Date(row.deadline).getTime() };
 }
