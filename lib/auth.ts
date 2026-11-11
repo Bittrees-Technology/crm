@@ -93,6 +93,9 @@ export async function startChallenge(
   },
 ) {
   const origin = checkOrigin(req);
+  const from = body.link || body.recoveryToken
+    ? process.env.EMAIL_FROM
+    : process.env.SIGNIN_EMAIL_FROM || process.env.EMAIL_FROM;
   const user = body.link ? await currentUser(req) : undefined;
   const id = randomUUID(),
     browser = token(),
@@ -146,7 +149,7 @@ export async function startChallenge(
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) || value.length > 254)
       throw new HttpError(400, "Enter a valid email address.");
     if (
-      !(process.env.RESEND_API_KEY && process.env.EMAIL_FROM) &&
+      !(process.env.RESEND_API_KEY && from) &&
       !(
         process.env.NODE_ENV !== "production" &&
         process.env.DEV_EMAIL_CONSOLE === "true"
@@ -173,7 +176,7 @@ export async function startChallenge(
     ],
   );
   if (body.kind === "email") {
-    if (process.env.RESEND_API_KEY && process.env.EMAIL_FROM) {
+    if (process.env.RESEND_API_KEY && from) {
       const response = await fetch("https://api.resend.com/emails", {
         method: "POST",
         signal: AbortSignal.timeout(10000),
@@ -182,7 +185,7 @@ export async function startChallenge(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          from: process.env.EMAIL_FROM,
+          from,
           to: [value],
           subject: "Your Bittrees CRM sign-in code",
           text: `Your Bittrees CRM verification code is ${payload}. It expires in 10 minutes. If you did not request this code, ignore this email.`,

@@ -89,7 +89,8 @@ async function handle(req: NextRequest) {
     if (path === "config" && req.method === "GET")
       return json({
         emailEnabled:
-          !!(process.env.RESEND_API_KEY && process.env.EMAIL_FROM) ||
+          !!(process.env.RESEND_API_KEY &&
+            (process.env.SIGNIN_EMAIL_FROM || process.env.EMAIL_FROM)) ||
           (process.env.NODE_ENV !== "production" &&
             process.env.DEV_EMAIL_CONSOLE === "true"),
         developmentEmail:
