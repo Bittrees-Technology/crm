@@ -277,10 +277,15 @@ try {
       description: "Follow up on the partnership.",
     },
   });
-  await api(page, base + "/records", {
+  const reviewProject = await api(page, base + "/records", {
+    kind: "projects",
+    data: { name: "Browser review project" },
+  });
+  const reviewTask = await api(page, base + "/records", {
     kind: "tasks",
     data: {
       name: "Browser follow-up",
+      projectId: reviewProject.id,
       personId: person.id,
       ownerId: first.user.id,
       dueDate: "2026-09-10",
@@ -297,6 +302,12 @@ try {
     },
   });
   await page.goto(origin + "/?view=tasks");
+  await page.getByRole("button", { name: "Open Browser follow-up", exact: true }).click();
+  await page.getByRole("button", { name: "Mark for AI review" }).click();
+  await expect.poll(async () => {
+    const saved = (await api(page, base)).records.find((r: any) => r.id === reviewTask.id);
+    return [saved.version, saved.data.category, saved.data.projectId, saved.data.status];
+  }).toEqual([reviewTask.version + 1, "AI review", reviewProject.id, "Open"]);
   await page.getByLabel("Due date for Browser follow-up").fill("2026-09-15");
   await page.getByLabel("Due date for Browser follow-up").press("Enter");
   await expect

@@ -3224,6 +3224,31 @@ function RecordEditor({
                 <span className="muted small">
                   {record.archived_at ? "Archived record" : "Record profile"}
                 </span>
+                {record.kind === "tasks" &&
+                  isOwner &&
+                  canEdit &&
+                  !record.archived_at &&
+                  record.data.ownerId === userId &&
+                  record.data.projectId &&
+                  record.data.status === "Open" &&
+                  !record.data.category &&
+                  !("supplierResearch" in record.data) &&
+                  !("supplierPreparation" in record.data) && (
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={busy}
+                      onClick={() =>
+                        onSave(
+                          { ...record.data, category: "AI review" },
+                          undefined,
+                          operationId,
+                        )
+                      }
+                    >
+                      Mark for AI review
+                    </button>
+                  )}
                 {canEdit && !record.archived_at && (
                   <button
                     type="button"
