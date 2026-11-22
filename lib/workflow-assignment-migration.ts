@@ -22,16 +22,17 @@ async function coreSnapshot(db: PoolClient) {
 }
 async function sourceSnapshot(
   db: PoolClient,
-  name: "crm_workflow_assignments" | "crm_workflow_result_receipts",
+  name: "crm_workflow_assignments" | "crm_workflow_result_receipts" | "crm_workflow_task_consents",
 ) {
   const present = (
     await db.query("SELECT to_regclass($1) IS NOT NULL AS present", [name])
   ).rows[0].present;
   if (!present) return null;
-  const fields =
-    name === "crm_workflow_assignments"
-      ? "id,task_id,workspace_id,task_revision,connection_id,assignment,expires_at,revoked_at"
-      : "operation_id,assignment_id,assignment_digest,run_id,lease_id,result,result_digest,created_at";
+  const fields = {
+    crm_workflow_assignments: "id,task_id,workspace_id,task_revision,connection_id,assignment,expires_at,revoked_at",
+    crm_workflow_result_receipts: "operation_id,assignment_id,assignment_digest,run_id,lease_id,result,result_digest,created_at",
+    crm_workflow_task_consents: "review_id,owner_id,dataset_id,expires_at,review,approved_at,revoked_at",
+  }[name];
   return (
     await db.query(
       `SELECT count(*)::text AS count,coalesce(sum(('x'||substr(md5(jsonb_build_array(${fields})::text),1,16))::bit(64)::bigint::numeric),0)::text AS digest FROM ${name}`,
@@ -48,15 +49,18 @@ export async function migrateWorkflowAssignments(db: PoolClient) {
     "LOCK TABLE users,identities,members,workspaces,records IN SHARE ROW EXCLUSIVE MODE",
   );
   const before = await coreSnapshot(db),
+    consentsBefore = await sourceSnapshot(db, "crm_workflow_task_consents"),
     receiptsBefore = await sourceSnapshot(db, "crm_workflow_result_receipts"),
     assignmentsBefore = await sourceSnapshot(db, "crm_workflow_assignments");
   await db.query(workflowAssignmentSchema);
   await db.query(workflowAssignmentCompletionConstraints);
   const after = await coreSnapshot(db),
+    consentsAfter = await sourceSnapshot(db, "crm_workflow_task_consents"),
     receiptsAfter = await sourceSnapshot(db, "crm_workflow_result_receipts"),
     assignmentsAfter = await sourceSnapshot(db, "crm_workflow_assignments");
   if (
     JSON.stringify(before) !== JSON.stringify(after) ||
+    (consentsBefore ? JSON.stringify(consentsBefore) !== JSON.stringify(consentsAfter) : consentsAfter.count !== "0") ||
     (receiptsBefore &&
       JSON.stringify(receiptsBefore) !== JSON.stringify(receiptsAfter)) ||
     (!receiptsBefore && receiptsAfter.count !== "0") ||
@@ -93,7 +97,7 @@ export async function migrateWorkflowAssignments(db: PoolClient) {
   )
     throw Error("Workflow schema indexes or column types unavailable");
   return {
-    migration: "crm-workflow-assignment-source-v1",
+    migration: "crm-workflow-assignment-source-v2",
     crmContentAndMembershipsUnchanged: true,
     existingReceiptsRetained: true,
     snapshot: after,

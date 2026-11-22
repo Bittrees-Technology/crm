@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { PoolClient } from "pg";
 import { transaction } from "./db";
+import {
+  configuredWorkflowBindings,
+  selectedTaskAuthority,
+} from "./workflow-task-consent";
 import { workflowAssignmentDatasetAuthority } from "./datasets";
 import { checkRecordAccess } from "./access";
 import { saveRecordInTransaction } from "./service";
@@ -11,10 +15,7 @@ import {
   workflowAssignmentOperation,
   assignmentDigest,
 } from "./workflow-assignment-transport.mjs";
-import {
-  guardWorkflowAssignmentSource,
-  workflowAssignmentSourceBinding,
-} from "./workflow-assignment-source-guard.mjs";
+import { guardWorkflowAssignmentSource } from "./workflow-assignment-source-guard.mjs";
 const callSchema = z.strictObject({
   version: z.literal(1),
   connectionId: z.uuid(),
@@ -260,19 +261,7 @@ export async function workflowAssignmentSource(
     throw new HttpError(404, "Not found.");
   const call = callSchema.parse(raw),
     bytes = env.CRM_WORKFLOW_ASSIGNMENT_BINDINGS_JSON ?? "[]";
-  if (bytes.length > 128000) throw denied();
-  let rows: z.infer<typeof workflowAssignmentSourceBinding>[];
-  try {
-    rows = z
-      .array(workflowAssignmentSourceBinding)
-      .max(20)
-      .parse(JSON.parse(bytes));
-  } catch {
-    throw new HttpError(
-      503,
-      "Native workflow source configuration unavailable.",
-    );
-  }
+  const rows = configuredWorkflowBindings(bytes);
   const matches = rows.filter((b) => b.connectionId === call.connectionId);
   if (matches.length !== 1) throw denied();
   const binding = matches[0];
@@ -306,12 +295,10 @@ export async function workflowAssignmentSource(
         check();
         // Match the explicit migration lock order before locking source rows.
         await db.query("SELECT pg_advisory_xact_lock_shared(73492017)");
-        const source = await workflowAssignmentDatasetAuthority(
-          db,
-          bearer,
-          binding,
-          context.assignment.projectId,
-        );
+        const source =
+          binding.sourceConsent === "selected-tasks"
+            ? await selectedTaskAuthority(db, bearer, binding, context.assignment.projectId)
+            : await workflowAssignmentDatasetAuthority(db, bearer, binding, context.assignment.projectId);
         sourceDeadline = Math.min(source.deadline, context.deadline);
         deadline(sourceDeadline);
         const state = await taskContext(db, context);

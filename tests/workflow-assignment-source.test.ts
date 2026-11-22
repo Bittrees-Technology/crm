@@ -6,6 +6,7 @@ import { randomUUID, generateKeyPairSync, sign } from "node:crypto";
 import { pool, schema, transaction } from "../lib/db";
 import { migrateWorkflowAssignments } from "../lib/workflow-assignment-migration";
 import { workflowAssignmentSchema } from "../lib/workflow-assignment-schema.mjs";
+import { changeTaskConsent, reviewTaskConsents } from "../lib/workflow-task-consent";
 import { workflowAssignmentSource } from "../lib/workflow-assignment-source";
 import {
   workflowAssignmentAuthority,
@@ -130,9 +131,10 @@ async function fixture(completeTask = false) {
     op: any,
     state = "running",
     mutate?: (decision: any, proof: any) => void,
+    target = assignment,
   ) {
     const now = Date.now(),
-      auth = workflowAssignmentAuthority(assignment, binding.connectionId, op);
+      auth = workflowAssignmentAuthority(target, binding.connectionId, op);
     const request = {
       version: 1,
       source: "mcp.bittrees.org",
@@ -147,7 +149,7 @@ async function fixture(completeTask = false) {
       tenant: "t",
       workspace: "w",
       project: "workflow",
-      resource: "workflow:" + assignment.workflowId,
+      resource: "workflow:" + target.workflowId,
       action: auth.action,
       stage: "execute",
       parametersDigest: assignmentDigest(auth.parameters),
@@ -169,7 +171,7 @@ async function fixture(completeTask = false) {
       audience: "https://crm.bittrees.org",
       kind: "crm-result-lease",
       state,
-      assignmentDigest: assignmentDigest(assignment),
+      assignmentDigest: assignmentDigest(target),
       connectionId: binding.connectionId,
       runId: op.runId,
       leaseId: op.leaseId,
@@ -392,44 +394,66 @@ test("owner edits and missing/expired/forged lease proofs prevent source effects
     0,
   );
 });
-test("separately approved completed-state finalization changes only status and reconciles once", async () => {
-  const f = await fixture(true);
-  await f.call("assignment", f.op("intake"));
-  const lease = {
-      runId: randomUUID(),
-      leaseId: randomUUID(),
-      crmOperationId: randomUUID(),
-    },
-    result = { summary: "Validated source result" },
-    digest = assignmentDigest(result);
-  await f.call("result", f.op("write", { ...lease, result }));
-  const complete = f.op("complete", {
-    ...lease,
-    operationId: randomUUID(),
-    resultDigest: digest,
-    expiresAt: Date.now() + 60000,
+for (const selected of [false, true]) {
+  test(`completed-state finalization changes only status and reconciles once with ${selected ? "selected-task" : "project"} access`, async () => {
+    const f = await fixture(true);
+    if (selected) {
+      await pool().query(
+        "DELETE FROM dataset_project_permissions WHERE draft_id=$1",
+        [f.dataset],
+      );
+      f.env.CRM_LEADS_ENABLED = "true";
+      f.env.CRM_WORKFLOW_ASSIGNMENT_BINDINGS_JSON = JSON.stringify([
+        { ...f.binding, sourceConsent: "selected-tasks" },
+      ]);
+      const {
+        requests: [request],
+      } = await reviewTaskConsents(f.owner, f.dataset, f.env);
+      await changeTaskConsent(
+        f.owner,
+        { action: "approve", datasetId: f.dataset, reviewId: request.reviewId },
+        f.env,
+      );
+    }
+    await f.call("assignment", f.op("intake"));
+    const lease = {
+        runId: randomUUID(),
+        leaseId: randomUUID(),
+        crmOperationId: randomUUID(),
+      },
+      result = { summary: "Validated source result" },
+      digest = assignmentDigest(result);
+    await f.call("result", f.op("write", { ...lease, result }));
+    const complete = f.op("complete", {
+      ...lease,
+      operationId: randomUUID(),
+      resultDigest: digest,
+      expiresAt: Date.now() + 60000,
+    });
+    await assert.rejects(f.call("finalize", complete, "running"), {
+      status: 403,
+    });
+    const first = await f.call("finalize", complete, "completed");
+    assert.equal(first.task.status, "Done");
+    assert.equal(first.task.taskVersion, 2);
+    const current = (
+      await pool().query("SELECT data,version FROM records WHERE id=$1", [
+        f.task,
+      ])
+    ).rows[0];
+    assert.deepEqual(current.data, { ...f.taskData, status: "Done" });
+    assert.equal(current.version, 2);
+    const recover = { ...complete, kind: "completion" };
+    delete (recover as any).expiresAt;
+    const again = await f.call("finalization", recover, "completed");
+    assert.equal(again.task.replayed, true);
+    assert.equal(again.task.taskVersion, 2);
+    assert.equal(
+      (await f.call("result", f.op("receipt", lease))).receipt.resultDigest,
+      digest,
+    );
   });
-  await assert.rejects(f.call("finalize", complete, "running"), {
-    status: 403,
-  });
-  const first = await f.call("finalize", complete, "completed");
-  assert.equal(first.task.status, "Done");
-  assert.equal(first.task.taskVersion, 2);
-  const current = (
-    await pool().query("SELECT data,version FROM records WHERE id=$1", [f.task])
-  ).rows[0];
-  assert.deepEqual(current.data, { ...f.taskData, status: "Done" });
-  assert.equal(current.version, 2);
-  const recover = { ...complete, kind: "completion" };
-  delete (recover as any).expiresAt;
-  const again = await f.call("finalization", recover, "completed");
-  assert.equal(again.task.replayed, true);
-  assert.equal(again.task.taskVersion, 2);
-  assert.equal(
-    (await f.call("result", f.op("receipt", lease))).receipt.resultDigest,
-    digest,
-  );
-});
+}
 test("changed result notes and withdrawn status approval prevent completion without overwriting edits", async () => {
   const f = await fixture(true);
   await f.call("assignment", f.op("intake"));
@@ -545,6 +569,7 @@ test("owner membership revoked during a lock wait denies the pending write", asy
   let pending: Promise<any> | undefined;
   try {
     await blocker.query("BEGIN");
+    await blocker.query("SET LOCAL search_path TO " + isolated);
     await blocker.query(
       "SELECT id FROM " + isolated + ".workspaces WHERE id=$1 FOR UPDATE",
       [f.workspace],
@@ -718,4 +743,181 @@ test("actual REST route uses protected source authority and rejects browser, ove
       else process.env[key] = value;
     }
   }
+});
+
+test("owner approval permits only the selected task revisions and revocation stops the next protected operation", async () => {
+  const f = await fixture(true);
+  const extra = async (name: string) => {
+    const taskId = randomUUID();
+    await pool().query(
+      "INSERT INTO records(id,workspace_id,kind,data) VALUES($1,$2,'tasks',$3)",
+      [taskId, f.workspace, { ...f.taskData, name }],
+    );
+    return { ...f.assignment, taskId, assignmentId: randomUUID() };
+  };
+  const second = await extra("Second intake"),
+    third = await extra("Outside review");
+  const scope = {
+    ...f.binding,
+    sourceConsent: "selected-tasks",
+    assignments: [f.assignment, second],
+  };
+  const env = {
+    ...f.env,
+    CRM_LEADS_ENABLED: "true",
+    CRM_WORKFLOW_ASSIGNMENT_BINDINGS_JSON: JSON.stringify([scope]),
+  };
+  const call = (
+    target: typeof f.assignment,
+    kind: "assignment" | "task",
+    opKind: "intake" | "task",
+    current = env,
+  ) => {
+    const operation = { kind: opKind, assignmentId: target.assignmentId };
+    return workflowAssignmentSource(
+      f.bearer,
+      { version: 1, connectionId: f.binding.connectionId, kind, operation },
+      f.headers(operation, "running", undefined, target),
+      current,
+    );
+  };
+  await pool().query(
+    "DELETE FROM dataset_project_permissions WHERE draft_id=$1",
+    [f.dataset],
+  );
+  await assert.rejects(call(f.assignment, "assignment", "intake"), {
+    status: 403,
+  });
+  const {
+    requests: [request],
+  } = await reviewTaskConsents(f.owner, f.dataset, env);
+  assert.deepEqual(
+    request.tasks.map((t) => t.id).sort(),
+    [f.task, second.taskId].sort(),
+  );
+  const decision = {
+    datasetId: f.dataset,
+    action: "approve",
+    reviewId: request.reviewId,
+  };
+  await assert.rejects(changeTaskConsent(randomUUID(), decision, env));
+  await changeTaskConsent(f.owner, decision, env);
+  for (const a of scope.assignments) {
+    await call(a, "assignment", "intake");
+    assert.equal(
+      (await call(a, "task", "task")).instruction,
+      f.taskData.description,
+    );
+  }
+  await assert.rejects(call(third, "assignment", "intake"), { status: 403 });
+  const changed = {
+    ...env,
+    CRM_WORKFLOW_ASSIGNMENT_BINDINGS_JSON: JSON.stringify([
+      { ...scope, assignments: [...scope.assignments, third] },
+    ]),
+  };
+  await assert.rejects(call(third, "assignment", "intake", changed), {
+    status: 403,
+  });
+  await assert.rejects(changeTaskConsent(f.owner, decision, changed), {
+    status: 403,
+  });
+  await pool().query("UPDATE records SET version=version+1 WHERE id=$1", [
+    second.taskId,
+  ]);
+  await assert.rejects(call(second, "task", "task"), { status: 403 });
+  await changeTaskConsent(f.owner, { ...decision, action: "revoke" }, env);
+  await assert.rejects(call(f.assignment, "task", "task"), { status: 403 });
+  assert.equal(
+    (await reviewTaskConsents(f.owner, f.dataset, env)).active.length,
+    0,
+  );
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT count(*)::int AS n FROM dataset_project_permissions WHERE draft_id=$1",
+        [f.dataset],
+      )
+    ).rows[0].n,
+    0,
+  );
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT count(*)::int AS n FROM crm_workflow_assignments WHERE id=$1",
+        [third.assignmentId],
+      )
+    ).rows[0].n,
+    0,
+  );
+});
+
+test("credential rotation and a dedicated backlog connection cannot inherit task approval", async () => {
+  const f = await fixture();
+  const scope = { ...f.binding, sourceConsent: "selected-tasks" };
+  const env = {
+    ...f.env,
+    CRM_LEADS_ENABLED: "true",
+    CRM_WORKFLOW_ASSIGNMENT_BINDINGS_JSON: JSON.stringify([scope]),
+  };
+  const review = () => reviewTaskConsents(f.owner, f.dataset, env);
+  const first = (await review()).requests[0];
+  const decision = {
+    datasetId: f.dataset,
+    reviewId: first.reviewId,
+    action: "approve",
+  };
+  await changeTaskConsent(f.owner, decision, env);
+  await transaction(migrateWorkflowAssignments);
+  assert.equal((await review()).active[0].request?.reviewId, first.reviewId);
+  const op = f.op("intake");
+  const call = (bearer: string) =>
+    workflowAssignmentSource(
+      bearer,
+      {
+        version: 1,
+        connectionId: f.binding.connectionId,
+        kind: "assignment",
+        operation: op,
+      },
+      f.headers(op),
+      env,
+    );
+  await pool().query(
+    "UPDATE dataset_connections SET token_hash=$2 WHERE draft_id=$1",
+    [f.dataset, hash("a".repeat(64))],
+  );
+  await assert.rejects(call(f.bearer), { status: 403 });
+  await assert.rejects(call("a".repeat(64)), { status: 403 });
+  const changed = await review();
+  assert.notEqual(changed.requests[0].reviewId, first.reviewId);
+  assert.equal(changed.active[0].request, null);
+  await pool().query(
+    "INSERT INTO crm_backlog_consents(owner_id,lease_id,draft_id,request_digest,envelope,expires_at) VALUES ($1,$2,$3,'fixture','{}',now()+interval '1 day')",
+    [f.owner, randomUUID(), f.dataset],
+  );
+  assert.equal((await review()).requests.length, 0);
+  await assert.rejects(
+    changeTaskConsent(
+      f.owner,
+      { ...decision, reviewId: changed.requests[0].reviewId },
+      env,
+    ),
+    { status: 403 },
+  );
+  const unavailable = {
+    ...env,
+    CRM_WORKFLOW_ASSIGNMENT_BINDINGS_JSON: "invalid",
+  };
+  assert.equal(
+    (await reviewTaskConsents(f.owner, f.dataset, unavailable)).active[0]
+      .request,
+    null,
+  );
+  await changeTaskConsent(
+    f.owner,
+    { ...decision, action: "revoke" },
+    unavailable,
+  );
+  assert.equal((await review()).active.length, 0);
 });
