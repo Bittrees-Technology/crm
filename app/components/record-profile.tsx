@@ -28,6 +28,7 @@ const contactFields: Partial<Record<Kind, Field[]>> = {
   ],
   tasks: [
     ["status", "Status"],
+    ["category", "Task category"],
     ["dueDate", "Due date"],
   ],
 };
