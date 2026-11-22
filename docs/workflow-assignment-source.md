@@ -40,6 +40,21 @@ advisory lock 73492017 before row locks; the reviewed migration takes its exclus
 counterpart before schema/core locks. An expired or busy transaction rolls back;
 a possibly committed reply must be reconciled under the original operation.
 
+## Owner approval for selected tasks
+
+For a connection restricted to named task revisions, set `sourceConsent` to
+`selected-tasks` in the server-side binding. Leave project-wide task permission
+off. The owner opens **Review task requests** on the connected CRM dataset,
+checks the device, task names and revisions, workflow, expiry and completion
+permission, then selects **Approve listed tasks**. CRM requires one project
+and one workflow version per review. A dedicated backlog connection is ineligible.
+
+Each protected call checks the current approval inside the source transaction.
+Changing the binding or rotating its dataset credential requires a fresh review.
+**Revoke task access** takes effect on subsequent protected actions. It remains
+available to the dataset owner if the binding is removed or becomes invalid.
+Existing connections without the new option continue to require project consent.
+
 ## Explicit schema step
 
 After review, run `scripts/migrate-workflow-assignments.ts` with the exact

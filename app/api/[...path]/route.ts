@@ -4,6 +4,7 @@ import { backlogConsent } from "@/lib/backlog-consent";
 import { reviewOrganizationStanding } from "@/lib/organization-standing";
 import { supplierInventory, prepareSupplier } from "@/lib/supplier-preparation";
 import { investorProfile } from "@/lib/investor-profile";
+import { reviewTaskConsents, changeTaskConsent } from "@/lib/workflow-task-consent";
 import { projectOptions, configureProject } from "@/lib/project-automation";
 import * as datasets from "@/lib/datasets";
 import { datasetMcp } from "@/lib/dataset-mcp";
@@ -417,6 +418,10 @@ async function handle(req: NextRequest) {
           req.nextUrl.searchParams.get("workspace") || "",
         ),
       );
+    if (path === "datasets/workflow-task-consents" && req.method === "GET")
+      return json(await reviewTaskConsents(user.id, req.nextUrl.searchParams.get("id")));
+    if (path === "datasets/workflow-task-consents" && req.method === "POST")
+      return json(await changeTaskConsent(user.id, body));
     if (path === "datasets/backlog/consent" && req.method === "POST")
       return json(await backlogConsent(user.id, body));
     if (path === "datasets/projects/permissions" && req.method === "GET")

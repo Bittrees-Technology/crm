@@ -1,4 +1,5 @@
 "use client";
+import WorkflowTaskAccess from "./workflow-task-access";
 import ProjectImportPanel from "./project-import-panel";
 import { useState } from "react";
 import type { DraftEntry } from "@/lib/lead-drafts";
@@ -317,6 +318,7 @@ export default function DatasetPanel({ draft, targets, reload }: Props) {
           </article>
         ))}
       </fieldset>
+      <WorkflowTaskAccess key={draft.id} datasetId={draft.id} />
       <ProjectImportPanel draft={draft} targets={targets} reload={reload} />
       <fieldset disabled={busy}>
         <legend>Submit selected people and organizations for approval</legend>
