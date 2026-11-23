@@ -11,7 +11,6 @@ import { ContactResearchImport } from "../components/contact-research";
 import { StandingImport } from "../components/standing-import";
 import { standingFor, standingOrder } from "@/lib/organization-standing-model";
 import { InvestorResearch } from "../components/investor-research";
-import {SharedProfileCard} from "../../shared/sso/SharedProfileCard.jsx";
 import {useSharedSignIn} from "../../shared/sso/useSharedSignIn.jsx";
 import { LoginPanel, EmailSignIn, EthereumSignIn } from "../shared/login/LoginPanel.jsx";
 import { sameImportIdentity } from "@/lib/import-matches";
@@ -1524,7 +1523,6 @@ export default function App() {
           </div>
         )}
         <main className="content">
-          <SharedProfileCard sessionRevision={demo ? null : me?.user?.id} />
           {loadedCount !== null && !snapshot.records.length ? (
             <section
               className="panel record-loading"
